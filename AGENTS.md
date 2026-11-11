@@ -18,7 +18,7 @@
 ## 二、三条硬承诺（有测试锁着）
 
 1. **预算不可协商**。`select()` 的总 charge 永不超 `budget`，对 `weight=3` 也不例外。
-2. **不静默丢弃**。切了记 `truncated`，没进去记 `no-room`，`weight=3` 被丢要单独报警（`src/cli.mjs` 的 `reportDrops`）。
+2. **不静默丢弃**。切了记 `truncated`，没进去记 `no-room`，`weight=3` 被丢要单独报警（`src/cli.mjs` 的 `reportDrops`）；长期层没装下的由 `reportLongDrops` 报。
 3. **时间只解释一次**。入口 `parseAt()` 归一成 epoch ms，之后全链路只认数字；`relTime()` 每次渲染现算，绝不写进存储或文本。
 
 改这三条的任何一条 = 改测试 + 在 `docs/decisions.md` 写清代价。
@@ -30,7 +30,7 @@
 - **无构建、无转译、无 TypeScript**。`node bin/agent-man.mjs <cmd>` 必须能直接跑。
 - **行末一律 LF**。`.gitattributes` 已锁 `eol=lf`；在 Windows 上用编辑器或脚本写文件也必须写 `\n`，否则整文件变成 diff。
 - 文件编码 UTF-8，**不写 BOM**（PowerShell `Set-Content -Encoding UTF8` 那次事故）。
-- 提交前 `node --test` 必须全绿；当前基线 **31 个用例**，只增不减。
+- 提交前 `node --test` 必须全绿；当前基线 **44 个用例**，只增不减。
 
 ## 四、模块职责
 
@@ -41,13 +41,14 @@
 | `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `relTime` | 别的模块不许自己 `new Date()` 解析或格式化 |
 | `src/cost.mjs` | 预算单位与切分：`cost()` / `truncate()` | 不判断"该不该记" |
 | `src/budget.mjs` | 纯函数选择：`select(events, {budget, pinnedShare})` | 不碰文件系统、不看时钟、不生成文本 |
-| `src/render.mjs` | 把选择结果渲成 markdown + `stats` | 不做取舍决策（取舍全在 `budget.mjs`） |
-| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `writeAtomic` | 不解析业务语义 |
+| `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` | 不总结、不合并语义、不碰文件系统 |
+| `src/render.mjs` | 把两层选择结果渲成 markdown + `stats`；整段文本夹进预算（`attempt`） | 不做取舍决策（取舍全在 `budget.mjs` / `memory.mjs`） |
+| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `writeAtomic` | 不解析业务语义 |
 
 - 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令。
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。
 - 改版本号：`src/cli.mjs` 顶部的 `VERSION` 与 `package.json` 的 `version` 一起改。
-- 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 12`、`pinnedShare = 0.7`、`DUP_WINDOW = 24h`。
+- 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 8`、`pinnedShare = 0.7`、`longShare = 0.6`、`DUP_WINDOW = 24h`。
 
 ## 五、代码风格（照现有代码写，别引入第二套）
 

@@ -495,3 +495,41 @@ test('长期层挑条目：tier 小的先说，放不下的记 no-room 但不连
   assert.equal(s.drops.length, 1)
   assert.ok(s.used <= 40)
 })
+
+// ---------------------------------------------------------------- 两层摘要
+
+const manyMemory = (now, n = 6) =>
+  Array.from({ length: n }, (_, i) =>
+    makeItem({ id: `m${i}`, topic: `主题${i}`, fact: '结论'.repeat(20), refs: '2026-11-01' }, { now }),
+  )
+
+test('两层都在：长期层最多拿 60%，日记层不会被挤没', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const memory = manyMemory(now)
+  const events = Array.from({ length: 6 }, (_, i) => ev(now - i * 3600e3, '日记'.repeat(20), 1))
+  const { text, stats } = renderDigest({ events, memory }, { budget: 200, now })
+
+  assert.ok(cost(text) <= 200, `实际=${cost(text)}`)
+  assert.ok(stats.longUsed <= 120, `长期拿了超过 60%: ${stats.longUsed}`)
+  assert.ok(stats.kept >= 1, '日记层被长期层挤没了')
+  assert.ok(text.includes('记住的事'))
+  assert.ok(text.indexOf('记住的事') < text.indexOf('最近'))
+})
+
+test('日记层空时，长期层能借到几乎全部预算', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const memory = manyMemory(now, 10)
+  const { text, stats } = renderDigest({ events: [], memory }, { budget: 400, now })
+  assert.ok(cost(text) <= 400, `实际=${cost(text)}`)
+  assert.ok(stats.longKept > 5, `只装了 ${stats.longKept} 条：60% 的份额没有被借用`)
+})
+
+test('两层都塞满时整段仍不超预算，丢了就报 drops', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const memory = manyMemory(now, 12)
+  const events = Array.from({ length: 30 }, (_, i) => ev(now - i * 3600e3, '这一条很长的日记'.repeat(5), i % 5 === 0 ? 3 : 1))
+  const { text, stats } = renderDigest({ events, memory }, { budget: 300, now })
+  assert.ok(cost(text) <= 300, `实际=${cost(text)}`)
+  assert.ok(stats.drops.length + stats.longDrops.length > 0)
+  assert.equal(stats.over, 0)
+})

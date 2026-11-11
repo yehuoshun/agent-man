@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { parseAt, stamp } from './time.mjs'
+import { parseAt, dayStartFromEnv, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
 import { resolveHome, appendEvent, readEvents, readMemory, appendMemory, writeAtomic } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
@@ -104,7 +104,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'log') return cmdLog(home, pos, flags, { out, now })
     if (cmd === 'remember') return cmdRemember(home, pos, flags, { out, now })
     if (cmd === 'recall') return cmdRecall(home, flags, { out })
-    if (cmd === 'digest') return cmdDigest(home, flags, { out, now })
+    if (cmd === 'digest') return cmdDigest(home, flags, { out, now, env })
     if (cmd === 'ls') return cmdLs(home, flags, { out })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
@@ -207,23 +207,33 @@ function cmdRecall(home, flags, { out }) {
   return 0
 }
 
-function cmdDigest(home, flags, { out, now }) {
+function cmdDigest(home, flags, { out, now, env }) {
   const budget = Number(flags.budget ?? 1200)
   if (!Number.isFinite(budget) || budget <= 0) throw new Error(`--budget 必须是正数，收到 ${flags.budget}`)
+  const dayStart = dayStartFromEnv(env)
 
   const { events, bad } = readEvents(home)
-  const { text, stats } = renderDigest(events, { budget, now, title: flags.title ?? '我记得的事' })
+  const { items, bad: badLong } = readMemory(home)
+  const { text, stats } = renderDigest(
+    { events, memory: items },
+    { budget, now, title: flags.title ?? '我记得的事', dayStart },
+  )
 
   if (typeof flags.out === 'string') {
     const target = path.resolve(flags.out)
     writeAtomic(target, text)
-    out.log(`写好了: ${target}  （${stats.kept}/${stats.total} 条，占 ${stats.used}/${stats.budget}）`)
+    out.log(
+      `写好了: ${target}  （日记 ${stats.kept}/${stats.total}，长期 ${stats.longKept}/${stats.longTotal}，` +
+        `占 ${stats.used}/${stats.budget}）`,
+    )
   } else {
     out.log(text.trimEnd())
   }
 
-  if (bad) out.error(`! ${bad} 行读不出来，已跳过`)
+  if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
+  if (badLong) out.error(`! ${badLong} 行长期记忆读不出来，已跳过`)
   reportDrops(stats, out)
+  reportLongDrops(stats, out)
   return 0
 }
 
@@ -241,6 +251,15 @@ function reportDrops(stats, out) {
   if (gone.some((d) => (d.weight ?? 0) >= 3)) {
     out.error('!! 里面有 weight=3 的记录被丢了。要么加 --budget，要么承认这条不在"永久"档。')
   }
+}
+
+/** 长期层被挤掉也要说：它本该比日记层更"永久"。 */
+function reportLongDrops(stats, out) {
+  const gone = stats.longDrops ?? []
+  if (!gone.length) return
+  out.error(`! 长期层没装下 ${gone.length} 条：`)
+  for (const d of gone.slice(0, 5)) out.error(`    ${d.id}  ${d.topic}：${d.fact}`)
+  if (gone.length > 5) out.error(`    ……（还有 ${gone.length - 5} 条）`)
 }
 
 function cmdLs(home, flags, { out }) {

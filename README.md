@@ -5,7 +5,7 @@
 不是框架，是零件。每个零件只做确定性的那部分，语义判断留给模型。
 
 ```
-记事   agent-man log / digest     ← 现在在这里
+记事   agent-man log / remember / digest / recall     ← 现在在这里
 定时候  …
 看天气  …
 递话    …
@@ -27,22 +27,30 @@
 ## 现在能做什么
 
 ```bash
-# 记一条
+# 记一条日记（原文，只追加）
 node bin/agent-man.mjs log "她把窗关上了，说外面风大" --weight 2 --feel "被照顾到" --kind dm
 
-# 渲染成能直接贴进上下文的摘要
+# 记一条长期记忆（模型整理出来的结论，必须带出处）
+node bin/agent-man.mjs remember "入秋后先关窗再抱怨风" --topic 她怕冷 --refs 2026-11-05,2026-11-09
+
+# 渲染成能直接贴进上下文的摘要（长期 60% / 日记 40%，谁没用完借给对方）
 node bin/agent-man.mjs digest --budget 1200
 node bin/agent-man.mjs digest --budget 800 --out ~/.agent-man/digest.md
 
-# 看原始流水
+# 看原始流水 / 看长期记忆
 node bin/agent-man.mjs ls --limit 20
+node bin/agent-man.mjs recall --tier 0
 ```
 
 `digest` 的输出：
 
 ```markdown
 # 我记得的事
-<!-- agent-man · 共 5 条，取 4 条 · 预算 120 · 实占 111 · 丢 1 · 截 1 · 2026-11-12T01:08:05+08:00 -->
+<!-- agent-man · 日记 5 条 / 长期 2 条 · 取 5+2 · 预算 1200 · 条目 240 · 丢 0 · 截 0 · 2026-11-12T01:08:05+08:00 -->
+
+## 记住的事
+- 她怕冷：入秋后先关窗再抱怨风（11-02 ~ 11-09）
+- 她喝什么：爱喝冰的，胃疼那两天会点热的
 
 ## 不会忘的
 - 昨天 22:40 · 那天晚上我们聊了很久，从窗户聊到风，从面聊到盐，最后谁也没说到底是谁先睡着的。…
@@ -53,11 +61,16 @@ node bin/agent-man.mjs ls --limit 20
 - 8 分钟前 · 今天风大
 ```
 
-数据就是一个 JSONL，一行一条，`cat` 能看、`grep` 能搜、坏了能手改：
+数据就是两个 JSONL，一行一条，`cat` 能看、`grep` 能搜、坏了能手改：
 
 ```json
 {"at":1794415872000,"kind":"dm","fact":"她把窗关上了，说外面风大","weight":2,"feel":"被照顾到"}
+{"id":"2026-11-12-01","at":1794424114448,"tier":0,"batch":"2026-11-12","topic":"她怕冷","fact":"入秋后先关窗再抱怨风","span":{"from":1793577600000,"to":1794182400000},"refs":["2026-11-05","2026-11-09"],"supersedes":[]}
 ```
+
+`events.jsonl` 是日记层，`memory.jsonl` 是长期层。两者都只追加：日记永不删，
+长期条目要合并就新写一条、用 `supersedes` 指过去，旧行不动。总结由模型做，
+脚本只负责挑和存——见 `docs/decisions.md` §11。
 
 ## 三条硬承诺
 
@@ -71,10 +84,11 @@ node bin/agent-man.mjs ls --limit 20
 
 ```bash
 git clone git@github.com:yehuoshun/agent-man.git
-cd agent-man && node --test    # 31 个用例
+cd agent-man && node --test    # 44 个用例
 ```
 
-数据目录默认 `~/.agent-man`，用 `AGENT_MAN_HOME` 覆盖。
+数据目录默认 `~/.agent-man`，用 `AGENT_MAN_HOME` 覆盖；日界默认午夜，
+用 `AGENT_MAN_DAY_START`（0..23）把它往后挪。
 
 ## 文档
 
