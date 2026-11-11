@@ -5,9 +5,12 @@ export const PINNED_WEIGHT = 2
 /**
  * 每行除正文外的固定开销：`- ` + 相对时间 + ` · `。
  * 不算进去的话预算会系统性超支——1200 的预算装 40 条，光前缀就吃掉 400。
- * 取保守上界（"3 分钟前"/"6 天前" 都在 12 以内）。
+ *
+ * 实测最长的前缀（`- 2026-11-05 · ` 或 `- 昨天 23:30 · `）约 5–6 代价，
+ * 这里取 8 留余量。以前取 12，每行白丢 6–7 的额度。总账另有 render.mjs
+ * 的整段夹逼兜底，所以这里宁可贴着实测值。
  */
-export const LINE_OVERHEAD = 12
+export const LINE_OVERHEAD = 8
 
 export const entryText = (e) => `${e.fact ?? e.text ?? ''}${e.feel ? `（${e.feel}）` : ''}`
 

@@ -23,7 +23,7 @@ log 选项：
   --src <出处>              原始文件或会话
 
 digest 选项：
-  --budget 1200             总预算（不是字符数，见 src/cost.mjs）
+  --budget 1200             总预算，含标题与注释行（不是字符数，见 src/cost.mjs）
   --out <文件>              写到文件（原子写），默认打到 stdout
   --title <标题>            第一行标题
 

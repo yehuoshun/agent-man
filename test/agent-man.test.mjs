@@ -226,6 +226,28 @@ test('相对时间在渲染时才定，写死的旧文本会露馅', () => {
   assert.notEqual(a, b)
 })
 
+test('整段文本（含标题与注释行）也不超预算', () => {
+  const now = Date.parse('2026-11-05T12:00:00+08:00')
+  const events = Array.from({ length: 20 }, (_, i) =>
+    ev(now - i * 3600e3, `第 ${i} 条记录，长度大概是这样`, i % 4 === 0 ? 3 : 1),
+  )
+  // 以前只算条目：预算 120 实测输出 137，预算 30 实测 53。
+  for (const budget of [60, 120, 240, 600, 1200]) {
+    const { text, stats } = renderDigest(events, { budget, now })
+    assert.ok(cost(text) <= budget, `budget=${budget} 实际=${cost(text)}`)
+    assert.equal(stats.used, cost(text), '实占要报整段文本的代价')
+    assert.equal(stats.over, 0)
+  }
+})
+
+test('预算连头部都放不下时降级到只剩标题，不假装装下了', () => {
+  const events = [ev(1000, '很长的记录'.repeat(20), 3)]
+  const { text, stats } = renderDigest(events, { budget: 30, now: 5000 })
+  assert.ok(cost(text) <= 30, `实际=${cost(text)}：${text}`)
+  assert.equal(stats.kept, 0)
+  assert.ok(stats.drops.length >= 1)
+})
+
 // ---------------------------------------------------------------- 存储
 
 test('坏行跳过并计数，好行一条不丢；行首 BOM 能救回来', () => {
