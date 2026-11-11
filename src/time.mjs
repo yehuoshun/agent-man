@@ -56,8 +56,10 @@ export function dayKey(at) {
  * 相对时间。每次渲染现算，绝不写死进文本——
  * 写死的时间戳会让摘要随时间腐坏："9 小时前" 三天后不该还是 "9 小时前"。
  *
- * 阶梯必须对 d 单调：同一段距离不该因为"跨没跨午夜"而换一种说法。
- * 所以小时档不看日历日，只有到了半天以后才切成"昨天"。
+ * 12 小时内只看距离：同一段距离不因"跨没跨午夜"换说法。
+ * 半天以后必须先判日历日——只按距离会说"昨天 00:30"，而那其实是今天凌晨。
+ * 代价：同一时刻从两个锚点看可能一个说"11 小时前"、一个说"昨天 23:30"，
+ * 但它们不会并排出现，事实正确优先。见 docs/decisions.md#2。
  */
 export function relTime(at, { now = Date.now() } = {}) {
   const d = now - at
@@ -65,7 +67,19 @@ export function relTime(at, { now = Date.now() } = {}) {
   if (d < MINUTE) return '刚刚'
   if (d < HOUR) return `${Math.floor(d / MINUTE)} 分钟前`
   if (d < 12 * HOUR) return `${Math.floor(d / HOUR)} 小时前`
-  if (d < 36 * HOUR) return `昨天 ${stamp(at).slice(11, 16)}`
-  if (d < 7 * DAY) return `${Math.floor(d / DAY)} 天前`
+  // 半天以后先看日历日：同一天继续用小时，跨一天才叫"昨天"。
+  const days = dayIndex(now) - dayIndex(at)
+  if (days <= 0) return `${Math.floor(d / HOUR)} 小时前` // 同一天，只是隔得久
+  if (days === 1) return `昨天 ${stamp(at).slice(11, 16)}`
+  if (days < 7) return `${days} 天前`
   return stamp(at).slice(0, 10)
+}
+
+/**
+ * 本地日历日的整数序号：把本地的 Y/M/D 当成 UTC 零点再除一天。
+ * 只用于算"隔了几个日历日"，不受夏令时与跨时区影响。
+ */
+function dayIndex(at) {
+  const d = new Date(at)
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY
 }

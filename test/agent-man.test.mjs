@@ -47,7 +47,7 @@ test('parseAt 空值取 now，解析不了就抛', () => {
   assert.throws(() => parseAt('昨天下午'), /看不懂的时间/)
 })
 
-test('dayKey 用本地日历日，relTime 阶梯对距离单调', () => {
+test('dayKey 用本地日历日，relTime 半天后先判日历日', () => {
   const at = new Date(2026, 10, 5, 23, 30).getTime() // 本地 11-05 23:30
   assert.equal(dayKey(at), '2026-11-05')
 
@@ -59,9 +59,20 @@ test('dayKey 用本地日历日，relTime 阶梯对距离单调', () => {
   const nextDay = new Date(2026, 10, 6, 23, 0).getTime()
   assert.equal(relTime(at, { now: nextDay }), '昨天 23:30')
 
-  // 同一段距离，换个钟点不该换说法：阶梯只该看 d，不该看日历
+  // 同一段距离，钟点在 12 小时内不该换说法
   assert.equal(relTime(at, { now: at + 90 * 60e3 }), '1 小时前')
   assert.equal(relTime(at, { now: at + 5 * 3600e3 }), '5 小时前')
+
+  // 同一天隔了 21.5 小时：说"21 小时前"，不能说"昨天"（那是今天凌晨）
+  const today00 = new Date(2026, 10, 12, 0, 30).getTime()
+  const today22 = new Date(2026, 10, 12, 22, 0).getTime()
+  assert.equal(dayKey(today00), dayKey(today22))
+  assert.equal(relTime(today00, { now: today22 }), '21 小时前')
+
+  // 隔了两个日历日、却还没到 36 小时：说"2 天前"，不是"昨天"
+  const twoAgo = new Date(2026, 10, 4, 22, 0).getTime()
+  const nowMorning = new Date(2026, 10, 6, 7, 0).getTime()
+  assert.equal(relTime(twoAgo, { now: nowMorning }), '2 天前')
 })
 
 test('stamp 带本地偏移，round-trip 回同一时刻', () => {
