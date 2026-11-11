@@ -1,0 +1,5 @@
+# 统一 LF：跨平台协作时避免整文件 diff
+* text=auto eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
