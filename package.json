@@ -1,0 +1,17 @@
+{
+  "name": "agent-man",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "给 agent 一个会话之外的生活：记事、定时候、看天气、递话。",
+  "bin": {
+    "agent-man": "./bin/agent-man.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "digest": "node bin/agent-man.mjs digest"
+  }
+}
