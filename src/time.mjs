@@ -46,10 +46,26 @@ export function stamp(at) {
   )
 }
 
-/** 本地日历日，YYYY-MM-DD。只用来分桶，不用来做时间比较。 */
-export function dayKey(at) {
-  const d = new Date(at)
+/**
+ * 本地日历日，YYYY-MM-DD。只用来分桶，不用来做时间比较。
+ *
+ * `dayStart` 把日界往后挪几小时：0 是午夜，4 表示"凌晨 4 点才算新的一天"。
+ * 实现是让时刻往回平移再取日期，所以 00:30 在 dayStart=4 时归到前一天。
+ */
+export function dayKey(at, { dayStart = 0 } = {}) {
+  const d = new Date(at - dayStart * HOUR)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** 从环境变量读日界：AGENT_MAN_DAY_START，0..23 的整点。坏了就抛，不猜。 */
+export function dayStartFromEnv(env = process.env) {
+  const raw = env.AGENT_MAN_DAY_START?.trim()
+  if (!raw) return 0
+  const h = Number(raw)
+  if (!Number.isInteger(h) || h < 0 || h > 23) {
+    throw new Error(`AGENT_MAN_DAY_START 只能是 0..23 的整点，收到 ${JSON.stringify(raw)}`)
+  }
+  return h
 }
 
 /**
@@ -61,14 +77,14 @@ export function dayKey(at) {
  * 代价：同一时刻从两个锚点看可能一个说"11 小时前"、一个说"昨天 23:30"，
  * 但它们不会并排出现，事实正确优先。见 docs/decisions.md#2。
  */
-export function relTime(at, { now = Date.now() } = {}) {
+export function relTime(at, { now = Date.now(), dayStart = 0 } = {}) {
   const d = now - at
   if (d < 0) return stamp(at).slice(0, 16).replace('T', ' ') // 未来给绝对时间
   if (d < MINUTE) return '刚刚'
   if (d < HOUR) return `${Math.floor(d / MINUTE)} 分钟前`
   if (d < 12 * HOUR) return `${Math.floor(d / HOUR)} 小时前`
   // 半天以后先看日历日：同一天继续用小时，跨一天才叫"昨天"。
-  const days = dayIndex(now) - dayIndex(at)
+  const days = dayIndex(now, dayStart) - dayIndex(at, dayStart)
   if (days <= 0) return `${Math.floor(d / HOUR)} 小时前` // 同一天，只是隔得久
   if (days === 1) return `昨天 ${stamp(at).slice(11, 16)}`
   if (days < 7) return `${days} 天前`
@@ -77,9 +93,9 @@ export function relTime(at, { now = Date.now() } = {}) {
 
 /**
  * 本地日历日的整数序号：把本地的 Y/M/D 当成 UTC 零点再除一天。
- * 只用于算"隔了几个日历日"，不受夏令时与跨时区影响。
+ * 只用于算"隔了几个日历日"，不受夏令时与跨时区影响。日界与 dayKey 保持一致。
  */
-function dayIndex(at) {
-  const d = new Date(at)
+function dayIndex(at, dayStart = 0) {
+  const d = new Date(at - dayStart * HOUR)
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY
 }

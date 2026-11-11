@@ -18,8 +18,10 @@ export function paths(home) {
   return {
     home,
     events: path.join(home, 'events.jsonl'),
+    memory: path.join(home, 'memory.jsonl'),
     digest: path.join(home, 'digest.md'),
     state: path.join(home, 'state'),
+    consolidation: path.join(home, 'state', 'consolidation.json'),
   }
 }
 
@@ -40,6 +42,48 @@ export function appendEvent(home, ev) {
   const p = ensure(home)
   fs.appendFileSync(p.events, JSON.stringify(ev) + '\n', 'utf8')
   return ev
+}
+
+/** 长期层也只追加。合并靠条目的 supersedes 指针，不改旧行（见 docs/decisions.md#11）。 */
+export function appendMemory(home, item) {
+  const p = ensure(home)
+  fs.appendFileSync(p.memory, JSON.stringify(item) + '\n', 'utf8')
+  return item
+}
+
+/**
+ * 读长期层。坏行跳过并计数，和 readEvents 同一套容忍度。
+ * 这里额外校验 id/topic/fact：条目没有这三个字段，渲染和 supersedes 都会失效。
+ */
+export function readMemory(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.memory, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return { items: [], bad: 0 }
+    throw e
+  }
+
+  const items = []
+  let bad = 0
+  for (const line of raw.split('\n')) {
+    const s = line.trim()
+    if (!s) continue
+    let it
+    try {
+      it = JSON.parse(s)
+    } catch {
+      bad++
+      continue
+    }
+    if (!it || typeof it.id !== 'string' || !it.topic || !it.fact) {
+      bad++
+      continue
+    }
+    items.push(it)
+  }
+  return { items, bad }
 }
 
 /**

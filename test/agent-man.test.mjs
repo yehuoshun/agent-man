@@ -4,11 +4,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { parseAt, dayKey, relTime, stamp } from '../src/time.mjs'
+import { parseAt, dayKey, dayStartFromEnv, relTime, stamp } from '../src/time.mjs'
 import { cost, truncate } from '../src/cost.mjs'
 import { select } from '../src/budget.mjs'
 import { renderDigest } from '../src/render.mjs'
-import { readEvents, appendEvent, resolveHome, writeAtomic } from '../src/store.mjs'
+import { readEvents, appendEvent, readMemory, resolveHome, writeAtomic } from '../src/store.mjs'
+import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { main, parseArgs } from '../src/cli.mjs'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
@@ -396,4 +397,101 @@ test('w3 被丢时给出刺眼提示', () => {
   const out = recorder()
   main(['digest', '--budget', '30'], { env, out, now })
   assert.ok(out.errs.join('\n').includes('weight=3'), out.errs.join('\n'))
+})
+
+// ---------------------------------------------------------------- 长期层
+
+test('日界按 dayStart 平移：dayStart=4 时 00:30 算前一天', () => {
+  const at = Date.parse('2026-11-12T00:30:00+08:00')
+  assert.equal(dayKey(at), '2026-11-12')
+  assert.equal(dayKey(at, { dayStart: 4 }), '2026-11-11')
+  assert.equal(dayKey(Date.parse('2026-11-12T04:30:00+08:00'), { dayStart: 4 }), '2026-11-12')
+})
+
+test('AGENT_MAN_DAY_START 坏了就报错，不猜', () => {
+  assert.equal(dayStartFromEnv({}), 0)
+  assert.equal(dayStartFromEnv({ AGENT_MAN_DAY_START: '4' }), 4)
+  assert.throws(() => dayStartFromEnv({ AGENT_MAN_DAY_START: '25' }), /0\.\.23/)
+  assert.throws(() => dayStartFromEnv({ AGENT_MAN_DAY_START: '四' }), /0\.\.23/)
+})
+
+test('长期条目的校验：主题、出处、覆盖范围，缺一个都进不了文件', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const base = { topic: '她怕冷', fact: '入秋后先关窗再抱怨风', refs: '2026-11-05' }
+  assert.throws(() => makeItem({ ...base, topic: '' }, { now }), /--topic/)
+  assert.throws(() => makeItem({ ...base, fact: '  ' }, { now }), /事实/)
+  assert.throws(() => makeItem({ ...base, tier: 9 }, { now }), /--tier/)
+  assert.throws(() => makeItem({ ...base, refs: '' }, { now }), /--refs/)
+  assert.throws(() => makeItem({ ...base, from: '2026-11-09', to: '2026-11-05' }, { now }), /span-to 早于/)
+  // 确实没有出处时，可以明说
+  assert.doesNotThrow(() => makeItem({ ...base, refs: undefined, noRefs: true }, { now }))
+})
+
+test('长期条目按日期发号，同一天递增', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const a = makeItem({ topic: 'a', fact: '一', refs: '2026-11-01' }, { now })
+  const b = makeItem({ topic: 'b', fact: '二', refs: '2026-11-01' }, { now, existing: [a] })
+  assert.equal(a.id, '2026-11-12-01')
+  assert.equal(b.id, '2026-11-12-02')
+})
+
+test('remember 落盘成一行 JSON，recall 能读回来', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  assert.equal(
+    main(['remember', '入秋后先关窗再抱怨风', '--topic', '她怕冷', '--refs', '2026-11-05'], { env, out: recorder() }),
+    0,
+  )
+  const { items, bad } = readMemory(home)
+  assert.equal(bad, 0)
+  assert.equal(items.length, 1)
+  assert.equal(items[0].topic, '她怕冷')
+  assert.deepEqual(items[0].refs, ['2026-11-05'])
+  assert.equal(items[0].tier, 0)
+
+  const out = recorder()
+  assert.equal(main(['recall'], { env, out }), 0)
+  assert.ok(out.all.includes('她怕冷'), out.all)
+})
+
+test('没带 --refs 的 remember 退出码 1 且不落盘', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  assert.equal(main(['remember', '一条没有出处的结论', '--topic', '她怕冷'], { env, out: recorder() }), 1)
+  assert.equal(readMemory(home).items.length, 0)
+})
+
+test('supersedes 让旧条目退场，但旧行仍在文件里', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['remember', '版本一', '--topic', '她怕冷', '--refs', '2026-11-01'], { env, out: recorder(), now })
+  main(
+    ['remember', '版本二', '--topic', '她怕冷', '--refs', '2026-11-09', '--supersedes', '2026-11-12-01'],
+    { env, out: recorder(), now },
+  )
+  const { items } = readMemory(home)
+  assert.equal(items.length, 2, '旧行不该被改写或删除')
+  assert.deepEqual(
+    activeItems(items).map((it) => it.fact),
+    ['版本二'],
+  )
+
+  const out = recorder()
+  main(['recall'], { env, out })
+  assert.ok(out.all.includes('已被取代'), out.all)
+  assert.ok(!out.all.includes('版本一'), out.all)
+})
+
+test('长期层挑条目：tier 小的先说，放不下的记 no-room 但不连坐', () => {
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const mk = (id, tier, fact) => makeItem({ id, tier, topic: 'x', fact, refs: '2026-11-01' }, { now })
+  const items = [mk('a', 1, '中期结论'), mk('b', 0, '近期结论'.repeat(30))]
+  const s = selectMemory(items, { budget: 40, now })
+  assert.deepEqual(
+    s.shown.map((it) => it.id),
+    ['a'],
+  )
+  assert.equal(s.drops.length, 1)
+  assert.ok(s.used <= 40)
 })

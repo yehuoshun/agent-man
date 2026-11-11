@@ -1,7 +1,8 @@
 import path from 'node:path'
 import { parseAt, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
-import { resolveHome, appendEvent, readEvents, writeAtomic } from './store.mjs'
+import { resolveHome, appendEvent, readEvents, readMemory, appendMemory, writeAtomic } from './store.mjs'
+import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { renderDigest } from './render.mjs'
 
 const VERSION = '0.1.0'
@@ -10,7 +11,9 @@ const DUP_WINDOW = 24 * 3600e3
 const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
 
 用法：
-  agent-man log <记的事> [选项]      记一条
+  agent-man log <记的事> [选项]      记一条日记（原文，只追加）
+  agent-man remember <结论> [选项]   记一条长期记忆（模型整理出来的）
+  agent-man recall [选项]            看长期记忆
   agent-man digest [选项]            渲染当前摘要
   agent-man ls [--limit 20]          看原始事件
   agent-man --help
@@ -22,13 +25,31 @@ log 选项：
   --at <时间>               默认现在；接受 ISO / epoch / "2026-11-05 12:45"
   --src <出处>              原始文件或会话
 
+remember 选项：
+  --topic <主题>            必填，例：她怕冷
+  --tier 0|1|2              0 近期（默认）/ 1 中期 / 2 永久
+  --refs <a,b>              必填：指向原文的日期或时间
+  --no-refs                 确实没有出处时才用
+  --supersedes <id,id>      这条取代了哪些旧条目
+  --batch <标签>            哪次整理写的，默认当天；周记 2026-W45
+  --span-from/--span-to     覆盖范围，默认等于 --at
+  --weight 0..3
+  --id <id>                 默认按日期发号
+
+recall 选项：
+  --tier 0|1|2              只看某一档
+  --batch <标签>            只看某次整理
+  --grep <词>               主题或结论里含这个词
+  --limit 20
+
 digest 选项：
   --budget 1200             总预算，含标题与注释行（不是字符数，见 src/cost.mjs）
   --out <文件>              写到文件（原子写），默认打到 stdout
   --title <标题>            第一行标题
 
 环境变量：
-  AGENT_MAN_HOME            数据目录，默认 ~/.agent-man`
+  AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
+  AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
 
 export function parseArgs(argv) {
   const [cmd, ...rest] = argv
@@ -81,6 +102,8 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
   const home = resolveHome(env)
   try {
     if (cmd === 'log') return cmdLog(home, pos, flags, { out, now })
+    if (cmd === 'remember') return cmdRemember(home, pos, flags, { out, now })
+    if (cmd === 'recall') return cmdRecall(home, flags, { out })
     if (cmd === 'digest') return cmdDigest(home, flags, { out, now })
     if (cmd === 'ls') return cmdLs(home, flags, { out })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
@@ -116,6 +139,72 @@ function cmdLog(home, pos, flags, { out, now }) {
 function findDup(home, ev, now) {
   const { events } = readEvents(home, { since: now - DUP_WINDOW })
   return events.find((e) => e.kind === ev.kind && e.fact === ev.fact) ?? null
+}
+
+/**
+ * 记一条长期记忆。
+ *
+ * 这个命令不总结、不合并：结论是调用方（模型）给的，这里只负责校验、
+ * 发号、落盘。合并用 --supersedes 指过去，旧行不动（见 docs/decisions.md#11）。
+ */
+function cmdRemember(home, pos, flags, { out, now }) {
+  const fact = (pos.join(' ') || String(flags.fact ?? '')).trim()
+  if (!fact) {
+    throw new Error('要记住什么？例：agent-man remember "入秋后先关窗再抱怨风" --topic 她怕冷 --refs 2026-11-05')
+  }
+
+  const { items } = readMemory(home)
+  const item = makeItem(
+    {
+      topic: flags.topic,
+      fact,
+      tier: flags.tier,
+      batch: flags.batch,
+      refs: flags.refs,
+      noRefs: Boolean(flags['no-refs']),
+      supersedes: flags.supersedes,
+      from: flags['span-from'],
+      to: flags['span-to'],
+      weight: flags.weight,
+      id: flags.id,
+      at: flags.at,
+    },
+    { now, existing: items },
+  )
+  appendMemory(home, item)
+
+  out.log(`${item.id}  tier${item.tier}  ${longLine(item)}`)
+  if (item.refs.length) out.log(`  出处: ${item.refs.join(', ')}`)
+  if (item.supersedes.length) out.log(`  取代: ${item.supersedes.join(', ')}`)
+  return 0
+}
+
+function cmdRecall(home, flags, { out }) {
+  const limit = Number(flags.limit ?? 20)
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+
+  const tier = flags.tier === undefined ? null : Number(flags.tier)
+  if (tier !== null && !TIERS.includes(tier)) throw new Error(`--tier 只能是 0/1/2，收到 ${flags.tier}`)
+  const batch = flags.batch === undefined ? null : String(flags.batch)
+  const grep = flags.grep === undefined ? null : String(flags.grep)
+
+  const { items, bad } = readMemory(home)
+  const live = activeItems(items)
+  const dead = items.length - live.length
+  const hit = live.filter(
+    (it) =>
+      (tier === null || (it.tier ?? 0) === tier) &&
+      (batch === null || it.batch === batch) &&
+      (grep === null || `${it.topic}${it.fact}`.includes(grep)),
+  )
+  const tail = hit.slice(-limit)
+
+  out.log(`${live.length} 条有效长期记忆${dead ? `（另有 ${dead} 条已被取代）` : ''}，显示 ${tail.length} 条`)
+  for (const it of tail) {
+    out.log(`${it.id}  tier${it.tier ?? 0}  ${longLine(it)}  refs: ${it.refs?.join(',') || '—'}`)
+  }
+  if (bad) out.error(`! ${bad} 行读不出来`)
+  return 0
 }
 
 function cmdDigest(home, flags, { out, now }) {
