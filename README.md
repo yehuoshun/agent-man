@@ -172,26 +172,37 @@ agent-man bili --help             # 零件的选项是它自己的，这里不�
 - 该开口：把要说的话打到 stdout（几点了、上次说话多久前、之后攒了什么、几张便条、今天还剩几条安排），退出码 `0`；
 - 不该开口：打一行"这会儿 9:40，不打扰：…"，退出码**也是** `0`。"不打扰"不是失败，调度器别把它当成错误去重试。
 
-它不管投递：输出落到哪儿由你决定。两种接法，按宿主能力挑一个：
+它不管投递：输出落到哪儿由 `--out` 决定（不写就打到 stdout）。两种接法，按宿主能力挑一个：
 
-1. **宿主本来就有定时器**（比如 DSH 的定时任务、别家的 cron 服务）：让它每 30 分钟跑一次
+1. **宿主本来就有定时器**（比如 DSH 的定时任务、别家的 cron 服务）：让它定时跑一次
    `node /path/to/agent-man/bin/agent-man.mjs cue`，把 stdout 原样喂给模型。通道现成，最省事。
-2. **系统调度器**：Linux/macOS 用 cron，Windows 用任务计划程序，输出重定向到文件，宿主起会话时读它。
+2. **系统调度器**：Linux/macOS 用 cron，Windows 用任务计划程序。这类调度器没有"把输出交给谁"这回事，
+   所以让它 `cue --out <文件>`：话写进文件，宿主起会话时读那个文件。
 
-30 分钟一次是安全的：六小时内不重复开口由 `--min-gap`（默认 6 小时）管，半夜不叫人由静默时段
+敲多少次不重要：六小时内不重复开口由 `--min-gap`（默认 6 小时）管，半夜不叫人由静默时段
 （23:00–08:00）管。敲得再密也只是多读几个文件，不会多说一句话。
 
+一天一次的钟（早上叫醒）配 `--out`——覆盖写，文件里永远是最近一次问的答案，不会越滚越大：
+
 ```cron
-# 每 30 分钟敲一次；避开整点，免得跟别的整点任务挤在一起
-7,37 * * * * node $HOME/agent-man/bin/agent-man.mjs cue >> $HOME/.agent-man/state/cue-out.txt 2>&1
+# 每天 8:05 问一次该不该开口；结果覆盖写到收件箱，宿主开机会话时读它
+5 8 * * * node $HOME/agent-man/bin/agent-man.mjs cue --out $HOME/.agent-man/inbox.md
 ```
 
 ```powershell
-# Windows：每 30 分钟一次，开机后一直有效
-$act = New-ScheduledTaskAction -Execute 'node' -Argument '"D:\agent-man\bin\agent-man.mjs" cue'
-$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30)
-Register-ScheduledTask -TaskName 'agent-man cue' -Action $act -Trigger $trg -Description '每隔半小时问一次该不该开口'
+# Windows：每天 8:05 一次，输出落到同一个文件
+$arg = '"D:\agent-man\bin\agent-man.mjs" cue --out "D:\agent-man\state\inbox.md"'
+$act = New-ScheduledTaskAction -Execute 'node' -Argument $arg
+$trg = New-ScheduledTaskTrigger -Daily -At 8:05
+Register-ScheduledTask -TaskName 'agent-man cue' -Action $act -Trigger $trg -Description '每天早上问一次该不该开口'
 ```
+
+一天敲好几次就别用 `--out` 了——每半小时覆盖一次，9:37 那句"不打扰"会把 9:07 真要说的话盖掉。
+高频用 `>>` 往后堆，宿主读完自己把文件截断。
+
+**写进文件也算说过了。** 水位（§21）记的是"交给模型看过"，`--out` 不改这个规矩：话写进文件，下次就
+当你已经知道——所以那个文件得有人真去读，没人读等于把话丢进了收件箱。只想让定时器提醒"有话"、把话留到
+交互时再说，就加 `--peek`：它不记水位、不烧便条，同一个答案下次还会端上来。
 
 接上之后先手动敲一次自检——第一次的输出不该是"没有新东西"：
 
@@ -205,8 +216,8 @@ node bin/agent-man.mjs cue --force
 退出码：`0` 正常（含"不打扰"、"什么都没有"）、`1` 读不出或写不进数据目录（下一次照常敲即可，别写重试循环）、
 `2` 参数写错了（配置问题，得改配置，不会自己好）。`cue` 不联网，没有"网断了"这一类。
 
-**`--peek`：只看不烧。** 便条默认"递出即焚"，因为递出等于模型看见了。定时器的输出如果只是被记进一个文件、
-没人真读，就用 `--peek`——否则便条会被静默吃掉（见 `docs/decisions.md` §24、§30）。
+**`--peek`：只看不烧。** 便条默认"递出即焚"，因为递出等于模型看见了。用 `--peek` 时便条留在原地，
+下次还会端上来（见 `docs/decisions.md` §24、§30、§33）。
 
 ## 安装
 
