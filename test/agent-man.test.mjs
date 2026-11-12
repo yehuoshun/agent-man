@@ -298,6 +298,44 @@ test('一条都装不下时不留空壳：宁肯只剩标题，也不花 69 买�
   assert.ok(stats.drops.length >= 1, '丢了要报出来')
 })
 
+test('保底一条：预算 60 时宁可"最近"空着，也要留下那条 w2', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  // 日记层分到 27，份额只有 18，装不下代价 26 的 w2；recent 拿的是全额，
+  // 于是"不会忘的"整块空掉，只剩一条无关紧要的"今天风大"。
+  const events = [
+    { at: now - 50 * 60e3, fact: '她把窗关上了，说外面风大', feel: '被照顾到', weight: 2 },
+    { at: now - 8 * 60e3, fact: '今天风大', weight: 0 },
+  ]
+  const { text, stats } = renderDigest(events, { budget: 60, now })
+  assert.match(text, /她把窗关上了/)
+  assert.equal(stats.kept, 1)
+  assert.equal(stats.floorKeep, true)
+  // 空着的那段得说"放不下"，不能说"还没有"——那条近况是真实存在的
+  assert.match(text, /## 最近\n- （放不下，丢了 1 条）/)
+  assert.ok(cost(text) <= 60)
+})
+
+test('保底也保不了装不下的东西：预算 16 时 w2 如实记 no-room', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const events = [{ at: now - 50 * 60e3, fact: '她把窗关上了，说外面风大', weight: 2 }]
+  const r = select(events, { budget: 16 })
+  assert.equal(r.pinned.length, 0)
+  assert.equal(r.floorKeep, false)
+  assert.equal(r.drops[0].why, 'no-room')
+})
+
+test('保底只保一条：两条 w2 抢预算时同权重取近的，丢的那条要报出来', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const older = { at: now - 90 * 60e3, fact: '她把窗关上了，说外面风大', weight: 2 }
+  const newer = { at: now - 30 * 60e3, fact: '医生说要吃满一疗程', weight: 2 }
+  const r = select([older, newer], { budget: 30 })
+  assert.equal(r.pinned.length, 1)
+  assert.equal(r.pinned[0].at, newer.at)
+  assert.equal(r.drops.length, 1)
+  assert.equal(r.drops[0].at, older.at)
+  assert.equal(r.drops[0].why, 'no-room')
+})
+
 // ---------------------------------------------------------------- 存储
 
 test('坏行跳过并计数，好行一条不丢；行首 BOM 能救回来', () => {

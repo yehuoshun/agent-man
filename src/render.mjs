@@ -1,6 +1,6 @@
 import { relTime, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
-import { select } from './budget.mjs'
+import { select, pinnedFloor, PINNED_WEIGHT } from './budget.mjs'
 import { selectMemory, longLine } from './memory.mjs'
 
 /**
@@ -67,6 +67,9 @@ export function renderDigest(input, opts = {}) {
  */
 function pickBest(fits) {
   return fits.reduce((best, r) => {
+    // 0) 保住了最重那条（见 budget.mjs 的 pinnedFloor）就算赢了一半：
+    //    条数一样时也不能选"装了一条近况、丢了那条疤"的那个形态。
+    if (r.stats.floorKeep !== best.stats.floorKeep) return r.stats.floorKeep ? r : best
     const a = best.stats.kept + best.stats.longKept
     const b = r.stats.kept + r.stats.longKept
     if (b !== a) return b > a ? r : best
@@ -94,7 +97,7 @@ function attempt({ events, memory }, { budget, now, title, dayStart, longShare, 
     dayStart,
   }).total
   const entBudget = Math.max(0, budget - skeleton)
-
+  const floor = pinnedFloor(events, entBudget)
   let allowLong = memory.length ? Math.floor(entBudget * longShare) : 0
   let allowDay = entBudget - allowLong
   let long = pickLong(memory, allowLong, { now, dayStart })
@@ -121,10 +124,13 @@ function attempt({ events, memory }, { budget, now, title, dayStart, longShare, 
 
   let r = compose({ events, memory, day, long, form, now, title, budget, dayStart })
   // 整段文本超了：先砍日记，再砍长期。每轮只减不增，不会来回振荡。
+  // 但日记额度不许砍到保底那条以下——否则夹逼会把刚保住的 w2 又砍掉，
+  // 结果和没做保底一模一样。保不住的时候，宁可让这一形态整体出局，
+  // 交给上面去挑更便宜的头部（那才是"先降级头部，再砍最近"的顺序）。
   for (let i = 0; i < 6 && r.total > budget; i++) {
     const over = r.total - budget
-    if (day.used > 0) {
-      allowDay = Math.max(0, allowDay - over)
+    if (day.used > 0 && allowDay > floor) {
+      allowDay = Math.max(floor, allowDay - over)
       day = pickDay(events, allowDay)
     } else if (long.used > 0) {
       allowLong = Math.max(0, allowLong - over)
@@ -145,7 +151,13 @@ function pickDay(events, budget) {
 
 /** 一点额度都不剩时：条目全记成 no-room，报账仍然是诚实的。 */
 function nothingFits(events) {
-  return { pinned: [], recent: [], used: 0, drops: events.map((e) => ({ ...e, why: 'no-room' })) }
+  return {
+    pinned: [],
+    recent: [],
+    used: 0,
+    drops: events.map((e) => ({ ...e, why: 'no-room' })),
+    floorKeep: false,
+  }
 }
 
 function compose({ events, memory, day, long, form, now, title, budget, dayStart }) {
@@ -170,9 +182,13 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
   } else if (!events.length && !memory.length) {
     out.push('', '- （还没有任何记录）')
   } else {
+    // 空着的段要分清"真的没有"和"有但没装下"。保底一条救下 w2 以后，
+    // 掉下去的常常是"最近"，这时候写「（还没有）」是在骗人。
+    const gone = day.drops.filter((d) => d.why === 'no-room')
+    const gonePinned = gone.filter((d) => (d.weight ?? 0) >= PINNED_WEIGHT).length
     if (long.shown.length) block(out, '记住的事', long.shown.map((it) => longLine(it, { dayStart })))
-    block(out, '不会忘的', dayTexts(day.pinned, { now, dayStart }))
-    block(out, '最近', dayTexts(day.recent, { now, dayStart }))
+    block(out, '不会忘的', dayTexts(day.pinned, { now, dayStart }), emptyLine(gonePinned))
+    block(out, '最近', dayTexts(day.recent, { now, dayStart }), emptyLine(gone.length - gonePinned))
   }
 
   const text = out.join('\n') + '\n'
@@ -183,6 +199,7 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
       total: events.length,
       kept: dayKept,
       entries: day.used,
+      floorKeep: day.floorKeep === true,
       budget,
       noRoom,
       cutoff,
@@ -206,10 +223,13 @@ function dayTexts(items, { now, dayStart }) {
   })
 }
 
-function block(out, heading, lines) {
+/** 空段的说法：丢了几条就报几条，别把"放不下"说成"还没有"。 */
+const emptyLine = (n) => (n > 0 ? `- （放不下，丢了 ${n} 条）` : '- （还没有）')
+
+function block(out, heading, lines, empty = '- （还没有）') {
   out.push('', `## ${heading}`)
   if (!lines.length) {
-    out.push('- （还没有）')
+    out.push(empty)
     return
   }
   out.push(...lines)

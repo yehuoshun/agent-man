@@ -14,6 +14,30 @@ export const LINE_OVERHEAD = 8
 
 export const entryText = (e) => `${e.fact ?? e.text ?? ''}${e.feel ? `（${e.feel}）` : ''}`
 
+/** 按"先权重、再时间"排在最前面的那条：w3 是疤，不该被一条新的 w2 挤掉。 */
+const heaviestPinned = (events) =>
+  events
+    .filter((e) => (e.weight ?? 0) >= PINNED_WEIGHT)
+    .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0) || b.at - a.at)[0]
+
+/**
+ * 保底一条：最重的那条先占住自己那份代价，剩下的才按份额分。
+ *
+ * 只靠份额有一条死路——份额 = budget × pinnedShare，预算紧到份额装不下一条时，
+ * pinned 第一轮就被判死；第二轮得等 recent 捡完剩饭，而 recent 拿的是全额预算，
+ * 剩饭常常是 0。实测预算 60（日记层分到 27）时，w2「她把窗关上了」（代价 26）
+ * 输给 w0「今天风大」（代价 12）："不会忘的"整块空掉，只剩一条无关紧要的近况。
+ *
+ * 抬到"份额和最重那条的代价取大"就够了，且只在它自己装得下时才算数——
+ * 预算连这一条都装不下，保底也保不了它，下面的 fill 照常记 no-room，不骗人。
+ */
+export function pinnedFloor(events, budget = Infinity) {
+  const top = heaviestPinned(events)
+  if (!top) return 0
+  const charge = cost(entryText(top)) + LINE_OVERHEAD
+  return charge <= budget ? charge : 0
+}
+
 /**
  * 选谁进摘要。纯函数：不碰文件系统，也不看时钟。
  *
@@ -91,7 +115,8 @@ export function select(events, { budget, pinnedShare = 0.7 } = {}) {
   }
 
   const shareCap = Math.floor(budget * pinnedShare)
-  const usedP1 = fill(pinnedOrder, shareCap)
+  const floorCap = pinnedFloor(events, budget)
+  const usedP1 = fill(pinnedOrder, Math.max(shareCap, floorCap))
   const usedR = fill(recentOrder, budget - usedP1)
   const usedP2 = fill(pinnedOrder, budget - usedP1 - usedR) // 剩余额度还给 pinned
 
@@ -105,11 +130,15 @@ export function select(events, { budget, pinnedShare = 0.7 } = {}) {
 
   const byTime = (a, b) => a.at - b.at // 输出按时间升序：人读的时候是往前读的
   const pinnedSet = new Set(pinnedOrder.map((e) => e.idx))
+  // 保底那条到底进来没：头部形态之间要拿它比，光看"装了几条"会选错
+  // （预算 60 时 compact 装下一条 w0，bare 装下那条 w2，条数一样）。
+  const floorKeep = pinnedOrder.length > 0 && placed.has(pinnedOrder[0].idx)
   return {
     pinned: chosen.filter((e) => pinnedSet.has(e.idx)).sort(byTime),
     recent: chosen.filter((e) => !pinnedSet.has(e.idx)).sort(byTime),
     drops,
     used: usedP1 + usedR + usedP2,
     budget,
+    floorKeep,
   }
 }
