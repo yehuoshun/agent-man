@@ -2,6 +2,8 @@
 
 给 agent 一个会话之外的生活。
 
+[tests](https://github.com/yehuoshun/agent-man/actions/workflows/ci.yml)
+
 不是框架，是零件。每个零件只做确定性的那部分，语义判断留给模型。
 
 ```
