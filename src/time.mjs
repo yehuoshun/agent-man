@@ -146,6 +146,16 @@ function dayKeyFromIndex(index) {
 }
 
 /** 周序号：周一到周日落在同一个整数上，所以能相减数"隔了几周"。1970-01-01 是周四，+3 对齐。 */
+/**
+ * 这一刻所属的"那一天"的区间：半开区间 [from, to)。
+ *
+ * refs 里的时刻只用来定位到某一天——日记是"那天发生了什么"，不是毫秒级索引。
+ */
+export function dayRange(at, { dayStart = 0 } = {}) {
+  const i = dayIndex(at, { dayStart })
+  const from = i * DAY + dayStart * HOUR
+  return { from, to: from + DAY }
+}
 export function weekIndex(at, { dayStart = 0 } = {}) {
   return Math.floor((dayIndex(at, { dayStart }) + 3) / 7)
 }

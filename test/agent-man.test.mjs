@@ -1119,3 +1119,44 @@ test('cue --min-gap / --limit 只认合法值，多余的位置参数也不吃',
   const pos = recorder()
   assert.equal(main(['cue', '多嘴'], { env, out: pos }), 2)
 })
+
+test('show 顺着 refs 回到那天的原文：结论能追到出处', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '她把窗关上了，说外面风大', '--at', '2026-11-12 09:00', '--kind', 'dm'], {
+    env, out: recorder(), now: parseAt('2026-11-12 09:00'),
+  })
+  main(['log', '别的日子', '--at', '2026-11-06 09:00'], { env, out: recorder() })
+  main(['remember', '入秋后先关窗再抱怨风', '--topic', '她怕冷', '--refs', '2026-11-05,2026-11-12'], {
+    env, out: recorder(),
+  })
+
+  const out = recorder()
+  assert.equal(main(['show', '怕冷'], { env, out }), 0)
+  assert.ok(out.all.includes('她怕冷：入秋后先关窗再抱怨风'), out.all)
+  assert.ok(out.all.includes('她把窗关上了'), `refs 指向的那天要能取出来：\n${out.all}`)
+  assert.ok(!out.all.includes('别的日子'), `别的日子不该混进来：\n${out.all}`)
+  assert.ok(out.all.includes('2026-11-05：那天没有日记'), `没日记的那天要明说，不能装作有：\n${out.all}`)
+})
+
+test('show 用 id 也能定位；--no-refs 的条目如实说没出处', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['remember', '她不喜欢被安排', '--topic', '边界', '--no-refs', '--id', '2026-11-12-01'], {
+    env, out: recorder(),
+  })
+  const out = recorder()
+  assert.equal(main(['show', '2026-11-12-01'], { env, out }), 0)
+  assert.ok(out.all.includes('没写（存的时候用了 --no-refs）'), out.all)
+})
+
+test('show 只查长期层：没有这条结论就直说，并指向 find', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '她把窗关上了'], { env, out: recorder() })
+  const out = recorder()
+  assert.equal(main(['show', '关窗'], { env, out }), 0)
+  assert.ok(out.all.includes('长期层里没有含“关窗”的结论'), out.all)
+  assert.ok(out.all.includes('原文用 find'), out.all)
+
+  const bad = recorder()
+  assert.equal(main(['show'], { env, out: bad }), 1)
+  assert.ok(bad.errs.join('\n').includes('要给个词'))
+})

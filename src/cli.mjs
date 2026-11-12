@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { parseAt, dayStartFromEnv, stamp, daySpan, clock, relTime } from './time.mjs'
+import { parseAt, dayStartFromEnv, stamp, daySpan, dayRange, clock, relTime } from './time.mjs'
 import { cost } from './cost.mjs'
 import {
   resolveHome,
@@ -35,6 +35,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man find <词> [选项]         在日记原文里搜（摘要只压不取，原文在这）
   agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
   agent-man cue [选项]               这会儿该不该开口（给处境，不给台词）
+  agent-man show <主题|id> [选项]    顺着一条结论找回原文（refs 指向的日子）
   agent-man --help
 
 log 选项：
@@ -85,6 +86,10 @@ cue 选项：
   --peek                    只看一眼，不记水位（下次还会报同样的东西）
   --limit 10                最多列几条新东西
 
+show 选项：
+  --limit 20                每个出处最多列几条原文
+  --fact <文本>             等价于位置参数
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -120,6 +125,7 @@ export const FLAGS = {
   find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
   cue: { value: ['limit', 'min-gap'], bool: ['peek', 'force'] },
+  show: { value: ['limit', 'fact'], bool: [] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
@@ -247,6 +253,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'find') return cmdFind(home, pos, flags, { out, env })
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
     if (cmd === 'cue') return cmdCue(home, flags, { out, now })
+    if (cmd === 'show') return cmdShow(home, pos, flags, { out, env })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -529,6 +536,68 @@ function cmdLs(home, flags, { out }) {
   return 0
 }
 
+/**
+ * 顺着一条结论找回原文。
+ *
+ * 长期层的 refs 一直只是显示出来（`recall` 尾巴上的 `refs: 2026-11-05`），没有入口能跳回
+ * 那天的日记——§11 说"refs 必须能回溯"，在此之前它只能靠人手敲 `find --since`。
+ * 这里只做索引：结论 → refs → 那几天的原文，一个字都不改写。
+ */
+function cmdShow(home, pos, flags, { out, env }) {
+  const term = String(pos[0] ?? flags.fact ?? '').trim()
+  if (!term) throw new Error('要给个词：show <主题或 id>；只搜原文用 find')
+  const limit = Number(flags.limit ?? 20)
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+  }
+
+  const dayStart = dayStartFromEnv(env)
+  const { items, bad } = readMemory(home)
+  const live = activeItems(items)
+  const hit = live.filter((it) => it.id === term || `${it.topic}${it.fact}`.includes(term))
+  if (bad) out.error(`! ${bad} 行长期记忆读不出来`)
+  if (!hit.length) {
+    out.log(`长期层里没有含“${term}”的结论。show 只顺着结论找出处，原文用 find ${term}`)
+    return 0
+  }
+
+  const { events, bad: badEvents } = readEvents(home)
+  if (badEvents) out.error(`! ${badEvents} 行日记读不出来，已跳过`)
+
+  hit.forEach((it, i) => {
+    if (i) out.log('')
+    out.log(`${it.id}  tier${it.tier ?? 0}  ${longLine(it, { dayStart })}`)
+    const refs = (it.refs ?? []).filter((r) => typeof r === 'string' && r.trim())
+    if (!refs.length) {
+      out.log('  出处：没写（存的时候用了 --no-refs）')
+      return
+    }
+    out.log(`  出处 ${refs.length} 处：`)
+    for (const ref of refs) {
+      const range = refRange(ref, { dayStart })
+      const found = events.filter((e) => e.at >= range.from && e.at < range.to)
+      if (!found.length) {
+        out.log(`  · ${ref}：那天没有日记`)
+        continue
+      }
+      for (const e of found.slice(0, limit)) {
+        const w = e.weight ? ` w${e.weight}` : ''
+        out.log(`  ${stamp(e.at)}${w}  ${eventLine(e)}`)
+      }
+      if (found.length > limit) out.log(`  ……（${ref} 共 ${found.length} 条，只列 ${limit} 条）`)
+    }
+  })
+  return 0
+}
+
+/**
+ * refs 里的一条怎么变成时间区间：纯日期按本地整天算，写了时刻的按它所在的那一天算。
+ * 只用 `daySpan` / `parseAt`，不自己 `new Date(str)`——日期字符串的解析只有一处（§二.3）。
+ */
+function refRange(ref, { dayStart }) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ref)) return daySpan(ref, { dayStart })
+  return dayRange(parseAt(ref), { dayStart })
+}
 /**
  * 定时候：问一句"这会儿该不该开口"。
  *

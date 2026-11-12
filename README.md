@@ -62,6 +62,11 @@ node bin/agent-man.mjs cue --force   # 手动问，无视 6 小时间隔与静�
 node bin/agent-man.mjs cue --peek    # 看一眼，不记水位
 ```
 
+```bash
+# 顺着一条结论找回原文：recall 尾巴上那串 refs 现在能用了
+node bin/agent-man.mjs show 她怕冷
+```
+
 断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，
 半行会立刻报错而不是等下次读才发现（见 `docs/decisions.md` §20）。
 
