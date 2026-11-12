@@ -50,7 +50,9 @@ jobs:
           fi
 
       - name: npm pack
-        run: npm pack --pack-destination dist
+        run: |
+          mkdir -p dist
+          npm pack --pack-destination dist
 
       - name: tarball 里得有 bin 和 src
         shell: bash
