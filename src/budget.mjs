@@ -14,6 +14,30 @@ export const LINE_OVERHEAD = 8
 
 export const entryText = (e) => `${e.fact ?? e.text ?? ''}${e.feel ? `（${e.feel}）` : ''}`
 
+/**
+ * 逐字相同的重复：只留最新那条，其余记进 merged。
+ *
+ * 为什么只做"逐字"：判断"这两句是不是同一件事"是语义，塞进脚本迟早会在预算最紧的
+ * 时候悄悄吞掉一条真区别（"她把窗关上了"和"她把门关上了"只差一个字，意思相反）。
+ * 逐字相同是唯一一种不需要判断的重复——实测连记两次同一句话，digest 出来两行，
+ * 48 代价里有 14 是白占的（§28）。
+ *
+ * 权重不同不算重复：w2 和 w0 说同一句话，是"重要性变了"的信号，不是复读。
+ * feel 不同也不算：渲染出来的那一行本来就不一样（entryText 带 feel）。
+ */
+export function dedupeExact(events) {
+  const byKey = new Map()
+  for (const e of events) {
+    const key = `${e.weight ?? 0}\u0000${entryText(e)}`
+    const prev = byKey.get(key)
+    if (!prev) byKey.set(key, e)
+    else if ((e.at ?? 0) > (prev.at ?? 0)) byKey.set(key, e) // 同一句话留最新的那条
+  }
+  const kept = new Set(byKey.values())
+  const merged = events.filter((e) => !kept.has(e)).map((e) => ({ ...e, why: 'dup' }))
+  return { events: [...kept], merged }
+}
+
 /** 按"先权重、再时间"排在最前面的那条：w3 是疤，不该被一条新的 w2 挤掉。 */
 const heaviestPinned = (events) =>
   events
@@ -80,7 +104,10 @@ export function recentFloor(events, budget = Infinity) {
 export function select(events, { budget, pinnedShare = 0.7 } = {}) {
   if (!(budget > 0)) throw new Error(`预算必须为正: ${budget}`)
 
-  const list = events.map((e, i) => {
+  // 逐字相同的重复先合掉：它们不是「放不下」，是同一行写了两遍（见 dedupeExact）。
+  const { events: uniq, merged } = dedupeExact(events)
+
+  const list = uniq.map((e, i) => {
     const c = cost(entryText(e))
     return { ...e, idx: i, cost: c, charge: c + LINE_OVERHEAD }
   })
@@ -135,8 +162,8 @@ export function select(events, { budget, pinnedShare = 0.7 } = {}) {
   }
 
   const shareCap = Math.floor(budget * pinnedShare)
-  const pFloor = pinnedFloor(events, budget)
-  const rFloor = recentFloor(events, budget - pFloor)
+  const pFloor = pinnedFloor(uniq, budget)
+  const rFloor = recentFloor(uniq, budget - pFloor)
   /**
    * 两条保底先各占一个位子，剩下的才按份额分：份额再大也不许把最近那条挤出去。
    * 上界是 budget - rFloor（给近的那条留着），下界是 pFloor（重的那条不让人）。
@@ -148,7 +175,7 @@ export function select(events, { budget, pinnedShare = 0.7 } = {}) {
   const usedP2 = fill(pinnedOrder, budget - usedP1 - usedR) // 剩余额度还给 pinned
 
   const chosen = [...placed.values()]
-  const drops = []
+  const drops = [...merged] // 合掉的也进账：合并不等于没发生
   for (const e of list) {
     const got = placed.get(e.idx)
     if (got?.cut) drops.push({ ...e, why: 'truncated', keptCost: got.cost })
@@ -169,5 +196,6 @@ export function select(events, { budget, pinnedShare = 0.7 } = {}) {
     budget,
     floorKeep,
     recentFloorKeep,
+    merged: merged.length,
   }
 }

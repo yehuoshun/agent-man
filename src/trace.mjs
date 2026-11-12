@@ -25,6 +25,7 @@ export function buildTrace(stats, { now, cmd = 'digest' } = {}) {
     budget: stats.budget,
     used: stats.used,
     keptAt: [...(stats.keptAt ?? [])],
+    merged: stats.merged ?? 0,
     drops: (stats.drops ?? []).map((d) => ({ at: d.at, why: d.why, weight: d.weight ?? 0 })),
     longKept: [...(stats.longKeptIds ?? [])],
     longDrops: (stats.longDrops ?? []).map((d) => d.id ?? d.topic),
@@ -49,7 +50,12 @@ export function neverShown(events, traces) {
 export function traceLine(t) {
   const drops = t.drops ?? []
   const gone = drops.filter((d) => d.why === 'no-room').length
-  const cut = drops.length - gone
+  const merged = drops.filter((d) => d.why === 'dup').length
+  const cut = drops.length - gone - merged // 合掉的不算"截"，两回事
   const long = t.longKept?.length ? ` · 长期 ${t.longKept.length}` : ''
-  return `预算 ${t.budget} · 用 ${t.used} · 取 ${t.keptAt?.length ?? 0}${long} · 丢 ${gone} · 截 ${cut}`
+  const dup = merged ? ` · 合 ${merged}` : ''
+  return (
+    `预算 ${t.budget} · 用 ${t.used} · 取 ${t.keptAt?.length ?? 0}${long}` +
+    ` · 丢 ${gone} · 截 ${cut}${dup}`
+  )
 }

@@ -9,6 +9,7 @@ import { parseAt, dayKey, dayStartFromEnv, relTime, stamp, weekKey } from '../sr
 import { cost, truncate } from '../src/cost.mjs'
 import { select } from '../src/budget.mjs'
 import { renderDigest } from '../src/render.mjs'
+import { buildTrace, traceLine } from '../src/trace.mjs'
 import {
   readEvents,
   appendEvent,
@@ -378,6 +379,64 @@ test('两条保底撞车：先保重的那条，近的如实记 no-room，不假
   assert.equal(r.recent.length, 0)
   assert.equal(r.recentFloorKeep, false)
   assert.equal(r.drops.find((d) => d.weight === 0).why, 'no-room')
+})
+
+test('重复：逐字相同的两条只留一条，头部分明写「合 1」（§28）', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const same = '她把窗关上了'
+  const events = [
+    { at: now - 90 * 60e3, fact: same, weight: 2 },
+    { at: now - 60 * 60e3, fact: same, weight: 2 },
+    { at: now - 30 * 60e3, fact: '她说外面风大，就把窗关了', weight: 2 },
+  ]
+  const { text, stats } = renderDigest(events, { budget: 200, now })
+  assert.equal(stats.kept, 2)
+  assert.equal(stats.merged, 1)
+  assert.equal(text.split(same).length - 1, 1, '同一句话只该占一行')
+  assert.match(text, /合 1/)
+  const dup = stats.drops.filter((d) => d.why === 'dup')
+  assert.equal(dup.length, 1)
+  assert.equal(dup[0].at, now - 90 * 60e3, '合掉的是旧的那条，留最新的')
+})
+
+test('重复：同一句话权重不同不算复读——w2 和 w0 说的是两件事', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const events = [
+    { at: now - 60 * 60e3, fact: '今天风大', weight: 2 },
+    { at: now - 8 * 60e3, fact: '今天风大', weight: 0 },
+  ]
+  const { stats } = renderDigest(events, { budget: 200, now })
+  assert.equal(stats.merged, 0, '权重变了是信号，不是复读')
+  assert.equal(stats.kept, 2)
+})
+
+test('重复：合掉以后省下的额度装得下一条真事', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const events = [
+    { at: now - 3 * 60e3, fact: '窗关上了', weight: 2 },
+    { at: now - 2 * 60e3, fact: '窗关上了', weight: 2 },
+    { at: now - 60e3, fact: '药要吃完', weight: 2 },
+    { at: now, fact: '周末回家', weight: 2 },
+  ]
+  // 三条真事各 14 代价，60 的份额装得下；不合并的话第四条(复读)会挤掉一条真事
+  const r = select(events, { budget: 60 })
+  assert.equal(r.merged, 1)
+  assert.deepEqual(
+    r.pinned.map((e) => e.fact),
+    ['窗关上了', '药要吃完', '周末回家'],
+  )
+})
+
+test('账本：合掉的重复不算「截」，单独记「合」', () => {
+  const stats = {
+    budget: 200,
+    used: 34,
+    keptAt: [1794458529041, 1794458529102],
+    merged: 1,
+    drops: [{ at: 1794458528987, why: 'dup', weight: 2 }],
+  }
+  const line = traceLine(buildTrace(stats, { now: 1794458529164 }))
+  assert.match(line, /丢 0 · 截 0 · 合 1/)
 })
 
 // ---------------------------------------------------------------- 存储

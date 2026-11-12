@@ -444,6 +444,7 @@ function cmdDigest(home, flags, { out, now, env }) {
   if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
   if (badLong) out.error(`! ${badLong} 行长期记忆读不出来，已跳过`)
   reportDrops(stats, out)
+  reportDup(stats, out)
   reportLongDrops(stats, out)
   // 落账放在最后：中途抛错（比如 --out 写不进去）说明这份摘要没人用上，不该记账。
   appendTrace(home, buildTrace(stats, { now }))
@@ -502,6 +503,20 @@ function reportDrops(stats, out) {
   if (gone.some((d) => (d.weight ?? 0) >= 3)) {
     out.error('!! 里面有 weight=3 的记录被丢了。要么加 --budget，要么承认这条不在"永久"档。')
   }
+}
+
+/**
+ * 逐字相同的重复被合成了几行。
+ *
+ * 合并也算一种"没进去"，所以要说一声；但它的原因和预算无关，不该混进
+ * 「预算不够，丢了 N 条」里去——那句话会让人去加 --budget，而这件事加预算解决不了。
+ */
+function reportDup(stats, out) {
+  const dup = (stats.drops ?? []).filter((d) => d.why === 'dup')
+  if (!dup.length) return
+  out.error(`! 合掉 ${dup.length} 条逐字重复，只留最新的那条：`)
+  for (const d of dup.slice(0, 5)) out.error(`    ${stamp(d.at)}  w${d.weight ?? 0}  ${d.fact}`)
+  if (dup.length > 5) out.error(`    ……（还有 ${dup.length - 5} 条）`)
 }
 
 /** 长期层被挤掉也要说：它本该比日记层更"永久"。 */

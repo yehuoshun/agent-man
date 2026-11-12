@@ -1,6 +1,6 @@
 import { relTime, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
-import { select, pinnedFloor, recentFloor, PINNED_WEIGHT } from './budget.mjs'
+import { select, dedupeExact, pinnedFloor, recentFloor, PINNED_WEIGHT } from './budget.mjs'
 import { selectMemory, longLine } from './memory.mjs'
 
 /**
@@ -158,19 +158,24 @@ function pickDay(events, budget) {
 
 /** 一点额度都不剩时：条目全记成 no-room，报账仍然是诚实的。 */
 function nothingFits(events) {
+  const { events: uniq, merged } = dedupeExact(events)
   return {
     pinned: [],
     recent: [],
     used: 0,
-    drops: events.map((e) => ({ ...e, why: 'no-room' })),
+    drops: [...merged, ...uniq.map((e) => ({ ...e, why: 'no-room' }))],
     floorKeep: false,
     recentFloorKeep: false,
+    merged: merged.length,
   }
 }
 
 function compose({ events, memory, day, long, form, now, title, budget, dayStart }) {
   const noRoom = day.drops.filter((d) => d.why === 'no-room').length
   const cutoff = day.drops.filter((d) => d.why === 'truncated').length
+  // 逐字相同的重复被合成了几行：跟「丢」分开说，合并不等于丢了（§28）。
+  const merged = day.drops.filter((d) => d.why === 'dup').length
+  const mergedNote = merged ? ` · 合 ${merged}` : ''
   const dayKept = day.pinned.length + day.recent.length
   const longKept = long.shown.length
 
@@ -179,10 +184,13 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
     out.push(
       `<!-- agent-man · 日记 ${events.length} 条 / 长期 ${memory.length} 条 · ` +
         `取 ${dayKept}+${longKept} · 预算 ${budget} · 条目 ${day.used + long.used} · ` +
-        `丢 ${noRoom + long.drops.length} · 截 ${cutoff} · ${stamp(now)} -->`,
+        `丢 ${noRoom + long.drops.length}${mergedNote} · 截 ${cutoff} · ${stamp(now)} -->`,
     )
   } else if (form === COMPACT) {
-    out.push(`<!-- ${events.length}/${memory.length} · 取 ${dayKept}+${longKept} · 丢 ${noRoom + long.drops.length} · 截 ${cutoff} -->`)
+    out.push(
+      `<!-- ${events.length}/${memory.length} · 取 ${dayKept}+${longKept} · ` +
+        `丢 ${noRoom + long.drops.length}${mergedNote} · 截 ${cutoff} -->`,
+    )
   }
 
   if (form === TITLE_ONLY) {
@@ -212,6 +220,7 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
       budget,
       noRoom,
       cutoff,
+      merged,
       drops: day.drops,
       longTotal: memory.length,
       longKept,
