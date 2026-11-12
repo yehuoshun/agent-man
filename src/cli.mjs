@@ -43,7 +43,7 @@ import { makePlan, pendingPlans, upcoming, todayPlans } from './plan.mjs'
 import { judgeSky, cacheState, dateText, snapshotOf, skyText } from './sky.mjs'
 import * as defaultNet from './net.mjs'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const DUP_WINDOW = 24 * 3600e3
 
 const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
