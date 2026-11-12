@@ -27,7 +27,7 @@ import {
 } from '../src/store.mjs'
 import { makeItem, activeItems, selectMemory, RULE_LIMIT } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
-import { main, parseArgs, FLAGS } from '../src/cli.mjs'
+import { main, parseArgs, FLAGS, CUE_RULES } from '../src/cli.mjs'
 import { inQuiet } from '../src/when.mjs'
 import { cacheState } from '../src/sky.mjs'
 
@@ -2197,4 +2197,38 @@ test('时间线的 --since 按本地整天算，早于那天的都不再列', ()
   assert.ok(out.all.includes('今天的事'), out.all)
   assert.ok(out.all.includes('昨天的事'), out.all)
   assert.ok(!out.all.includes('前天的事'), out.all)
+})
+
+test('cue 把规矩当处境端出来：开口前先看见自己定过什么；不打扰时一个字都不多', () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 11)
+  main(['rule', '夜里十一点后不提工作', '--why', '她只回了句嗯'], { env, out: recorder(), now })
+  main(['log', '她把窗关上了'], { env, out: recorder(), now })
+
+  const out = recorder()
+  assert.equal(main(['cue', '--force'], { env, out, now }), 0)
+  assert.ok(out.all.includes('自己定的规矩（1 条）：'), out.all)
+  assert.ok(out.all.includes('- 夜里十一点后不提工作'), out.all)
+
+  // 不打扰那一行只有一句话：规矩塞进去就把"安静"变成一个长回复。
+  const quiet = recorder()
+  assert.equal(main(['cue'], { env, out: quiet, now }), 0)
+  assert.ok(quiet.all.includes('不打扰'), quiet.all)
+  assert.ok(!quiet.all.includes('自己定的规矩'), quiet.all)
+})
+
+test(`规矩太多时 cue 只端最近 ${CUE_RULES} 条，并说清一共几条`, () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 11)
+  for (let i = 1; i <= 10; i += 1) {
+    main(['rule', `第${i}条规矩`, '--why', '一件具体的事'], { env, out: recorder(), now })
+  }
+  main(['log', '她把窗关上了'], { env, out: recorder(), now })
+
+  const out = recorder()
+  main(['cue', '--force'], { env, out, now })
+  assert.ok(out.all.includes('共 10 条，最近 8 条'), out.all)
+  assert.ok(!out.all.includes('- 第1条规矩'), '最旧的两条不该端出来：' + out.all)
+  assert.ok(out.all.includes('- 第10条规矩'), out.all)
+  assert.ok(out.all.includes('其余用 recall --tier 0 看全'), out.all)
 })

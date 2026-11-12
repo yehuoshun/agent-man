@@ -37,7 +37,7 @@ import {
   appendPlan,
   claimId,
 } from './store.mjs'
-import { makeItem, activeItems, longLine, itemLine, makeRule, ruleLine, RULE_LIMIT, TIERS } from './memory.mjs'
+import { makeItem, activeItems, longLine, itemLine, makeRule, ruleLine, isRule, RULE_LIMIT, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
@@ -50,6 +50,8 @@ import * as defaultNet from './net.mjs'
 
 const VERSION = '0.3.0'
 const DUP_WINDOW = 24 * 3600e3
+/** cue 一次最多端出几条规矩：判断要看的是约束，不是一份手册。 */
+export const CUE_RULES = 8
 
 const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
 
@@ -959,10 +961,13 @@ function cueLines(home, flags, { out, now, env, say }) {
   const { records: planRecs, bad: badPlan } = readPlan(home)
   const today = todayPlans(planRecs, { now, dayStart })
   const lastCue = readCue(home)
+  const { items: memItems, bad: badMem } = readMemory(home)
+  const liveRules = activeItems(memItems).filter(isRule)
   const r = cue({ events, notes: pending, lastCue, now, minGap })
   if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
   if (badNotes) out.error(`! ${badNotes} 行便条读不出来，已跳过`)
   if (badPlan) out.error(`! ${badPlan} 行日程读不出来，已跳过`)
+  if (badMem) out.error(`! ${badMem} 行长期记忆读不出来，已跳过`)
 
   if (!r.speak && !flags.force) {
     // 不打扰也要交代过期作废的那几张：静默丢弃比多一行更糟。
@@ -1005,6 +1010,19 @@ function cueLines(home, flags, { out, now, env, say }) {
   if (today.length) {
     say('今天的安排：')
     for (const r of today) say(`· ${planItem(r, now)}`)
+  }
+
+  if (liveRules.length) {
+    // 规矩是"我答应过自己怎么做"，所以放在最后：前面的都是处境，这一行是约束。
+    // 只说事实，不提醒"要遵守"——提醒一句就成了台词，判断仍然是模型自己的事。
+    const tail = liveRules.slice(-CUE_RULES)
+    const head =
+      liveRules.length > tail.length
+        ? `共 ${liveRules.length} 条，最近 ${tail.length} 条`
+        : `${liveRules.length} 条`
+    say(`自己定的规矩（${head}）：`)
+    for (const it of tail) say(`- ${it.fact}`)
+    if (liveRules.length > tail.length) say(`……（其余用 recall --tier 0 看全）`)
   }
 
   if (!flags.peek) {

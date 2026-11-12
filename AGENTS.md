@@ -65,7 +65,7 @@
   标签一旦被外人下过就**不移动**；开发期验证发布链路时用 `git push -f origin v<version>` 挪标签重跑（§27）。
 - 只改 Markdown 的提交**不跑** CI（`paths-ignore`）：连推「代码 + 文档」两个提交时，后一个不会把前一个的 windows 腿掐掉。
   代价是纯文档改动没有 CI 兜底——文档里的命令、路径得自己对一遍。
-- 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 8`、`pinnedShare = 0.7`、`longShare = 0.6`、`DUP_WINDOW = 24h`。
+- 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 8`、`pinnedShare = 0.7`、`longShare = 0.6`、`DUP_WINDOW = 24h`、`JUDGE_KEEP = 200`、`RULE_MAX = 120`、`RULE_LIMIT = 20`、`CUE_RULES = 8`。
 
 ## 五、代码风格（照现有代码写，别引入第二套）
 
