@@ -7,8 +7,8 @@
 ```
 记事   agent-man log / remember / digest / recall / find / trace / show
 定时候  agent-man cue
-递话    agent-man leave                       ← 现在在这里
-看天气  …
+递话    agent-man leave
+看天气  agent-man place / sky                 ← 现在在这里
 ```
 
 ## 为什么
@@ -71,6 +71,18 @@ node bin/agent-man.mjs show 她怕冷
 # 给下一次的自己留一句：cue 递出，递过就烧，7 天不取作废
 node bin/agent-man.mjs leave "记得问她头痛好点没" --when 她提到加班时
 ```
+
+```bash
+# 记下你在哪儿：坐标查一次就存住，之后看天不再问
+node bin/agent-man.mjs place 上海
+
+# 外面什么样、跟上次比变了什么——变了才开口，没变就一句"和上次一样"
+node bin/agent-man.mjs sky
+```
+
+天气只报变化：天况换类、最高温跳 5℃、有雨而上次没有、第一次进极热极冷。
+取数走 Open-Meteo（不要 key），半小时内复用缓存；断网时能报旧数，但会写明那是几点的数
+（见 `docs/decisions.md` §25）。
 
 断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，
 半行会立刻报错而不是等下次读才发现（见 `docs/decisions.md` §20）。

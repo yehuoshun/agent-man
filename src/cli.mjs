@@ -16,6 +16,10 @@ import {
   writeCue,
   readHandoff,
   appendHandoff,
+  readPlace,
+  writePlace,
+  readSky,
+  writeSky,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
@@ -23,6 +27,8 @@ import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
 import { cue, MIN_GAP, describeQuiet } from './when.mjs'
 import { makeNote, pendingNotes } from './handoff.mjs'
+import { judgeSky, STALE_MS } from './sky.mjs'
+import * as defaultNet from './net.mjs'
 
 const VERSION = '0.1.0'
 const DUP_WINDOW = 24 * 3600e3
@@ -40,6 +46,8 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man cue [选项]               这会儿该不该开口（给处境，不给台词）
   agent-man show <主题|id> [选项]    顺着一条结论找回原文（refs 指向的日子）
   agent-man leave <便条> --when <场合>  给下一次的自己留一句（cue 递出，看过就烧）
+  agent-man place <城市>             记下你在哪儿（查一次坐标，以后不再问）
+  agent-man sky [选项]               外面什么样、跟上次比变了什么
   agent-man --help
 
 log 选项：
@@ -99,6 +107,10 @@ show 选项：
   --limit 20                每个出处最多列几条原文
   --fact <文本>             等价于位置参数
 
+sky 选项：
+  --fresh                   这次一定重新取数（不吃半小时内的缓存）
+  --force                   连"和上次说的一样"也不管，这次一定说
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -136,10 +148,12 @@ export const FLAGS = {
   cue: { value: ['limit', 'min-gap'], bool: ['peek', 'force'] },
   show: { value: ['limit', 'fact'], bool: [] },
   leave: { value: ['when', 'ttl', 'at'], bool: [] },
+  place: { value: [], bool: [] },
+  sky: { value: [], bool: ['fresh', 'force'] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
-const NO_POS = new Set(['recall', 'digest', 'ls', 'trace', 'cue'])
+const NO_POS = new Set(['recall', 'digest', 'ls', 'trace', 'cue', 'sky'])
 
 /** 用法错误（解析层就拦下的）单独标一下：它和"要记的事是空的"不是一类，退出码也不同。 */
 function usage(msg) {
@@ -236,7 +250,7 @@ export function parseArgs(argv) {
 }
 
 export function main(argv = process.argv.slice(2), ctx = {}) {
-  const { env = process.env, out = console, now = Date.now() } = ctx
+  const { env = process.env, out = console, now = Date.now(), net = defaultNet } = ctx
   try {
     // 解析也在 try 里：选项名写错要像命令名写错一样"喊出来"，而不是抛栈。
     const { cmd, pos, flags } = parseArgs(argv)
@@ -265,6 +279,8 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'cue') return cmdCue(home, flags, { out, now })
     if (cmd === 'show') return cmdShow(home, pos, flags, { out, env })
     if (cmd === 'leave') return cmdLeave(home, pos, flags, { out, now })
+    if (cmd === 'place') return guarded(cmdPlace(home, pos, flags, { out, net }), out)
+    if (cmd === 'sky') return guarded(cmdSky(home, flags, { out, now, net }), out)
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -711,6 +727,93 @@ function cmdCue(home, flags, { out, now }) {
  * 这个命令刻意不总结、不排序"重要性"——账本只报事实。
  * 读到的事要不要提，仍是模型自己的判断（docs/decisions.md §17）。
  */
+/**
+ * 联网命令是异步的，普通命令是同步的：main 一直返回数字，只有 place / sky 会交出 Promise。
+ * 这里把 async 里的抛错也接住——否则它绕过 main 的 try/catch，变成未处理拒绝。
+ */
+function guarded(result, out) {
+  if (!result || typeof result.then !== 'function') return result
+  return result.catch((e) => {
+    out.error(`! ${e.message}`)
+    return e.usage ? 2 : 1
+  })
+}
+
+/**
+ * 记下我在哪儿。
+ *
+ * 地名→坐标要联网，而"我住哪"一个月变不了几次：查一次存下来，
+ * 之后每次看天只用一个坐标，少一次可能超时的请求（§25）。
+ */
+async function cmdPlace(home, pos, flags, { out, net }) {
+  const want = pos.join(' ').trim()
+  if (!want) {
+    const cur = readPlace(home)
+    if (!cur) throw new Error('还不知道你在哪儿：agent-man place 上海（写城市名，查一次就记住）')
+    out.log(`记的是：${cur.name}（${cur.lat}, ${cur.lon}${cur.tz ? `，${cur.tz}` : ''}）`)
+    return 0
+  }
+
+  const place = await net.geocode(want)
+  writePlace(home, place)
+  out.log(`记下了：${place.name}`)
+  out.log(`  ${place.lat}, ${place.lon}${place.tz ? `（${place.tz}）` : ''}；以后看天就用这个坐标`)
+  return 0
+}
+
+/**
+ * 外面什么样，跟上次比变了什么。
+ *
+ * 三条确定性门槛全在 judgeSky 里，这里只管取数、缓存、落状态：
+ * 半小时内取过的数不重复请求；说的内容对着"上次说过的快照"比，
+ * 不是对着"上次取到的数"比——没说话的数据不该算进"我说过什么"。
+ *
+ * 取不到数又非要报时的处理：有旧数就报旧数，但必须说清是几点的数（§22）。
+ * 不拿"现在"冒充"刚才取到的"。
+ */
+async function cmdSky(home, flags, { out, now, net }) {
+  const place = readPlace(home)
+  if (!place) throw new Error('还不知道你在哪儿：先 agent-man place 上海（查一次坐标，之后不再问）')
+
+  const rec = readSky(home)
+  const cached = rec?.data ?? null
+  const stale = !cached || now - rec.at >= STALE_MS
+  let data = cached
+  let at = rec?.at ?? null
+
+  if (stale || flags.fresh || flags.force) {
+    try {
+      data = await net.fetchSky(place, { now })
+      at = now
+    } catch (e) {
+      if (!cached) throw e
+      out.error(`! ${e.message}；下面用的是 ${relTime(rec.at, { now })}的数据`)
+    }
+  }
+
+  const j = judgeSky(data, rec?.said?.snapshot ?? null)
+  const head = `${place.short || place.name} ${clock(now)}`
+
+  if (!j.speak && !flags.force) {
+    out.log(`${head}，${j.lines[0]}——和上次说的一样，不打扰`)
+    if (at !== rec?.at) writeSky(home, { at, data, said: rec?.said ?? null })
+    return 0
+  }
+
+  out.log(`${head}，${j.lines[0]}`)
+  out.log(j.lines[1])
+  if (j.changes.length) {
+    out.log('变了什么：')
+    for (const c of j.changes) out.log(`· ${c}`)
+  } else if (j.fresh) {
+    out.log('第一次看天，先记下这个样子。')
+  } else {
+    out.log('（和上次一样，这回是你让我再说一遍）')
+  }
+  writeSky(home, { at, data, said: { at: now, snapshot: j.snapshot } })
+  return 0
+}
+
 function cmdTrace(home, flags, { out }) {
   const limit = Number(flags.limit ?? 10)
   if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)

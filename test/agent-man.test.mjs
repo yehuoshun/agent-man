@@ -1218,3 +1218,136 @@ test('递话：静默时段不打扰，便条留着等下次开口', () => {
   assert.equal(main(['cue'], { env, out: morning, now: parseAt('2026-11-13 08:05') }), 0)
   assert.ok(morning.all.includes('明早要问她睡得怎么样'), `下一场该递出来：\n${morning.all}`)
 })
+
+// ---------------------------------------------------------------- 看天气
+
+function skyOf(over = {}) {
+  return {
+    at: 0,
+    place: '上海',
+    current: { temp: 17.6, code: 3 },
+    daily: [
+      { date: '2026-11-12', tmax: 18.3, tmin: 12.7, precip: 0 },
+      { date: '2026-11-13', tmax: 21.5, tmin: 14.6, precip: 2.4 },
+    ],
+    ...over,
+  }
+}
+
+/** 假天气源：只记账、不发请求。天气是外部世界，测它必须能换数。 */
+function fakeNet() {
+  const calls = { geocode: 0, sky: 0 }
+  const net = {
+    calls,
+    data: skyOf(),
+    error: null,
+    async geocode(name) {
+      calls.geocode++
+      return { name: `${name}，某市，中国`, short: name, lat: 31.2, lon: 121.4, tz: 'Asia/Shanghai' }
+    },
+    async fetchSky(place, { now }) {
+      calls.sky++
+      if (net.error) throw net.error
+      return { ...net.data, at: now, place: place.short }
+    },
+  }
+  return net
+}
+
+const skyNow = new Date(2026, 10, 12, 9, 0).getTime()
+
+test('看天：第一次说，之后没变就不打扰——变了才开口', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+
+  let out = recorder()
+  assert.equal(await main(['place', '上海'], { env, out, now: skyNow, net }), 0)
+  assert.match(out.all, /记下了：上海/)
+
+  out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow, net }), 0)
+  assert.match(out.all, /上海 09:00，阴，17\.6℃/)
+  assert.match(out.all, /今天 12\.7–18\.3℃，明天 14\.6–21\.5℃/)
+  assert.match(out.all, /第一次看天/)
+
+  out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 3600e3, net }), 0)
+  assert.match(out.all, /和上次说的一样，不打扰/)
+})
+
+test('看天：天况换类、最高温跳 5 度才叫变了（差 4.9 度不算）', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+
+  // 只涨 4.9 度、天况还是阴：不是新闻
+  net.data = skyOf({ daily: [{ ...skyOf().daily[0], tmax: 23.2 }, skyOf().daily[1]] })
+  const quiet = recorder()
+  assert.equal(await main(['sky'], { env, out: quiet, now: skyNow + 3600e3, net }), 0)
+  assert.doesNotMatch(quiet.all, /变了什么/)
+
+  // 换类 + 下雨 + 跳 6.8 度：这才是"变了"
+  const wet = skyOf({
+    current: { temp: 19.1, code: 63 },
+    daily: [{ date: '2026-11-12', tmax: 25.1, tmin: 13.4, precip: 3.2 }, skyOf().daily[1]],
+  })
+  net.data = wet
+  const out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 7200e3, net }), 0)
+  assert.match(out.all, /变了什么：/)
+  assert.match(out.all, /阴变中雨/)
+  assert.match(out.all, /最高 18\.3→25\.1℃/)
+  assert.match(out.all, /要下雨 3\.2mm/)
+})
+
+test('看天：半小时内不重复取数，--fresh 才重新取', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+  assert.equal(net.calls.sky, 1)
+
+  // 半小时之内再问：吃缓存，不再打天气源
+  await main(['sky'], { env, out: recorder(), now: skyNow + 600e3, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow + 1500e3, net })
+  assert.equal(net.calls.sky, 1)
+
+  await main(['sky', '--fresh'], { env, out: recorder(), now: skyNow + 1600e3, net })
+  assert.equal(net.calls.sky, 2)
+})
+
+test('看天：取不到数就直说；有旧数才用旧数，并且要报出是几点的', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+
+  net.error = new Error('连不上天气源（timeout）；这次没取到数')
+  let out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow, net }), 1)
+  assert.match(out.errs.join('\n'), /连不上天气源/)
+
+  // 先说一次，攒下旧数；一天以后断网：能说，但得说清那是几点的
+  net.error = null
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+  net.error = new Error('连不上天气源（timeout）；这次没取到数')
+  out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 24 * 3600e3, net }), 0)
+  assert.match(out.errs.join('\n'), /下面用的是 .*的数据/)
+})
+
+test('看天：地方只查一次坐标，之后每次看天不再查地名', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky', '--fresh'], { env, out: recorder(), now: skyNow + 60e3, net })
+  assert.equal(net.calls.geocode, 1)
+})
+
+test('看天：没记下地方就不猜坐标，直接要城市名', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow, net: fakeNet() }), 1)
+  assert.match(out.errs.join('\n'), /agent-man place/)
+})

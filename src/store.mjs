@@ -25,6 +25,8 @@ export function paths(home) {
     trace: path.join(home, 'state', 'trace.jsonl'),
     cue: path.join(home, 'state', 'cue.json'),
     handoff: path.join(home, 'state', 'handoff.jsonl'),
+    place: path.join(home, 'state', 'place.json'),
+    sky: path.join(home, 'state', 'sky.json'),
   }
 }
 
@@ -341,6 +343,55 @@ export function writeCue(home, rec) {
   writeAtomic(paths(home).cue, JSON.stringify(rec) + '\n')
   return rec
 }
+
+/**
+ * 小状态文件（坐标、上次看天的快照）：一整个 JSON 对象，覆盖写。
+ *
+ * 坏了不猜：坐标猜错会把天气报到别的城市去，快照猜错会让"变了什么"全是假的。
+ * 这两种错都不会报错、只会安静地说错话，所以宁可让它当场崩。
+ */
+function readJson(file, what) {
+  let raw
+  try {
+    raw = fs.readFileSync(file, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return null
+    throw e
+  }
+  try {
+    return JSON.parse(raw.trim())
+  } catch {
+    throw new Error(`${file} 不是合法 JSON；${what}坏了不能猜，删掉它重来`)
+  }
+}
+
+function writeJson(home, file, rec) {
+  ensure(home)
+  writeAtomic(file, `${JSON.stringify(rec)}\n`)
+  return rec
+}
+
+/** 记下的地方（state/place.json）：查一次地理编码就存下来，之后只看坐标。 */
+export function readPlace(home) {
+  return readJson(paths(home).place, '记下的地方')
+}
+
+export function writePlace(home, place) {
+  return writeJson(home, paths(home).place, place)
+}
+
+/**
+ * 上次看天的记录（state/sky.json）：`{ at, data, said }`。
+ * data 是缓存下来的那份天气（省一次请求），said 是"上次说过的样子"（判断变没变）。
+ */
+export function readSky(home) {
+  return readJson(paths(home).sky, '上次看天的记录')
+}
+
+export function writeSky(home, rec) {
+  return writeJson(home, paths(home).sky, rec)
+}
+
 /**
  * 原子写：tmp + fsync + rename（POSIX 上再 fsync 目录），断电不会留下半个文件。
  *
