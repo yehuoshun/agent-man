@@ -30,7 +30,8 @@
 - **无构建、无转译、无 TypeScript**。`node bin/agent-man.mjs <cmd>` 必须能直接跑。
 - **行末一律 LF**。`.gitattributes` 已锁 `eol=lf`；在 Windows 上用编辑器或脚本写文件也必须写 `\n`，否则整文件变成 diff。
 - 文件编码 UTF-8，**不写 BOM**（PowerShell `Set-Content -Encoding UTF8` 那次事故）。
-- 提交前 `node --test` 必须全绿；当前基线 **44 个用例**，只增不减。
+- 提交前 `node --test` 必须全绿；用例只增不减。条数以 `test/agent-man.test.mjs` 为准，
+  不在这里写死——这里写过的"44 个"在 §15 加完用例后就过期了，过期的基线比没有更糟。
 
 ## 四、模块职责
 

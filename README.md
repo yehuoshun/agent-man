@@ -87,7 +87,7 @@ node bin/agent-man.mjs recall --tier 0
 
 ```bash
 git clone git@github.com:yehuoshun/agent-man.git
-cd agent-man && node --test    # 44 个用例
+cd agent-man && node --test    # 用例只增不减，条数以输出为准
 ```
 
 数据目录默认 `~/.agent-man`，用 `AGENT_MAN_HOME` 覆盖；日界默认午夜，
