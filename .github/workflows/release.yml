@@ -84,12 +84,6 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # 要的是标签的注解正文（发布说明就写在那儿），浅克隆拿不到。
-          fetch-depth: 0
-          fetch-tags: true
-
       - uses: actions/download-artifact@v4
         with:
           name: tarball
@@ -101,20 +95,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # v0.2.0 的 Release 正文只有自动生成的 Changelog，因为这条命令只会 --generate-notes。
-          # 发布说明本来就写在标签注解里（git tag -a -m），直接用它当正文，不再让 GitHub 从
-          # 提交标题里现凑——单人仓库的 compare 链接对读者没有信息量。
-          # 轻量标签没有正文：%(contents) 会退回成"那条提交的信息"，拿它当发布说明是误导，
-          # 所以先看对象类型，只有 annotated 才取。
+          # v0.2.0 的正文只有自动 Changelog，因为这条命令只会 --generate-notes。
+          # v0.2.1 想改用标签注解，却在 CI 里撞上第二个坑：actions/checkout 检出一个标签时会
+          # 执行 git fetch origin +<commit sha>:refs/tags/<name>，把标签 ref 直接指到提交上，
+          # 注解对象就此被抹平——本地 git cat-file -t 说 commit，%(contents) 拿到的是提交信息。
+          # 所以别问本地 git，直接问 API 要标签对象。（顺带：这个 job 现在不用 checkout 了，
+          # 少一步也快几秒；-R 仍然不能省，没有 .git 时 gh 猜不出是哪个仓库。）
+          read -r obj_type obj_sha < <(
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" \
+              --jq '[.object.type, .object.sha] | @tsv'
+          )
           args=(-R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME")
-          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ]; then
-            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          if [ "$obj_type" = tag ]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/tags/$obj_sha" --jq '.message' > notes.md
             if grep -q '[^[:space:]]' notes.md; then
               args+=(--notes-file notes.md)
             else
               args+=(--generate-notes)
             fi
           else
+            # 轻量标签没有注解：拿提交信息当发布说明是误导，退回自动 Changelog。
             args+=(--generate-notes)
           fi
           gh release create "$GITHUB_REF_NAME" dist/*.tgz "${args[@]}"
