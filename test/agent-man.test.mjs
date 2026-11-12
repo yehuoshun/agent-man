@@ -22,6 +22,7 @@ import {
 import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
 import { main, parseArgs, FLAGS } from '../src/cli.mjs'
+import { inQuiet } from '../src/when.mjs'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
 
@@ -1033,4 +1034,88 @@ test('find 没给词就报错；它只搜日记，结论层归 recall --grep', (
   const recall = recorder()
   assert.equal(main(['recall', '--grep', '关窗'], { env, out: recall }), 0)
   assert.ok(recall.all.includes('她怕冷'), recall.all)
+})
+
+test('静默时段跨零点算得对：23 点是夜里，07 点还是夜里，08 点不是', () => {
+  const t = (s) => parseAt(s)
+  assert.equal(inQuiet(t('2026-11-12 23:30')), true)
+  assert.equal(inQuiet(t('2026-11-13 07:59')), true)
+  assert.equal(inQuiet(t('2026-11-13 08:00')), false)
+  assert.equal(inQuiet(t('2026-11-12 22:59')), false)
+})
+
+test('cue：有新的就说，说出来之后不再重复端上来（水位）', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '今天风大', '--at', '2026-11-12 09:00'], {
+    env, out: recorder(), now: t('2026-11-12 09:00'),
+  })
+
+  const out = recorder()
+  assert.equal(main(['cue'], { env, out, now: t('2026-11-12 21:40') }), 0)
+  assert.ok(out.all.includes('这会儿 21:40'), out.all)
+  assert.ok(out.all.includes('还没在这儿开过口'), out.all)
+  assert.ok(out.all.includes('今天风大'), out.all)
+
+  const again = recorder()
+  assert.equal(main(['cue'], { env, out: again, now: t('2026-11-12 22:00') }), 0)
+  assert.ok(again.all.includes('不打扰'), again.all)
+  assert.ok(again.all.includes('没有新东西'), again.all)
+})
+
+test('cue：离上次开口不到六小时不叫人，--force 可以硬问', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '第一件'], { env, out: recorder(), now: t('2026-11-12 09:00') })
+  main(['cue'], { env, out: recorder(), now: t('2026-11-12 10:00') })
+  main(['log', '第二件'], { env, out: recorder(), now: t('2026-11-12 10:30') })
+
+  const out = recorder()
+  main(['cue'], { env, out, now: t('2026-11-12 11:00') })
+  assert.ok(out.all.includes('不打扰'), out.all)
+  assert.ok(out.all.includes('不到 6 小时'), out.all)
+
+  const forced = recorder()
+  assert.equal(main(['cue', '--force'], { env, out: forced, now: t('2026-11-12 11:00') }), 0)
+  assert.ok(forced.all.includes('第二件'), forced.all)
+})
+
+test('cue：静默时段不叫人；--peek 说了也不记水位', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '半夜的事'], { env, out: recorder(), now: t('2026-11-12 21:00') })
+
+  const quiet = recorder()
+  main(['cue'], { env, out: quiet, now: t('2026-11-12 23:30') })
+  assert.ok(quiet.all.includes('静默时段'), quiet.all)
+
+  const peek = recorder()
+  main(['cue', '--force', '--peek'], { env, out: peek, now: t('2026-11-12 23:40') })
+  assert.ok(peek.all.includes('半夜的事'), peek.all)
+
+  const again = recorder()
+  main(['cue'], { env, out: again, now: t('2026-11-13 09:00') })
+  assert.ok(again.all.includes('半夜的事'), `--peek 不该把水位抬走：\n${again.all}`)
+})
+
+test('cue 的水位坏了就报错，不猜：猜错会让同一条日记永远端不上来', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  fs.mkdirSync(path.join(home, 'state'), { recursive: true })
+  fs.writeFileSync(path.join(home, 'state', 'cue.json'), '{ 坏', 'utf8')
+  const out = recorder()
+  assert.equal(main(['cue'], { env, out, now: parseAt('2026-11-12 21:00') }), 1)
+  assert.ok(out.errs.join('\n').includes('不是合法 JSON'), out.errs.join('\n'))
+})
+
+test('cue --min-gap / --limit 只认合法值，多余的位置参数也不吃', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const bad = recorder()
+  assert.equal(main(['cue', '--limit', '0'], { env, out: bad }), 1)
+  assert.ok(bad.errs.join('\n').includes('--limit 必须是正整数'))
+  const gap = recorder()
+  assert.equal(main(['cue', '--min-gap', 'abc'], { env, out: gap }), 1)
+  assert.ok(gap.errs.join('\n').includes('--min-gap'))
+  const pos = recorder()
+  assert.equal(main(['cue', '多嘴'], { env, out: pos }), 2)
 })

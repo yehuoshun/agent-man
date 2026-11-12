@@ -23,6 +23,7 @@ export function paths(home) {
     state: path.join(home, 'state'),
     consolidation: path.join(home, 'state', 'consolidation.json'),
     trace: path.join(home, 'state', 'trace.jsonl'),
+    cue: path.join(home, 'state', 'cue.json'),
   }
 }
 
@@ -265,6 +266,39 @@ export function readTraces(home) {
   return { traces, bad }
 }
 
+/**
+ * 读"上次开口"的记录（state/cue.json）。没有就返回 null——第一次问和问过很多次
+ * 是两件事：前者没有水位（所有日记都算新的），后者要按上次的水位算。
+ *
+ * 坏掉的记录不猜：水位猜错会让同一条日记要么永远端不上来、要么反复端上来。
+ */
+export function readCue(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.cue, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return null
+    throw e
+  }
+  let rec
+  try {
+    rec = JSON.parse(raw.trim())
+  } catch {
+    throw new Error(`${p.cue} 不是合法 JSON；坏掉的水位不能猜，删掉它重来`)
+  }
+  if (!rec || typeof rec.lastAt !== 'number' || !Number.isFinite(rec.lastAt)) {
+    throw new Error(`${p.cue} 缺 lastAt（epoch ms），没法判断隔了多久`)
+  }
+  return rec
+}
+
+/** 覆盖写：只留最近一次开口。走 writeAtomic（§20）。 */
+export function writeCue(home, rec) {
+  ensure(home)
+  writeAtomic(paths(home).cue, JSON.stringify(rec) + '\n')
+  return rec
+}
 /**
  * 原子写：tmp + fsync + rename（POSIX 上再 fsync 目录），断电不会留下半个文件。
  *

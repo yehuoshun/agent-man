@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { parseAt, dayStartFromEnv, stamp, daySpan } from './time.mjs'
+import { parseAt, dayStartFromEnv, stamp, daySpan, clock, relTime } from './time.mjs'
 import { cost } from './cost.mjs'
 import {
   resolveHome,
@@ -12,11 +12,14 @@ import {
   writeConsolidation,
   appendTrace,
   readTraces,
+  readCue,
+  writeCue,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
+import { cue, MIN_GAP, describeQuiet } from './when.mjs'
 
 const VERSION = '0.1.0'
 const DUP_WINDOW = 24 * 3600e3
@@ -31,6 +34,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man ls [--limit 20]          看原始事件
   agent-man find <词> [选项]         在日记原文里搜（摘要只压不取，原文在这）
   agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
+  agent-man cue [选项]               这会儿该不该开口（给处境，不给台词）
   agent-man --help
 
 log 选项：
@@ -75,6 +79,12 @@ find 选项：
   --kind dm|qq|video|note   只看某一类来源
   --limit 20                最多列几条，取最近的
 
+cue 选项：
+  --min-gap 6               至少隔几小时才再叫人，默认 6
+  --force                   无视间隔与静默时段（手动问的时候用）
+  --peek                    只看一眼，不记水位（下次还会报同样的东西）
+  --limit 10                最多列几条新东西
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -109,10 +119,11 @@ export const FLAGS = {
   ls: { value: ['limit'], bool: [] },
   find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
+  cue: { value: ['limit', 'min-gap'], bool: ['peek', 'force'] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
-const NO_POS = new Set(['recall', 'digest', 'ls', 'trace'])
+const NO_POS = new Set(['recall', 'digest', 'ls', 'trace', 'cue'])
 
 /** 用法错误（解析层就拦下的）单独标一下：它和"要记的事是空的"不是一类，退出码也不同。 */
 function usage(msg) {
@@ -235,6 +246,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'ls') return cmdLs(home, flags, { out })
     if (cmd === 'find') return cmdFind(home, pos, flags, { out, env })
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
+    if (cmd === 'cue') return cmdCue(home, flags, { out, now })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -517,6 +529,56 @@ function cmdLs(home, flags, { out }) {
   return 0
 }
 
+/**
+ * 定时候：问一句"这会儿该不该开口"。
+ *
+ * 只给处境：几点了、上次开口是什么时候、这之后攒了什么。说不说、说什么，
+ * 仍然是模型自己的判断（AGENTS.md §一：只存不说、给处境不给台词）。
+ *
+ * 开口之后把水位记下来——同一条日记不会被反复端上来，这就是"降噪"。
+ * 水位记的是"交给模型看过"，不是"对用户说过"：有没有真说出口，脚本无从
+ * 知道，也不该假装知道（§21 的代价）。
+ */
+function cmdCue(home, flags, { out, now }) {
+  const limit = Number(flags.limit ?? 10)
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+  }
+
+  const minGap = flags['min-gap'] === undefined ? MIN_GAP : Number(flags['min-gap']) * 3600e3
+  if (!Number.isFinite(minGap) || minGap < 0) {
+    throw new Error(`--min-gap 是小时数，收到 ${flags['min-gap']}`)
+  }
+
+  const { events, bad } = readEvents(home)
+  const lastCue = readCue(home)
+  const r = cue({ events, lastCue, now, minGap })
+  if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
+
+  if (!r.speak && !flags.force) {
+    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}`)
+    return 0
+  }
+  if (!r.fresh.length) {
+    const note = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
+    out.log(`这会儿 ${clock(now)}，没有新东西${note}`)
+    return 0
+  }
+
+  out.log(`这会儿 ${clock(now)}。`)
+  out.log(lastCue ? `上次开口 ${relTime(lastCue.lastAt, { now })}。` : '你还没在这儿开过口。')
+  const tail = r.fresh.slice(-limit)
+  out.log(`之后攒了 ${r.fresh.length} 条：`)
+  for (const e of tail) {
+    const w = e.weight ? ` w${e.weight}` : ''
+    out.log(`${stamp(e.at)}${w}  ${eventLine(e)}`)
+  }
+  if (r.fresh.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
+  out.log('想看全：digest --budget 300')
+
+  if (!flags.peek) writeCue(home, { lastAt: now, watermark: r.fresh[r.fresh.length - 1].at })
+  return 0
+}
 /**
  * 账本：`trace` 看最近几次渲染，`trace --never` 反过来问哪些日记从没进过摘要。
  *

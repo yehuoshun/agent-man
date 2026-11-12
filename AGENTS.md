@@ -39,13 +39,14 @@
 |---|---|---|
 | `bin/agent-man.mjs` | 薄壳：`process.exitCode = main()` | 不放任何逻辑 |
 | `src/cli.mjs` | 参数解析、命令分发、退出码、用户可见输出 | 不直接读写文件、不自己算预算 |
-| `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `daySpan` / `relTime` | 别的模块不许自己 `new Date()` 解析或格式化 |
+| `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `daySpan` / `relTime` / `clock` / `hourOf` | 别的模块不许自己 `new Date()` 解析或格式化 |
 | `src/cost.mjs` | 预算单位与切分：`cost()` / `truncate()` | 不判断"该不该记" |
 | `src/budget.mjs` | 纯函数选择：`select(events, {budget, pinnedShare})`、保底那条的额度 `pinnedFloor` | 不碰文件系统、不看时钟、不生成文本 |
 | `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` | 不总结、不合并语义、不碰文件系统 |
 | `src/render.mjs` | 把两层选择结果渲成 markdown + `stats`；整段文本夹进预算（`attempt`） | 不做取舍决策（取舍全在 `budget.mjs` / `memory.mjs`） |
+| `src/when.mjs` | 定时候的纯逻辑：`cue` / `inQuiet` / `describeQuiet` | 不碰文件系统、不生成台词、不判断"这条重不重要" |
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
-| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `assertTail` / `writeAtomic` | 不解析业务语义 |
+| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `assertTail` / `writeAtomic` | 不解析业务语义 |
 
 - 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令或未知选项（解析层就拦下的用法错误，见 `FLAGS` / §16）。
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。

@@ -5,8 +5,8 @@
 不是框架，是零件。每个零件只做确定性的那部分，语义判断留给模型。
 
 ```
-记事   agent-man log / remember / digest / recall     ← 现在在这里
-定时候  …
+记事   agent-man log / remember / digest / recall / find / trace
+定时候  agent-man cue                                  ← 现在在这里
 看天气  …
 递话    …
 ```
@@ -51,6 +51,13 @@ node bin/agent-man.mjs recall --tier 0
 # 找原文：摘要只压不取，"那件事当时到底怎么说的"只有日记答得上来
 node bin/agent-man.mjs find 窗 --since 2026-11-01
 node bin/agent-man.mjs find 关窗 --kind dm --limit 5
+```
+
+```bash
+# 问一句"这会儿该不该开口"：只给处境——几点了、上次说话多久前、之后攒了什么
+node bin/agent-man.mjs cue
+node bin/agent-man.mjs cue --force   # 手动问，无视 6 小时间隔与静默时段
+node bin/agent-man.mjs cue --peek    # 看一眼，不记水位
 ```
 
 断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，

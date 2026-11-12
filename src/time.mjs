@@ -118,6 +118,22 @@ export function relTime(at, { now = Date.now(), dayStart = 0 } = {}) {
  * 为什么要有这个整数：'YYYY-MM-DD' 只能相等，不能相减。"隔了几天"必须用数算，
  * 这和 §1 里不许用 localeCompare 排时间是同一条规矩。
  */
+/**
+ * 本地墙钟：`21:40` 和小时数。
+ *
+ * 静默时段问的是"现在几点"，不是"哪一天"，所以这条路不吃 dayStart。
+ * 放这里是因为"别的模块不许自己 new Date() 解析或格式化"（AGENTS.md §四）。
+ */
+export function clock(at) {
+  const d = new Date(at)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+export function hourOf(at) {
+  return new Date(at).getHours()
+}
+
 export function dayIndex(at, { dayStart = 0 } = {}) {
   const d = new Date(at - dayStart * HOUR)
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY
