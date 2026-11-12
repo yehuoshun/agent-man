@@ -31,7 +31,16 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: node --test
-        run: node --test
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test 2>&1 | tee node-test.log
+          code=$?
+          # 失败时把最后一段输出贴成注解：公开仓库里没登录也能看到红在哪
+          if [ "$code" -ne 0 ]; then
+            node -e "const fs=require('fs');const t=fs.readFileSync('node-test.log','utf8');console.log('::error::'+t.slice(-4000).replace(/%/g,'%25').replace(/\r/g,'').replace(/\n/g,'%0A'))"
+          fi
+          exit $code
       # 每次 main 上都留一个能装的 tarball，不用等发版
       - name: npm pack
         if: matrix.os == 'ubuntu-latest' && matrix.node == '24'

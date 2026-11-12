@@ -616,10 +616,12 @@ test('w3 被丢时给出刺眼提示', () => {
 // ---------------------------------------------------------------- 长期层
 
 test('日界按 dayStart 平移：dayStart=4 时 00:30 算前一天', () => {
-  const at = Date.parse('2026-11-12T00:30:00+08:00')
+  // 日界是本地日历日的概念，所以这里必须造"本地 00:30"而不是写死 +08:00：
+  // 写死偏移的测试在 CI（UTC）上会红，而抓的其实是测试自己——见 §27。
+  const at = new Date(2026, 10, 12, 0, 30).getTime()
   assert.equal(dayKey(at), '2026-11-12')
   assert.equal(dayKey(at, { dayStart: 4 }), '2026-11-11')
-  assert.equal(dayKey(Date.parse('2026-11-12T04:30:00+08:00'), { dayStart: 4 }), '2026-11-12')
+  assert.equal(dayKey(new Date(2026, 10, 12, 4, 30).getTime(), { dayStart: 4 }), '2026-11-12')
 })
 
 test('AGENT_MAN_DAY_START 坏了就报错，不猜', () => {
