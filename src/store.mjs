@@ -46,8 +46,7 @@ export function ensure(home) {
  */
 export function appendEvent(home, ev) {
   const p = ensure(home)
-  appendLine(p.events, JSON.stringify(ev) + '\n')
-  assertTail(p.events, (back) => back.at === ev.at && back.fact === ev.fact)
+  assertLanded(p.events, appendLine(p.events, `${JSON.stringify(ev)}\n`))
   return ev
 }
 
@@ -67,18 +66,28 @@ function appendLine(file, text) {
   } finally {
     fs.closeSync(fd)
   }
+  return text
 }
 
+/** 核对落盘时读多大的尾巴：一行日记远小于这个数，几行邻居也挤不掉它。 */
+const TAIL_BYTES = 64 * 1024
+
 /**
- * 写完读回最后一行核对。
+ * 写完读回核对：我们这一行到底在不在文件里。
  *
  * 断电可以留下半行：那段 JSON 解析不出来，要等到下次 readEvents 才被算成坏行——
  * 那时候模型早就以为记下了。当场读一遍（只读文件尾），把"下次才发现"变成"现在报错"。
  * 只读尾部：日记攒到几千条以后，每次写都全量读一遍是拿 O(历史) 换一次核对。
+ *
+ * 为什么核对的是"我这一行"而不是"最后一行"：并发写入时，别人在你 write 完、你
+ * 读回之前追加了一行，你读到的就是别人的行，于是对着一条完好的记录喊"没落全"。
+ * 实测 30 个进程同时 log，15 个假报错，而文件里 30 条一条不少——假警报比不核对更糟，
+ * 那句话（"别当它记下了"）会让模型再记一遍。O_APPEND 的单次 write() 是原子的，
+ * 我们要么完整落了一行，要么只剩半截前缀：前缀里搜不到整行（连行尾换行），照样报错。
  */
-export function assertTail(file, expect) {
+export function assertLanded(file, text) {
   const size = fs.statSync(file).size
-  const len = Math.min(size, 64 * 1024)
+  const len = Math.min(size, TAIL_BYTES)
   const buf = Buffer.alloc(len)
   const fd = fs.openSync(file, 'r')
   try {
@@ -86,24 +95,15 @@ export function assertTail(file, expect) {
   } finally {
     fs.closeSync(fd)
   }
-  const lines = buf.toString('utf8').split('\n').filter((line) => line.trim())
-  const last = lines[lines.length - 1]
-  let rec = null
-  try {
-    rec = JSON.parse(last)
-  } catch {
-    rec = null
-  }
-  if (!rec || !expect(rec)) {
-    throw new Error(`${file} 最后一行读不回来：写的时候没落全，别当它记下了`)
+  if (!buf.toString('utf8').includes(text)) {
+    throw new Error(`${file} 这一行没落全：读回来找不到刚写的那行，别当它记下了`)
   }
 }
 
 /** 长期层也只追加。合并靠条目的 supersedes 指针，不改旧行（见 docs/decisions.md#11）。 */
 export function appendMemory(home, item) {
   const p = ensure(home)
-  appendLine(p.memory, JSON.stringify(item) + '\n')
-  assertTail(p.memory, (back) => back.id === item.id)
+  assertLanded(p.memory, appendLine(p.memory, `${JSON.stringify(item)}\n`))
   return item
 }
 
@@ -113,8 +113,7 @@ export function appendMemory(home, item) {
  */
 export function appendHandoff(home, rec) {
   const p = ensure(home)
-  appendLine(p.handoff, JSON.stringify(rec) + '\n')
-  assertTail(p.handoff, (back) => back.id === rec.id && back.op === rec.op)
+  assertLanded(p.handoff, appendLine(p.handoff, `${JSON.stringify(rec)}\n`))
   return rec
 }
 
@@ -162,8 +161,7 @@ export function readHandoff(home) {
  */
 export function appendPlan(home, rec) {
   const p = ensure(home)
-  appendLine(p.plan, `${JSON.stringify(rec)}\n`)
-  assertTail(p.plan, (back) => back.op === rec.op && back.id === rec.id)
+  assertLanded(p.plan, appendLine(p.plan, `${JSON.stringify(rec)}\n`))
   return rec
 }
 
@@ -288,8 +286,7 @@ export function writeConsolidation(home, rec) {
  */
 export function appendTrace(home, rec) {
   const p = ensure(home)
-  appendLine(p.trace, `${JSON.stringify(rec)}\n`)
-  assertTail(p.trace, (back) => back.at === rec.at)
+  assertLanded(p.trace, appendLine(p.trace, `${JSON.stringify(rec)}\n`))
   return rec
 }
 

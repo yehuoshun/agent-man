@@ -16,7 +16,7 @@ import {
   readMemory,
   resolveHome,
   writeAtomic,
-  assertTail,
+  assertLanded,
   appendTrace,
   readConsolidation,
   readTraces,
@@ -519,16 +519,32 @@ test('AGENT_MAN_HOME 覆盖默认目录', () => {
   assert.equal(resolveHome({}, '/home/u'), path.resolve('/home/u/.agent-man'))
 })
 
-test('半行会当场被抓住：尾巴不是一整条记录就报错，不等下次读', () => {
+test('半行会当场被抓住：写进去的那行读不回来就报错，不等下次读', () => {
   const home = tmp()
   appendEvent(home, { at: 1, fact: '整条' })
   const file = path.join(home, 'events.jsonl')
   fs.appendFileSync(file, '{"at":2,"fact":"断在', 'utf8')
-  assert.throws(() => assertTail(file, () => true), /最后一行读不回来/)
+  assert.throws(() => assertLanded(file, '{"at":2,"fact":"断在"}\n'), /没落全/)
   // 半行确实会在下次读时被算成坏行：报出来，但前面的记录不受牵连
   const { events, bad } = readEvents(home)
   assert.equal(bad, 1)
   assert.equal(events.length, 1)
+})
+
+test('别人在你写完之后插了一行：核对不该慌——旧写法在这里 50% 假警报', () => {
+  const home = tmp()
+  const file = path.join(home, 'events.jsonl')
+  appendEvent(home, { at: 1, fact: '我的话' })
+  const mine = `${JSON.stringify({ at: 1, fact: '我的话' })}\n`
+
+  // 另一个进程恰好在"我写完"和"我读回"之间追加了一条：旧写法读到的是它，
+  // 于是对着一条完好的记录喊"没落全"。实测 30 个并发 log 里 15 个这么中招。
+  appendEvent(home, { at: 2, fact: '别人的话' })
+
+  assert.doesNotThrow(() => assertLanded(file, mine))
+  // 真丢了还是要抓住：文件里根本没有这一行
+  assert.throws(() => assertLanded(file, `${JSON.stringify({ at: 9, fact: '没写过' })}\n`), /没落全/)
+  assert.equal(readEvents(home).events.length, 2)
 })
 
 test('覆盖写先把内容落盘再改名：写完立刻读得到完整内容，也不留 .tmp', () => {
