@@ -18,13 +18,19 @@ concurrency:
 
 jobs:
   test:
-    name: test · ${{ matrix.os }} · node ${{ matrix.node }}
+    name: test · ${{ matrix.os }} · node ${{ matrix.node }} ${{ matrix.tz || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: ['20', '22', '24']
+        # 再加一条在西半球时区跑的腿：用例里凡是要"本地某天"的，
+        # 只有离开东八区才看得出它是不是把 +08:00 写死了（§27）。
+        include:
+          - os: ubuntu-latest
+            node: '24'
+            tz: America/New_York
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,24 +38,34 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: node --test
         shell: bash
+        env:
+          TZ: ${{ matrix.tz || 'UTC' }}
         run: |
           set -o pipefail
           node --test 2>&1 | tee node-test.log
-          code=$?
-          # 失败时把最后一段输出贴成注解：公开仓库里没登录也能看到红在哪
-          if [ "$code" -ne 0 ]; then
-            node -e "const fs=require('fs');const t=fs.readFileSync('node-test.log','utf8');console.log('::error::'+t.slice(-4000).replace(/%/g,'%25').replace(/\r/g,'').replace(/\n/g,'%0A'))"
-          fi
-          exit $code
+
+      # 红了之后才跑：把最后一段输出贴成注解。公开仓库里没登录也能看见红在哪，
+      # 因为日志本身要鉴权（/actions/runs/{id}/logs 是 403）。
+      - name: 失败时把输出贴成注解
+        if: failure()
+        shell: bash
+        run: |
+          node -e "
+          const fs = require('node:fs')
+          const t = fs.readFileSync('node-test.log', 'utf8')
+          const s = t.slice(-4000).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A')
+          console.log('::error::' + s)
+          "
+
       # 每次 main 上都留一个能装的 tarball，不用等发版
       - name: npm pack
-        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24' && !matrix.tz
         run: |
           mkdir -p dist
           npm pack --pack-destination dist
 
       - uses: actions/upload-artifact@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24' && !matrix.tz
         with:
           name: agent-man-tarball
           path: dist/*.tgz

@@ -448,6 +448,7 @@ GitHub Release 并把 tarball 挂上去；`workflow_dispatch` 可以手动演练
 升级成用例，让 CI 一跑就能证伪：没有 `dependencies`/`devDependencies`、没有 `node_modules`、
 每个 `import` 只认 `node:` 和相对路径；所有文本文件都是 LF 且无 BOM；`package.json` 的
 `bin` 指向真实文件、`files` 里的路径都存在、`VERSION` 与 `version` 一致。
+矩阵再加第 7 条腿：ubuntu + Node 24、`TZ=America/New_York`（其余腿显式钉 `TZ=UTC`）。
 
 **来由**：五个零件写完，但"能不能在别人的机器上跑"一直只是我本机的一句 `node --test`。
 Windows 是这台机器的主战场，CRLF、BOM、反斜杠这三类事故在这里都真发生过（§三、§20 的
@@ -455,11 +456,16 @@ BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须�
 `npm install`**：零依赖不只是口号，它让一次 CI 变成"拉代码 + 跑一条命令"，十几秒出结果。
 打包也不用 build——`npm pack` 把 `files` 白名单里的东西打成一个 tarball 就是产物。
 
-**代价**：六条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
+**代价**：第 7 条腿只为时区：三条用例原本把 `+08:00` 写死（`长期条目按日期发号`、
+`supersedes 让旧条目退场`、`digest --due 只摊账`），本机东八区全绿，`TZ=UTC` 也全绿
+（12:00+08:00 是 04:00Z，日历日没跨过去），只有西半球才红——所以"CI 跑在 UTC 上"并不够。
+改法是把这几条的 `now` 用本地时间构造（`localAt(2026, 11, 12, 12)`），断言才不再依赖机器时区。
+六条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
 是为了不互相掩盖）。Windows 腿比 Linux 慢一倍多。不发 npm：`package.json` 里 `private: true`，
 也刻意不给仓库配 `NPM_TOKEN`，所以"装"只有两条路——`git clone`，或者下 tarball 再
 `npm i -g ./agent-man-0.1.0.tgz`。tarball 内容靠 `files` 白名单，新增的文档忘了写进去
 不会报错，所以补了一条"`files` 里的路径必须存在"的用例——但它只验存在，不验"该收的都收了"。
 Release notes 用 `--generate-notes` 自动按提交生成，噪音多（十几条 `修复:` 堆一起），
-但省掉了一个必须手工维护的 CHANGELOG。最后，CI 只证明"用例说的都对"，不证明"设计是对的"：
+但省掉了一个必须手工维护的 CHANGELOG。时区只钉住两种（UTC、纽约），`+14`、`+5:30` 这类半小时偏移没进矩阵；本地开发机若不在
+矩阵里的时区，仍可能写出一条"只有我能跑绿"的用例。最后，CI 只证明"用例说的都对"，不证明"设计是对的"：
 `docs/decisions.md` 里那些代价，仍然只能靠人看。

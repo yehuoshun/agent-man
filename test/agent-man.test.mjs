@@ -25,6 +25,12 @@ import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
 import { main, parseArgs, FLAGS } from '../src/cli.mjs'
 import { inQuiet } from '../src/when.mjs'
 
+// 时区不进用例：要"本地某天某点"就用本地时间构造。
+// 写死 +08:00 的 epoch 只在东八区等于那一天，UTC/纽约机器上 dayKey 会落到前一天。
+function localAt(y, m, d, h = 12, min = 0) {
+  return new Date(y, m - 1, d, h, min).getTime()
+}
+
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
 
 /** 静音 logger，同时把输出收下来断言 */
@@ -644,7 +650,7 @@ test('长期条目的校验：主题、出处、覆盖范围，缺一个都进�
 })
 
 test('长期条目按日期发号，同一天递增', () => {
-  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const now = localAt(2026, 11, 12, 12)
   const a = makeItem({ topic: 'a', fact: '一', refs: '2026-11-01' }, { now })
   const b = makeItem({ topic: 'b', fact: '二', refs: '2026-11-01' }, { now, existing: [a] })
   assert.equal(a.id, '2026-11-12-01')
@@ -680,7 +686,7 @@ test('没带 --refs 的 remember 退出码 1 且不落盘', () => {
 test('supersedes 让旧条目退场，但旧行仍在文件里', () => {
   const home = tmp()
   const env = { AGENT_MAN_HOME: home }
-  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const now = localAt(2026, 11, 12, 12)
   main(['remember', '版本一', '--topic', '她怕冷', '--refs', '2026-11-01'], { env, out: recorder(), now })
   main(
     ['remember', '版本二', '--topic', '她怕冷', '--refs', '2026-11-09', '--supersedes', '2026-11-12-01'],
@@ -833,7 +839,7 @@ test('remember 成功才写结账记录，校验不过就不写', () => {
 test('digest --due 只摊账：不渲染摘要，结完账就归零', () => {
   const home = tmp()
   const env = { AGENT_MAN_HOME: home }
-  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  const now = localAt(2026, 11, 12, 12)
   main(['log', '三天前的日记', '--at', '2026-11-09 10:00'], { env, out: recorder(), now })
   main(['log', '昨天的日记', '--at', '2026-11-11 10:00'], { env, out: recorder(), now })
 
