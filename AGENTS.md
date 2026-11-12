@@ -60,7 +60,8 @@
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。
 - 改版本号：`src/cli.mjs` 顶部的 `VERSION` 与 `package.json` 的 `version` 一起改。
 - 发布：改完版本推 `v<version>` 标签，`release.yml` 跑用例、打 tarball、建 Release；
-  标签与版本不一致会失败。Release 正文取标签注解（`git tag -a -m` 写的那段），
+  标签与版本不一致会失败。Release 正文取标签注解（`git tag -a -F 文件 --cleanup=verbatim` 写的那段——不加 `--cleanup=verbatim`，
+  `#` 开头的行会被 git 当注释删掉，v0.4.0 就这样丢过五个小标题，§39），
   轻量标签没有正文，退回 `--generate-notes`——所以发布说明跟着标签一起写（§27）。CI 在 Linux + Windows × Node 20/22/24 上跑同一份用例，外加一条纽约时区的腿（§27）。
   标签一旦被外人下过就**不移动**；开发期验证发布链路时用 `git push -f origin v<version>` 挪标签重跑（§27）。
 - 只改 Markdown 的提交**不跑** CI（`paths-ignore`）：连推「代码 + 文档」两个提交时，后一个不会把前一个的 windows 腿掐掉。
