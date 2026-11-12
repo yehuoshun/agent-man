@@ -1,4 +1,6 @@
+import fs from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import {
   parseAt,
   dayStartFromEnv,
@@ -130,6 +132,10 @@ plan 选项：
   --days 7                  列表看几天
   --done <id>               划掉某条（id 见 agent-man plan）
 
+零件（不在这个仓库里）：
+  agent-man <名字> 在本项目不认识它时，转给 PATH 上的 agent-man-<名字>——
+  装了就有，卸了就没了，这里不留清单（见 docs/decisions.md#32）。
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -224,6 +230,63 @@ function checkKnown(cmd, spec, key) {
   throw usage(`未知选项 --${key}${near ? `；是不是想写 --${near}？` : ''}\n${cmd} 只认：${list}`)
 }
 
+// ---------------------------------------------------------------- 零件
+// 零件在进程外：`agent-man foo …` 转给 PATH 上的 `agent-man-foo`。
+// PATH 就是注册表，npm 就是安装器——装了就有，卸了就没了，主项目不留清单，
+// 也不 import 别人的代码（见 docs/decisions.md#32）。
+
+function findPart(name, env) {
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
+  // Windows 上有的进程只给 Path 不给 PATH
+  const search = String(env.PATH ?? env.Path ?? '')
+  for (const dir of search.split(path.delimiter)) {
+    if (!dir) continue
+    for (const ext of exts) {
+      const file = path.join(dir, `agent-man-${name}${ext}`)
+      try {
+        if (fs.statSync(file).isFile()) return { file, ext }
+      } catch {}
+    }
+  }
+  return null
+}
+
+// Windows 的 cmd.exe 会把 %名字% 换成环境变量，包在引号里也照换；^% 和 %% 都救不回来
+// （四种写法实测过，见 §32）。命中就直说，别猜着转义。
+function assertPartArgs(args, name) {
+  if (process.platform !== 'win32') return
+  for (const a of args) {
+    if (/%[A-Za-z_][A-Za-z0-9_]*%/.test(a)) {
+      throw usage(`零件 ${name} 的参数里不能有 %名字%：Windows 上 cmd 会把它换成环境变量\n${a}`)
+    }
+  }
+}
+
+function runPart(part, args, env) {
+  let r
+  if (process.platform === 'win32' && part.ext !== '.exe') {
+    // .cmd/.bat 不能直接 CreateProcess（EINVAL）；而 Node 默认还会给参数再包一层引号，
+    // 所以必须 windowsVerbatimArguments：自己拼、自己加引号。
+    const q = (x) => (/[\s"&|<>^]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x)
+    const line = [q(part.file), ...args.map(q)].join(' ')
+    r = spawnSync(env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], {
+      stdio: 'inherit',
+      env,
+      windowsVerbatimArguments: true,
+    })
+  } else {
+    r = spawnSync(part.file, args, { stdio: 'inherit', env })
+    // POSIX 上 npm 的 shim 一般有可执行位；万一没有，用 node 跑（它一定是 JS）
+    if (r.error?.code === 'EACCES' && /\.(mjs|cjs|js)$/.test(part.file)) {
+      r = spawnSync(process.execPath, [part.file, ...args], { stdio: 'inherit', env })
+    }
+  }
+  if (r.error) {
+    throw new Error(`零件 ${path.basename(part.file)} 起不来：${r.error.code || r.error.message}`)
+  }
+  return r.signal ? 128 : (r.status ?? 1)
+}
+
 export function parseArgs(argv) {
   const [cmd, ...rest] = argv
   const spec = FLAGS[cmd]
@@ -272,6 +335,15 @@ export function parseArgs(argv) {
 export function main(argv = process.argv.slice(2), ctx = {}) {
   const { env = process.env, out = console, now = Date.now(), net = defaultNet } = ctx
   try {
+    // 零件先试：命令表里没有的名字，转给 PATH 上的 agent-man-<名字>（§32）。
+    const first = argv[0]
+    if (first && first !== 'help' && !first.startsWith('-') && !FLAGS[first]) {
+      const part = findPart(first, env)
+      if (part) {
+        assertPartArgs(argv.slice(1), first)
+        return runPart(part, argv.slice(1), env)
+      }
+    }
     // 解析也在 try 里：选项名写错要像命令名写错一样"喊出来"，而不是抛栈。
     const { cmd, pos, flags } = parseArgs(argv)
 
@@ -302,7 +374,11 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'place') return guarded(cmdPlace(home, pos, flags, { out, net }), out)
     if (cmd === 'sky') return guarded(cmdSky(home, flags, { out, now, net, env }), out)
     if (cmd === 'plan') return cmdPlan(home, pos, flags, { out, now, env })
-    out.error(`未知命令: ${cmd}\n\n${HELP}`)
+    out.error(
+      `未知命令: ${cmd}\n` +
+        `如果是零件，装它：npm i -g agent-man-${cmd}\n` +
+        `（零件装在 PATH 上，叫 agent-man-<名字>，这里不留清单）\n\n${HELP}`,
+    )
     return 2
   } catch (e) {
     out.error(`! ${e.message}`)
@@ -612,7 +688,9 @@ function describeFind(flags) {
 
 function eventLine(e) {
   const feel = e.feel ? `（${e.feel}）` : ''
-  return `[${e.kind}]  ${e.fact}${feel}`
+  // 出处写进方括号：零件记的条目和手写的条目，得能一眼分开（§32）
+  const src = e.src ? `|${e.src}` : ''
+  return `[${e.kind}${src}]  ${e.fact}${feel}`
 }
 
 function cmdLs(home, flags, { out }) {

@@ -1851,3 +1851,76 @@ test('一天：新日记、便条、作废的便条、今天的安排同时在�
   assert.ok(digest.all.includes('入秋先关窗再抱怨风'), digest.all)
   assert.ok(digest.all.includes('## 最近'), digest.all)
 })
+
+// ---------------------------------------------------------------- 零件在进程外（§32）
+
+/** 造一个假零件：把收到的参数写进 got.json 再退出（退出码默认 3）。 */
+function fakePart(dir, name = 'testpart', code = 3) {
+  const got = path.join(dir, 'got.json')
+  fs.writeFileSync(
+    path.join(dir, `${name}.mjs`),
+    `import fs from 'node:fs'\n` +
+      `fs.writeFileSync(${JSON.stringify(got)}, JSON.stringify(process.argv.slice(2)))\n` +
+      `process.exit(${code})\n`,
+  )
+  if (process.platform === 'win32') {
+    // npm 在 Windows 上给的就是 .cmd（不能直接 CreateProcess，得走 cmd.exe /c）
+    fs.writeFileSync(path.join(dir, `agent-man-${name}.cmd`), `@node "%~dp0${name}.mjs" %*\r\n`)
+  } else {
+    const shim = path.join(dir, `agent-man-${name}`)
+    fs.writeFileSync(shim, `#!/bin/sh\nnode "$(dirname "$0")/${name}.mjs" "$@"\n`)
+    fs.chmodSync(shim, 0o755)
+  }
+  return got
+}
+
+const partEnv = (dir) => ({
+  ...process.env,
+  PATH: dir + path.delimiter + process.env.PATH,
+  AGENT_MAN_HOME: tmp(),
+})
+
+test('零件：命令表里没有的名字，转给 PATH 上的 agent-man-<名字>，退出码透传', () => {
+  const dir = tmp()
+  const got = fakePart(dir)
+  assert.equal(main(['testpart', '--limit', '5'], { env: partEnv(dir), out: recorder() }), 3)
+  assert.deepEqual(JSON.parse(fs.readFileSync(got, 'utf8')), ['--limit', '5'])
+})
+
+test('零件：参数原样到（空格、中文、& 都不拆）', () => {
+  const dir = tmp()
+  const got = fakePart(dir)
+  const argv = ['带 空格', '中文', 'a&b']
+  assert.equal(main(['testpart', ...argv], { env: partEnv(dir), out: recorder() }), 3)
+  assert.deepEqual(JSON.parse(fs.readFileSync(got, 'utf8')), argv)
+})
+
+test('零件：没装就还是未知命令，并说清怎么装', () => {
+  const env = { ...process.env, PATH: tmp(), AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['nope'], { env, out }), 2)
+  assert.match(out.all, /未知命令: nope/)
+  assert.match(out.all, /npm i -g agent-man-nope/)
+})
+
+test(
+  '零件：Windows 上参数里有 %名字% 直接拒绝（cmd 会把它换成环境变量）',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const dir = tmp()
+    fakePart(dir)
+    const out = recorder()
+    assert.equal(main(['testpart', '%PATH%'], { env: partEnv(dir), out }), 2)
+    assert.match(out.all, /不能有 %名字%/)
+  },
+)
+
+test('日记带出处：行里能看见这条是谁记的', () => {
+  const env = { ...process.env, AGENT_MAN_HOME: tmp() }
+  main(['log', '刷了 B站', '--src', 'bili', '--at', '2026-11-12 09:00'], { env, out: recorder() })
+  main(['log', '手写的', '--at', '2026-11-12 09:05'], { env, out: recorder() })
+  const out = recorder()
+  main(['ls'], { env, out })
+  assert.match(out.all, /\[note\|bili\]  刷了 B站/)
+  assert.match(out.all, /\[note\]  手写的/)
+})
