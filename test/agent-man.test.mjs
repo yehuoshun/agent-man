@@ -853,3 +853,75 @@ test('trace --limit 只认正整数，多余的位置参数也不吃', () => {
   assert.equal(main(['trace', '--limit', '0'], { env, out: recorder() }), 1)
   assert.equal(main(['trace', '--never', '10'], { env, out: recorder() }), 2)
 })
+
+// ---------------------------------------------------------------- find（日记原文）
+
+test('find 按原文搜：命中就是命中，没命中的一条都不带', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '今天风大，她把窗关上了', '--at', '2026-11-10 10:00'], { env, out: recorder() })
+  main(['log', '煮了番茄面，盐放多了', '--at', '2026-11-11 19:00'], { env, out: recorder() })
+
+  const out = recorder()
+  assert.equal(main(['find', '窗'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('2 条日记里，含“窗”的 1 条'), out.all)
+  assert.ok(out.all.includes('她把窗关上了'), out.all)
+  assert.ok(!out.all.includes('番茄面'), `没命中的不该跟着出现：\n${out.all}`)
+})
+
+test('find 只写日期时按本地整天算，不从 UTC 零点切一刀', () => {
+  // Date.parse('2026-11-05') 是 UTC 零点，东八区等于当天 08:00。拿它当 --since
+  // 会把 00:30 那条挡在外面，看着像"那天凌晨什么都没记"——实测踩过。
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '凌晨记的', '--at', '2026-11-05 00:30'], { env, out: recorder() })
+  main(['log', '深夜记的', '--at', '2026-11-05 23:30'], { env, out: recorder() })
+  main(['log', '隔天记的', '--at', '2026-11-06 00:30'], { env, out: recorder() })
+
+  const out = recorder()
+  assert.equal(main(['find', '记的', '--since', '2026-11-05', '--until', '2026-11-05'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('含“记的”的 2 条'), out.all)
+  assert.ok(out.all.includes('凌晨记的') && out.all.includes('深夜记的'), out.all)
+  assert.ok(!out.all.includes('隔天记的'), `--until 那天之后的不该混进来：\n${out.all}`)
+})
+
+test('find --kind 只看一类；--limit 取最近几条并说清还有多少没列', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '风很大', '--kind', 'dm', '--at', '2026-11-10 10:00'], { env, out: recorder() })
+  main(['log', '风停了', '--kind', 'note', '--at', '2026-11-10 11:00'], { env, out: recorder() })
+  main(['log', '风把门吹开', '--kind', 'dm', '--at', '2026-11-10 12:00'], { env, out: recorder() })
+
+  const out = recorder()
+  assert.equal(main(['find', '风', '--kind', 'dm', '--limit', '1'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('含“风”的 2 条（kind=dm）'), out.all)
+  assert.ok(out.all.includes('风把门吹开'), out.all)
+  assert.ok(!out.all.includes('风很大'), `--limit 1 只留最近一条：\n${out.all}`)
+  assert.ok(out.all.includes('只列最近 1 条'), out.all)
+})
+
+test('find 没找到也是答案：exit 0，并且说清搜的是多大范围', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '今天风大'], { env, out: recorder(), now: Date.parse('2026-11-12T12:00:00+08:00') })
+
+  const out = recorder()
+  assert.equal(main(['find', '盐'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('1 条日记里没有含“盐”的'), out.all)
+})
+
+test('find 没给词就报错；它只搜日记，结论层归 recall --grep', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['remember', '入秋后先关窗再抱怨风', '--topic', '她怕冷', '--refs', '2026-11-05'], {
+    env,
+    out: recorder(),
+  })
+
+  const bad = recorder()
+  assert.equal(main(['find'], { env, out: bad }), 1)
+  assert.ok(bad.errs.join('\n').includes('要找什么'), bad.errs.join('\n'))
+
+  const out = recorder()
+  assert.equal(main(['find', '关窗'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('0 条日记里没有含“关窗”的'), `原文里没有，不该从长期层凑：\n${out.all}`)
+
+  const recall = recorder()
+  assert.equal(main(['recall', '--grep', '关窗'], { env, out: recall }), 0)
+  assert.ok(recall.all.includes('她怕冷'), recall.all)
+})

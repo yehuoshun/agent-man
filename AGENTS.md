@@ -39,7 +39,7 @@
 |---|---|---|
 | `bin/agent-man.mjs` | 薄壳：`process.exitCode = main()` | 不放任何逻辑 |
 | `src/cli.mjs` | 参数解析、命令分发、退出码、用户可见输出 | 不直接读写文件、不自己算预算 |
-| `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `relTime` | 别的模块不许自己 `new Date()` 解析或格式化 |
+| `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `daySpan` / `relTime` | 别的模块不许自己 `new Date()` 解析或格式化 |
 | `src/cost.mjs` | 预算单位与切分：`cost()` / `truncate()` | 不判断"该不该记" |
 | `src/budget.mjs` | 纯函数选择：`select(events, {budget, pinnedShare})` | 不碰文件系统、不看时钟、不生成文本 |
 | `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` | 不总结、不合并语义、不碰文件系统 |

@@ -47,6 +47,10 @@ node bin/agent-man.mjs trace --never
 # 看原始流水 / 看长期记忆
 node bin/agent-man.mjs ls --limit 20
 node bin/agent-man.mjs recall --tier 0
+
+# 找原文：摘要只压不取，"那件事当时到底怎么说的"只有日记答得上来
+node bin/agent-man.mjs find 窗 --since 2026-11-01
+node bin/agent-man.mjs find 关窗 --kind dm --limit 5
 ```
 
 选项名写错不会被忽略：`--waight` 直接报错并提示 `--weight`，退出码 2（见 `docs/decisions.md` §16）。

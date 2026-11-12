@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { parseAt, dayStartFromEnv, stamp } from './time.mjs'
+import { parseAt, dayStartFromEnv, stamp, daySpan } from './time.mjs'
 import { cost } from './cost.mjs'
 import {
   resolveHome,
@@ -29,6 +29,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man recall [选项]            看长期记忆
   agent-man digest [选项]            渲染当前摘要
   agent-man ls [--limit 20]          看原始事件
+  agent-man find <词> [选项]         在日记原文里搜（摘要只压不取，原文在这）
   agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
   agent-man --help
 
@@ -68,6 +69,12 @@ trace 选项：
   --limit 10                最近几次 digest
   --never                   反过来：哪些日记从来没进过摘要
 
+find 选项：
+  --since <时间>            从这时起；只写日期（2026-11-05）按本地整天算
+  --until <时间>            到这时为止，含端点
+  --kind dm|qq|video|note   只看某一类来源
+  --limit 20                最多列几条，取最近的
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -100,6 +107,7 @@ export const FLAGS = {
   recall: { value: ['limit', 'tier', 'batch', 'grep'], bool: [] },
   digest: { value: ['budget', 'out', 'title'], bool: ['due'] },
   ls: { value: ['limit'], bool: [] },
+  find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
 }
 
@@ -225,6 +233,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'recall') return cmdRecall(home, flags, { out })
     if (cmd === 'digest') return cmdDigest(home, flags, { out, now, env })
     if (cmd === 'ls') return cmdLs(home, flags, { out })
+    if (cmd === 'find') return cmdFind(home, pos, flags, { out, env })
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
@@ -438,6 +447,64 @@ function reportLongDrops(stats, out) {
   if (gone.length > 5) out.error(`    ……（还有 ${gone.length - 5} 条）`)
 }
 
+/**
+ * 找原文。
+ *
+ * `digest` 只压不取（§9 的老账）：它把日记压成几行，但"那件事当时到底怎么说的"
+ * 只有原文答得上来。这里不排相关性、不做摘要，只回答"哪条、什么时候、原话是什么"。
+ * 也不搜长期层——结论用 `recall --grep`，原文用这个；两个入口各管一层，别混。
+ *
+ * 匹配就是 `includes`，和 `recall --grep` 一致：脚本不猜"这个字算不算同一个意思"。
+ */
+function cmdFind(home, pos, flags, { out, env }) {
+  const term = pos.join(' ').trim()
+  if (!term) throw new Error('要找什么？例：agent-man find 窗 --since 2026-11-01')
+
+  const limit = Number(flags.limit ?? 20)
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+
+  const dayStart = dayStartFromEnv(env)
+  const since = flags.since === undefined ? null : daySpan(flags.since, { dayStart })
+  const until = flags.until === undefined ? null : daySpan(flags.until, { dayStart })
+  const kind = flags.kind === undefined ? null : String(flags.kind)
+
+  const { events, bad } = readEvents(home)
+  const hit = events.filter(
+    (e) =>
+      `${e.fact}${e.feel ?? ''}`.includes(term) &&
+      (!since || e.at >= since.from) &&
+      // 只写日期时到当天最后一毫秒；写的是具体时刻就含端点——两种写法都该"包含自己写的那一刻"
+      (!until || e.at <= (until.whole ? until.to - 1 : until.to)) &&
+      (!kind || e.kind === kind),
+  )
+  const tail = hit.slice(-limit)
+  const where = describeFind(flags)
+
+  out.log(
+    hit.length
+      ? `${events.length} 条日记里，含“${term}”的 ${hit.length} 条${where}，显示最近 ${tail.length} 条`
+      : `${events.length} 条日记里没有含“${term}”的${where}`,
+  )
+  for (const e of tail) out.log(`${stamp(e.at)}${e.weight ? ` w${e.weight}` : ''}  ${eventLine(e)}`)
+  if (hit.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
+  if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
+  return 0
+}
+
+/** 回显用户自己写的筛选条件：重排成 `2026-11-05T00:00:00+08:00` 只会让人对不上自己敲的字。 */
+function describeFind(flags) {
+  const parts = []
+  if (flags.since !== undefined) parts.push(`从 ${flags.since}`)
+  if (flags.until !== undefined) parts.push(`到 ${flags.until}`)
+  if (flags.kind !== undefined) parts.push(`kind=${flags.kind}`)
+  return parts.length ? `（${parts.join('，')}）` : ''
+}
+
+function eventLine(e) {
+  const feel = e.feel ? `（${e.feel}）` : ''
+  return `[${e.kind}]  ${e.fact}${feel}`
+}
+
 function cmdLs(home, flags, { out }) {
   const limit = Number(flags.limit ?? 20)
   if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
@@ -445,10 +512,7 @@ function cmdLs(home, flags, { out }) {
   const { events, bad } = readEvents(home)
   const tail = events.slice(-limit)
   out.log(`${events.length} 条（显示最近 ${tail.length} 条）`)
-  for (const e of tail) {
-    const feel = e.feel ? `（${e.feel}）` : ''
-    out.log(`${stamp(e.at)}${e.weight ? ` w${e.weight}` : ''}  [${e.kind}]  ${e.fact}${feel}`)
-  }
+  for (const e of tail) out.log(`${stamp(e.at)}${e.weight ? ` w${e.weight}` : ''}  ${eventLine(e)}`)
   if (bad) out.error(`! ${bad} 行读不出来`)
   return 0
 }

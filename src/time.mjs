@@ -57,6 +57,26 @@ export function dayKey(at, { dayStart = 0 } = {}) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/**
+ * 把"只写了日期"的输入（`2026-11-05`）扩成那一天的边界：`from` 是本地日界起点，
+ * `to` 是下一天起点（不含），`whole` 说明这是整天而不是一个时刻。
+ * 写的是具体时刻就原样返回（`whole: false`），由调用方决定含不含端点。
+ *
+ * 事故：`Date.parse('2026-11-05')` 按 ISO 规定给的是 **UTC** 零点，在东八区等于当天
+ * 08:00。拿它当 `--since` 会把当天凌晨八小时挡在外面，看起来像"那天什么都没记"。
+ * 人写日期时想的是本地一整天，所以这里直接从字符串里取年月日，再按本地日界算——
+ * 也顺手躲开了 Date.parse 对"只写日期"与"带时刻"两套规则的分歧。
+ */
+export function daySpan(input, { dayStart = 0 } = {}) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(input ?? '').trim())
+  if (!m) {
+    const at = parseAt(input)
+    return { from: at, to: at, whole: false }
+  }
+  const from = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), dayStart).getTime()
+  return { from, to: from + DAY, whole: true }
+}
+
 /** 从环境变量读日界：AGENT_MAN_DAY_START，0..23 的整点。坏了就抛，不猜。 */
 export function dayStartFromEnv(env = process.env) {
   const raw = env.AGENT_MAN_DAY_START?.trim()
