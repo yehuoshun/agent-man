@@ -18,7 +18,7 @@ import {
 } from '../src/store.mjs'
 import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
-import { main, parseArgs } from '../src/cli.mjs'
+import { main, parseArgs, FLAGS } from '../src/cli.mjs'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
 
@@ -343,7 +343,101 @@ test('parseArgs 支持 --k v / --k=v / 位置参数 / -- 终止', () => {
     pos: ['--不是flag'],
     flags: {},
   })
-  assert.deepEqual(parseArgs(['digest', '--out']), { cmd: 'digest', pos: [], flags: { out: true } })
+  // 开关不吃后面的词；等号只认 true / false
+  assert.deepEqual(parseArgs(['digest', '--due']), { cmd: 'digest', pos: [], flags: { due: true } })
+  assert.deepEqual(parseArgs(['digest', '--due=false']), {
+    cmd: 'digest',
+    pos: [],
+    flags: { due: false },
+  })
+  // 值选项缺值不再静默变成 `true`（旧行为：`digest --out` 得到 flags.out = true）
+  assert.throws(() => parseArgs(['digest', '--out']), /选项 --out 需要值/)
+})
+
+test('选项名写错就报错：--waight 不是 --weight，不许静默降级成 w0', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const out = recorder()
+  assert.equal(main(['log', '这是一条疤', '--waight', '3'], { env, out }), 2)
+  assert.ok(out.errs.join('\n').includes('未知选项 --waight'), out.all)
+  assert.ok(out.errs.join('\n').includes('是不是想写 --weight'), out.all)
+  assert.equal(readEvents(home).events.length, 0) // 没落盘，而不是悄悄记成 w0
+})
+
+test('--supersede 少一个 s 会被拦住，不留两条并存的同主题记忆', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T09:00:00+08:00')
+  const first = main(['remember', '版本一', '--topic', '她怕冷', '--refs', '2026-11-01'], {
+    env,
+    out: recorder(),
+    now,
+  })
+  assert.equal(first, 0)
+
+  const out = recorder()
+  const bad = main(
+    [
+      'remember',
+      '版本二',
+      '--topic',
+      '她怕冷',
+      '--refs',
+      '2026-11-05',
+      '--supersede',
+      '2026-11-12-01',
+    ],
+    { env, out, now },
+  )
+  assert.equal(bad, 2)
+  assert.ok(out.errs.join('\n').includes('--supersedes'), out.all) // 提示语把正确写法列出来了
+  assert.equal(activeItems(readMemory(home).items).length, 1)
+})
+
+test('开关只认裸用或 true/false：--due=false 不报欠账', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T09:00:00+08:00')
+  main(['log', '一条日记', '--at', '2026-11-01 10:00'], { env, out: recorder(), now })
+
+  const off = recorder()
+  assert.equal(main(['digest', '--due=false'], { env, out: off, now }), 0)
+  assert.ok(off.all.includes('我记得的事'), off.all) // 渲染了摘要
+  assert.ok(!off.all.includes('欠'), off.all) // 而不是摊账
+
+  const bad = recorder()
+  assert.equal(main(['digest', '--due=也许'], { env, out: bad, now }), 2)
+  assert.ok(bad.errs.join('\n').includes('只接受 true / false'), bad.all)
+})
+
+test('值选项没给值就报错，不从下一个词里抓', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['digest', '--budget'], { env, out }), 2)
+  assert.ok(out.errs.join('\n').includes('--budget 需要值'), out.all)
+
+  // 值以 -- 开头的必须写成 --title="-- 开头"；以前会静默变成 title=true
+  assert.equal(main(['digest', '--title', '-- 开头'], { env, out: recorder() }), 2)
+  assert.equal(main(['digest', '--title=-- 开头'], { env, out: recorder() }), 0)
+})
+
+test('不吃位置参数的命令多了词就报错', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['ls', '多出来的'], { env, out }), 2)
+  assert.ok(out.errs.join('\n').includes('位置参数'), out.all)
+  assert.equal(main(['digest', '顺便'], { env, out: recorder() }), 2)
+})
+
+test('HELP 里写的选项和 FLAGS 表对得上（加参数不会只改一半）', () => {
+  const help = recorder()
+  main(['--help'], { out: help })
+  const text = help.all
+  for (const [cmd, spec] of Object.entries(FLAGS)) {
+    for (const f of [...spec.value, ...spec.bool]) {
+      assert.ok(text.includes(`--${f}`), `${cmd} 的 --${f} 没写进 HELP`)
+    }
+  }
 })
 
 test('CLI log → digest 端到端', () => {

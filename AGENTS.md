@@ -46,7 +46,7 @@
 | `src/render.mjs` | 把两层选择结果渲成 markdown + `stats`；整段文本夹进预算（`attempt`） | 不做取舍决策（取舍全在 `budget.mjs` / `memory.mjs`） |
 | `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `writeAtomic` | 不解析业务语义 |
 
-- 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令。
+- 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令或未知选项（解析层就拦下的用法错误，见 `FLAGS` / §16）。
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。
 - 改版本号：`src/cli.mjs` 顶部的 `VERSION` 与 `package.json` 的 `version` 一起改。
 - 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 8`、`pinnedShare = 0.7`、`longShare = 0.6`、`DUP_WINDOW = 24h`。

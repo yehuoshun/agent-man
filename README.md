@@ -45,6 +45,8 @@ node bin/agent-man.mjs ls --limit 20
 node bin/agent-man.mjs recall --tier 0
 ```
 
+选项名写错不会被忽略：`--waight` 直接报错并提示 `--weight`，退出码 2（见 `docs/decisions.md` §16）。
+
 `digest` 的输出：
 
 ```markdown

@@ -34,6 +34,7 @@ log 选项：
   --feel <感受>             附着在这件事上的感觉
   --at <时间>               默认现在；接受 ISO / epoch / "2026-11-05 12:45"
   --src <出处>              原始文件或会话
+  --fact <文本>             等价于位置参数，给不方便传位置参数的调用方
 
 remember 选项：
   --topic <主题>            必填，例：她怕冷
@@ -45,6 +46,7 @@ remember 选项：
   --span-from/--span-to     覆盖范围，默认等于 --at
   --weight 0..3
   --id <id>                 默认按日期发号
+  --fact <文本>             等价于位置参数
 
 recall 选项：
   --tier 0|1|2              只看某一档
@@ -62,8 +64,91 @@ digest 选项：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
 
+/**
+ * 每个命令认哪些选项。表外的名字一律报错——认不认识一个名字是确定性的判断，
+ * 不需要模型在场，也不该靠猜（见 docs/decisions.md#16）。
+ *
+ * value：后面必须跟值的；bool：开关，只接受裸用或 =true / =false。
+ * 加选项要同时改这里、`HELP` 和 README——有一条用例对着 HELP 核这张表。
+ */
+export const FLAGS = {
+  log: { value: ['at', 'weight', 'kind', 'feel', 'src', 'fact'], bool: [] },
+  remember: {
+    value: [
+      'topic',
+      'fact',
+      'tier',
+      'batch',
+      'refs',
+      'supersedes',
+      'span-from',
+      'span-to',
+      'weight',
+      'id',
+      'at',
+    ],
+    bool: ['no-refs'],
+  },
+  recall: { value: ['limit', 'tier', 'batch', 'grep'], bool: [] },
+  digest: { value: ['budget', 'out', 'title'], bool: ['due'] },
+  ls: { value: ['limit'], bool: [] },
+}
+
+/** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
+const NO_POS = new Set(['recall', 'digest', 'ls'])
+
+/** 用法错误（解析层就拦下的）单独标一下：它和"要记的事是空的"不是一类，退出码也不同。 */
+function usage(msg) {
+  const e = new Error(msg)
+  e.usage = true
+  return e
+}
+
+function boolValue(key, raw) {
+  if (raw === 'true') return true
+  if (raw === 'false') return false
+  throw usage(`--${key} 是开关，只接受 true / false，收到 ${raw}`)
+}
+
+/** 差一个字母才给提示：差得远就是另一个词，猜错了比不猜更烦人。 */
+function nearMiss(key, known) {
+  let best = null
+  let bestD = 3
+  for (const k of known) {
+    const d = distance(key, k)
+    if (d < bestD) {
+      best = k
+      bestD = d
+    }
+  }
+  return best
+}
+
+function distance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]
+    for (let j = 1; j <= b.length; j++) {
+      const sub = prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, sub)
+    }
+    prev = cur
+  }
+  return prev[b.length]
+}
+
+function checkKnown(cmd, spec, key) {
+  if (key === 'help') return // 每个命令都能问怎么用
+  const known = [...spec.value, ...spec.bool]
+  if (known.includes(key)) return
+  const near = nearMiss(key, known)
+  const list = [...known, 'help'].map((k) => `--${k}`).join(' ')
+  throw usage(`未知选项 --${key}${near ? `；是不是想写 --${near}？` : ''}\n${cmd} 只认：${list}`)
+}
+
 export function parseArgs(argv) {
   const [cmd, ...rest] = argv
+  const spec = FLAGS[cmd]
   const flags = {}
   const pos = []
   for (let i = 0; i < rest.length; i++) {
@@ -77,41 +162,55 @@ export function parseArgs(argv) {
       continue
     }
     const eq = a.indexOf('=')
-    if (eq > 2) {
-      flags[a.slice(2, eq)] = a.slice(eq + 1)
+    const key = eq > 2 ? a.slice(2, eq) : a.slice(2)
+    const inline = eq > 2 ? a.slice(eq + 1) : undefined
+    if (spec) checkKnown(cmd, spec, key)
+    if (inline === '') throw usage(`选项 --${key} 需要值`)
+    // 开关不吃后面的词：`--due 备注` 里的"备注"是位置参数，不是 --due 的值。
+    const isBool = spec?.bool.includes(key) || key === 'help'
+    if (isBool) {
+      flags[key] = inline === undefined ? true : boolValue(key, inline)
       continue
     }
-    const key = a.slice(2)
+    if (inline !== undefined) {
+      flags[key] = inline
+      continue
+    }
     const next = rest[i + 1]
     if (next !== undefined && !next.startsWith('--')) {
       flags[key] = next
       i++
-    } else {
-      flags[key] = true
+      continue
     }
+    if (spec) throw usage(`选项 --${key} 需要值`)
+    flags[key] = true
+  }
+  if (spec && NO_POS.has(cmd) && pos.length) {
+    throw usage(`多余的位置参数：${pos.join(' ')}（${cmd} 只吃选项）`)
   }
   return { cmd, pos, flags }
 }
 
 export function main(argv = process.argv.slice(2), ctx = {}) {
   const { env = process.env, out = console, now = Date.now() } = ctx
-  const { cmd, pos, flags } = parseArgs(argv)
-
-  if (!cmd || cmd === 'help' || flags.help) {
-    out.log(HELP)
-    return 0
-  }
-  if (cmd === '--help' || cmd === '-h') {
-    out.log(HELP)
-    return 0
-  }
-  if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
-    out.log(VERSION)
-    return 0
-  }
-
-  const home = resolveHome(env)
   try {
+    // 解析也在 try 里：选项名写错要像命令名写错一样"喊出来"，而不是抛栈。
+    const { cmd, pos, flags } = parseArgs(argv)
+
+    if (!cmd || cmd === 'help' || flags.help) {
+      out.log(HELP)
+      return 0
+    }
+    if (cmd === '--help' || cmd === '-h') {
+      out.log(HELP)
+      return 0
+    }
+    if (cmd === '--version' || cmd === '-v' || cmd === 'version') {
+      out.log(VERSION)
+      return 0
+    }
+
+    const home = resolveHome(env)
     if (cmd === 'log') return cmdLog(home, pos, flags, { out, now })
     if (cmd === 'remember') return cmdRemember(home, pos, flags, { out, now })
     if (cmd === 'recall') return cmdRecall(home, flags, { out })
@@ -121,7 +220,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     return 2
   } catch (e) {
     out.error(`! ${e.message}`)
-    return 1
+    return e.usage ? 2 : 1
   }
 }
 
