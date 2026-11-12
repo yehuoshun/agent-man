@@ -37,6 +37,9 @@ node bin/agent-man.mjs remember "入秋后先关窗再抱怨风" --topic 她怕�
 node bin/agent-man.mjs digest --budget 1200
 node bin/agent-man.mjs digest --budget 800 --out ~/.agent-man/digest.md
 
+# 问一句"我欠了几次巩固"（不排 cron：被叫起来时顺手结账，见 docs/decisions.md#15）
+node bin/agent-man.mjs digest --due
+
 # 看原始流水 / 看长期记忆
 node bin/agent-man.mjs ls --limit 20
 node bin/agent-man.mjs recall --tier 0

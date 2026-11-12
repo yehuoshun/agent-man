@@ -127,6 +127,46 @@ export function readEvents(home, { since, until } = {}) {
   return { events, bad }
 }
 
+/**
+ * 读结账记录。没有就返回 null——"从来没结过账"和"结到很久以前"是两件事，
+ * 都当成 0 的话，攒了一个月没整理的库会被报成"没有欠账"（见 src/consolidate.mjs）。
+ *
+ * 坏掉的记录不能猜：猜出来的 at 会让欠账数字变成假的，所以这里直接抛。
+ */
+export function readConsolidation(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.consolidation, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return null
+    throw e
+  }
+
+  let rec
+  try {
+    rec = JSON.parse(raw.trim()) // trim 顺手吃掉 BOM，和 readEvents 同一套
+  } catch {
+    throw new Error(`${p.consolidation} 不是合法 JSON；坏掉的结账记录不能猜，删掉它重来`)
+  }
+  if (!rec || typeof rec.at !== 'number' || !Number.isFinite(rec.at)) {
+    throw new Error(`${p.consolidation} 缺 at（epoch ms），没法判断欠账`)
+  }
+  return rec
+}
+
+/**
+ * 覆盖写：只留最近一次结账，不是 JSONL。走 writeAtomic，断电不会留下半个文件。
+ *
+ * 只存时刻，不存日/周标签——改 AGENT_MAN_DAY_START 会让标签全变，所以分桶只在
+ * 判断时现算（§12）。
+ */
+export function writeConsolidation(home, rec) {
+  ensure(home)
+  writeAtomic(paths(home).consolidation, JSON.stringify(rec) + '\n')
+  return rec
+}
+
 /** 原子写。tmp + rename，写到一半断电不会留下半个文件。 */
 export function writeAtomic(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true })

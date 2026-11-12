@@ -1,8 +1,18 @@
 import path from 'node:path'
 import { parseAt, dayStartFromEnv, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
-import { resolveHome, appendEvent, readEvents, readMemory, appendMemory, writeAtomic } from './store.mjs'
+import {
+  resolveHome,
+  appendEvent,
+  readEvents,
+  readMemory,
+  appendMemory,
+  writeAtomic,
+  readConsolidation,
+  writeConsolidation,
+} from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
+import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
 
 const VERSION = '0.1.0'
@@ -43,6 +53,7 @@ recall 选项：
   --limit 20
 
 digest 选项：
+  --due                     只报欠了几次巩固（日结/周结/按量），不渲染摘要
   --budget 1200             总预算，含标题与注释行（不是字符数，见 src/cost.mjs）
   --out <文件>              写到文件（原子写），默认打到 stdout
   --title <标题>            第一行标题
@@ -173,10 +184,24 @@ function cmdRemember(home, pos, flags, { out, now }) {
   )
   appendMemory(home, item)
 
+  // 结账：remember 就是"把日记整理成长期条目"的那一次动作，成功了才记账（§15）。
+  // 上面任何一步抛错都走不到这里——校验不过的条目不配清账。
+  const settled = settle(home, now)
+
   out.log(`${item.id}  tier${item.tier}  ${longLine(item)}`)
   if (item.refs.length) out.log(`  出处: ${item.refs.join(', ')}`)
   if (item.supersedes.length) out.log(`  取代: ${item.supersedes.join(', ')}`)
+  out.log(`  结账: 清了 ${settled} 条日记`)
   return 0
+}
+
+/** 把"截至 now 的积压"记为已结，返回这次清掉的条数。 */
+function settle(home, now) {
+  const { events } = readEvents(home)
+  const prev = readConsolidation(home)
+  const cleared = backlog(events, prev?.at ?? -Infinity).count
+  writeConsolidation(home, { at: now, settled: cleared })
+  return cleared
 }
 
 function cmdRecall(home, flags, { out }) {
@@ -208,6 +233,8 @@ function cmdRecall(home, flags, { out }) {
 }
 
 function cmdDigest(home, flags, { out, now, env }) {
+  if (flags.due) return reportDue(home, { out, now, env })
+
   const budget = Number(flags.budget ?? 1200)
   if (!Number.isFinite(budget) || budget <= 0) throw new Error(`--budget 必须是正数，收到 ${flags.budget}`)
   const dayStart = dayStartFromEnv(env)
@@ -235,6 +262,44 @@ function cmdDigest(home, flags, { out, now, env }) {
   reportDrops(stats, out)
   reportLongDrops(stats, out)
   return 0
+}
+
+/**
+ * `--due` 只摊账，不渲染摘要，也不拦人：结不结账由模型决定（§15）。
+ *
+ * 出口永远是 0——欠账是常态，不是错误。要让调用方判断"该不该动手"，
+ * 读第一行的次数就够了。
+ */
+function reportDue(home, { out, now, env }) {
+  const dayStart = dayStartFromEnv(env)
+  const { events, bad } = readEvents(home)
+  const prev = readConsolidation(home)
+  const d = owed(events, { basis: prev?.at ?? null, now, dayStart })
+  const n = owedCount(d)
+  const pile = d.backlog
+
+  if (!n) {
+    out.log(`没有欠账：${settledWhere(d)}，积压 ${pile.count} 条 / ${pile.cost} 代价`)
+  } else {
+    out.log(`欠 ${n} 次巩固：`)
+    if (d.days) out.log(`  · 日结 ${d.days} 次（${settledWhere(d)}）`)
+    if (d.weeks) out.log(`  · 周结 ${d.weeks} 次（上次结到 ${d.fromWeek}）`)
+    if (d.over) {
+      out.log(
+        `  · 按量：积压 ${pile.count} 条 / ${pile.cost} 代价` +
+          `（≥${BACKLOG_COUNT} 条或 ≥${BACKLOG_COST} 代价就该结）`,
+      )
+    }
+  }
+  if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
+  return 0
+}
+
+/** 结账基准的说法：从来没有记录时不能说"上次结到第一条日记那天"，那是两件事。 */
+function settledWhere(d) {
+  if (d.from === null) return '一条日记都还没有'
+  if (!d.settled) return `从第一条日记 ${d.fromDay} 起就没结过`
+  return `上次结到 ${d.fromDay}`
 }
 
 function reportDrops(stats, out) {

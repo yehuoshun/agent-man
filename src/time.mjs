@@ -84,7 +84,7 @@ export function relTime(at, { now = Date.now(), dayStart = 0 } = {}) {
   if (d < HOUR) return `${Math.floor(d / MINUTE)} 分钟前`
   if (d < 12 * HOUR) return `${Math.floor(d / HOUR)} 小时前`
   // 半天以后先看日历日：同一天继续用小时，跨一天才叫"昨天"。
-  const days = dayIndex(now, dayStart) - dayIndex(at, dayStart)
+  const days = dayIndex(now, { dayStart }) - dayIndex(at, { dayStart })
   if (days <= 0) return `${Math.floor(d / HOUR)} 小时前` // 同一天，只是隔得久
   if (days === 1) return `昨天 ${stamp(at).slice(11, 16)}`
   if (days < 7) return `${days} 天前`
@@ -94,8 +94,35 @@ export function relTime(at, { now = Date.now(), dayStart = 0 } = {}) {
 /**
  * 本地日历日的整数序号：把本地的 Y/M/D 当成 UTC 零点再除一天。
  * 只用于算"隔了几个日历日"，不受夏令时与跨时区影响。日界与 dayKey 保持一致。
+ *
+ * 为什么要有这个整数：'YYYY-MM-DD' 只能相等，不能相减。"隔了几天"必须用数算，
+ * 这和 §1 里不许用 localeCompare 排时间是同一条规矩。
  */
-function dayIndex(at, dayStart = 0) {
+export function dayIndex(at, { dayStart = 0 } = {}) {
   const d = new Date(at - dayStart * HOUR)
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY
+}
+
+/** dayIndex 的反函数：整数序号写回 YYYY-MM-DD。只走 UTC 取数，本地时区碰不到它。 */
+function dayKeyFromIndex(index) {
+  const d = new Date(index * DAY)
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+}
+
+/** 周序号：周一到周日落在同一个整数上，所以能相减数"隔了几周"。1970-01-01 是周四，+3 对齐。 */
+export function weekIndex(at, { dayStart = 0 } = {}) {
+  return Math.floor((dayIndex(at, { dayStart }) + 3) / 7)
+}
+
+/**
+ * ISO 周标签，YYYY-Www：周一开头，含 1 月 4 日的那周算第 1 周。
+ * 和 dayKey 一样只在判断与展示时现算，绝不落盘——改 dayStart 会让分桶全变（§12）。
+ */
+export function weekKey(at, { dayStart = 0 } = {}) {
+  const i = dayIndex(at, { dayStart })
+  const monday = i - ((i + 3) % 7)
+  const year = Number(dayKeyFromIndex(monday + 3).slice(0, 4)) // 周四决定这周属于哪一年
+  const jan4 = Date.UTC(year, 0, 4) / DAY
+  const firstMonday = jan4 - ((jan4 + 3) % 7)
+  return `${year}-W${pad(1 + Math.round((monday - firstMonday) / 7))}`
 }

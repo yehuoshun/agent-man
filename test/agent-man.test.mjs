@@ -4,12 +4,20 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { parseAt, dayKey, dayStartFromEnv, relTime, stamp } from '../src/time.mjs'
+import { parseAt, dayKey, dayStartFromEnv, relTime, stamp, weekKey } from '../src/time.mjs'
 import { cost, truncate } from '../src/cost.mjs'
 import { select } from '../src/budget.mjs'
 import { renderDigest } from '../src/render.mjs'
-import { readEvents, appendEvent, readMemory, resolveHome, writeAtomic } from '../src/store.mjs'
+import {
+  readEvents,
+  appendEvent,
+  readMemory,
+  resolveHome,
+  writeAtomic,
+  readConsolidation,
+} from '../src/store.mjs'
 import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
+import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
 import { main, parseArgs } from '../src/cli.mjs'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
@@ -532,4 +540,119 @@ test('两层都塞满时整段仍不超预算，丢了就报 drops', () => {
   assert.ok(cost(text) <= 300, `实际=${cost(text)}`)
   assert.ok(stats.drops.length + stats.longDrops.length > 0)
   assert.equal(stats.over, 0)
+})
+// ---------------------------------------------------------------- 欠账（巩固）
+
+test('ISO 周按周四归属：跨年那几天不分家，1 月 4 日那周算第 1 周', () => {
+  const at = (y, m, d) => new Date(y, m - 1, d, 12, 0).getTime()
+  assert.equal(weekKey(at(2026, 1, 1)), '2026-W01') // 周四
+  assert.equal(weekKey(at(2026, 1, 4)), '2026-W01') // 周日，还是同一周
+  assert.equal(weekKey(at(2026, 1, 5)), '2026-W02')
+  assert.equal(weekKey(at(2026, 12, 31)), '2026-W53')
+  assert.equal(weekKey(at(2027, 1, 1)), '2026-W53') // 跨了年，但属于上一年的最后一周
+  assert.equal(weekKey(at(2024, 12, 30)), '2025-W01') // 反过来：12 月最后几天可以属于下一年第 1 周
+})
+
+test('欠账只算到昨天：今天和本周都还没写完，允许滞后一个周期', () => {
+  const now = new Date(2026, 10, 12, 10, 0).getTime() // 11-12 周四
+  const ev = (y, m, d, h = 8) => ({ at: new Date(y, m - 1, d, h, 0).getTime(), fact: 'x' })
+
+  const sameDay = owed([ev(2026, 11, 12)], { basis: new Date(2026, 10, 12, 9, 0).getTime(), now })
+  assert.equal(sameDay.days, 0, '当天结过账，今天还没过完就不算欠')
+  assert.equal(sameDay.weeks, 0)
+
+  const oneDay = owed([ev(2026, 11, 9)], { basis: new Date(2026, 10, 10, 10, 0).getTime(), now })
+  assert.equal(oneDay.days, 1, '11-10 结的账，昨天那份日记还欠着')
+  assert.equal(oneDay.fromDay, '2026-11-10')
+
+  const longGap = owed([ev(2026, 10, 20)], { basis: new Date(2026, 9, 20, 10, 0).getTime(), now })
+  assert.ok(longGap.weeks >= 2, `周结欠账=${longGap.weeks}`)
+  assert.equal(owedCount(longGap), longGap.days + longGap.weeks)
+})
+
+test('从来没结过账：从第一条日记算起，不报 0', () => {
+  const now = new Date(2026, 10, 12, 10, 0).getTime()
+  const events = [{ at: new Date(2026, 10, 9, 8, 0).getTime(), fact: 'a' }, { at: now - 3600e3, fact: 'b' }]
+  const d = owed(events, { basis: null, now })
+  assert.equal(d.settled, false)
+  assert.equal(d.days, 2)
+  assert.equal(d.fromDay, '2026-11-09')
+  assert.equal(d.backlog.count, 2, '没结过账时积压是全部，不是"上次结账之后"')
+
+  const empty = owed([], { basis: null, now })
+  assert.equal(empty.any, false)
+  assert.equal(empty.from, null)
+})
+
+test('按量欠账：30 条或 600 代价，超一个就算一次', () => {
+  const now = new Date(2026, 10, 12, 10, 0).getTime()
+  const basis = now - 600e3 // 十分钟前刚结过，日结周结都不欠，只剩按量
+  const many = Array.from({ length: 30 }, (_, i) => ({ at: now - 1000 * i - 1000, fact: '短' }))
+
+  const d = owed(many, { basis, now })
+  assert.equal(d.backlog.count, 30)
+  assert.equal(d.over, true)
+  assert.equal(owedCount(d), 1, '按量只算一次，不按条数累加')
+
+  assert.equal(owed(many.slice(0, 29), { basis, now }).over, false, '29 条还没到线')
+
+  const heavy = [{ at: now - 2000, fact: '长'.repeat(600) }]
+  assert.ok(backlog(heavy, -Infinity).cost >= BACKLOG_COST)
+  assert.equal(owed(heavy, { basis, now }).over, true, '代价够了也算欠，哪怕只有一条')
+})
+
+test('remember 成功才写结账记录，校验不过就不写', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '今天风大'], { env, out: recorder(), now })
+  assert.equal(readConsolidation(home), null, '还没 remember，不该有结账记录')
+
+  assert.equal(main(['remember', '没有出处的结论', '--topic', '她怕冷'], { env, out: recorder(), now }), 1)
+  assert.equal(readConsolidation(home), null, '校验失败的 remember 不能清账')
+
+  assert.equal(
+    main(['remember', '入秋后先关窗', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out: recorder(), now }),
+    0,
+  )
+  const rec = readConsolidation(home)
+  assert.equal(rec.at, now)
+  assert.equal(rec.settled, 1)
+  // 只存时刻，不存日/周标签：改 AGENT_MAN_DAY_START 不该让历史记录变形（§12）
+  assert.deepEqual(Object.keys(rec).sort(), ['at', 'settled'])
+})
+
+test('digest --due 只摊账：不渲染摘要，结完账就归零', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '三天前的日记', '--at', '2026-11-09 10:00'], { env, out: recorder(), now })
+  main(['log', '昨天的日记', '--at', '2026-11-11 10:00'], { env, out: recorder(), now })
+
+  const before = recorder()
+  assert.equal(main(['digest', '--due'], { env, out: before, now }), 0)
+  assert.ok(before.lines[0].startsWith('欠 2 次巩固'), before.all)
+  assert.ok(!before.all.includes('我记得的事'), '--due 不该渲染摘要')
+
+  main(['remember', '她怕冷', '--topic', '她怕冷', '--refs', '2026-11-09'], { env, out: recorder(), now })
+  const after = recorder()
+  assert.equal(main(['digest', '--due'], { env, out: after, now }), 0)
+  assert.ok(after.lines[0].startsWith('没有欠账'), after.all)
+})
+
+test('结账记录坏了就报错，不猜', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const file = path.join(home, 'state', 'consolidation.json')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+
+  fs.writeFileSync(file, '{ 这不是 JSON\n', 'utf8')
+  const bad = recorder()
+  assert.equal(main(['digest', '--due'], { env, out: bad }), 1)
+  assert.ok(bad.errs.join('\n').includes('consolidation.json'), bad.errs.join('\n'))
+
+  fs.writeFileSync(file, '{"settled":3}\n', 'utf8')
+  const noAt = recorder()
+  assert.equal(main(['digest', '--due'], { env, out: noAt }), 1)
+  assert.ok(noAt.errs.join('\n').includes('at'), noAt.errs.join('\n'))
 })
