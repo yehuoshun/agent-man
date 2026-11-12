@@ -395,7 +395,10 @@ function cmdLog(home, pos, flags, { out, now }) {
   const w = Number(flags.weight ?? 0)
   if (!Number.isInteger(w) || w < 0 || w > 3) throw new Error(`--weight 只能是 0..3，收到 ${flags.weight}`)
 
-  const ev = { at, kind: String(flags.kind ?? 'note'), fact }
+  const kind = String(flags.kind ?? 'note').trim()
+  if (!kind) throw new Error('--kind 不能是空的：它标的是这条从哪儿来（note / dm / qq / video）')
+
+  const ev = { at, kind, fact }
   if (w) ev.weight = w
   if (flags.feel) ev.feel = String(flags.feel)
   if (flags.src) ev.src = String(flags.src)

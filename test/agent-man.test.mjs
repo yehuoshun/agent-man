@@ -608,6 +608,15 @@ test('选项名写错就报错：--waight 不是 --weight，不许静默降级�
   assert.equal(readEvents(home).events.length, 0) // 没落盘，而不是悄悄记成 w0
 })
 
+test('--kind 给空串不算"默认 note"：报错，不记一条"没来源"的日记', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const out = recorder()
+  assert.equal(main(['log', '一条日记', '--kind', '  '], { env, out }), 1)
+  assert.ok(out.errs.join('\n').includes('--kind 不能是空的'), out.all)
+  assert.equal(readEvents(home).events.length, 0) // 不是悄悄落盘成 kind: ""
+})
+
 test('--supersede 少一个 s 会被拦住，不留两条并存的同主题记忆', () => {
   const home = tmp()
   const env = { AGENT_MAN_HOME: home }
