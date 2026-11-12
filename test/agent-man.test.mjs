@@ -2180,6 +2180,10 @@ test('时间线能只看一份：--kind judge 就只剩判断', () => {
   const bad = recorder()
   assert.equal(main(['timeline', '--kind', 'nope'], { env, out: bad }), 1)
   assert.ok(bad.errs.join('\n').includes('--kind 只认'), bad.all)
+
+  const empty = recorder()
+  assert.equal(main(['timeline', '--kind', ''], { env, out: empty }), 1)
+  assert.ok(empty.errs.join('\n').includes('不能是空的'), empty.all)
 })
 
 test('时间线的 --since 按本地整天算，早于那天的都不再列', () => {

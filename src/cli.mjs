@@ -886,6 +886,7 @@ function cmdTimeline(home, flags, { out, now }) {
   if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
 
   const kinds = flags.kind === undefined ? null : String(flags.kind).split(',').map((k) => k.trim()).filter(Boolean)
+  if (kinds && !kinds.length) throw new Error(`--kind 不能是空的：${TIMELINE_NAMES.join(" / ")}，逗号分开`)
   for (const k of kinds ?? []) {
     if (!TIMELINE_NAMES.includes(k)) {
       throw new Error(`--kind 只认 ${TIMELINE_NAMES.join(' / ')}（${TIMELINE_NAMES.map((n) => TIMELINE_KINDS[n]).join(' / ')}），收到 ${k}`)
