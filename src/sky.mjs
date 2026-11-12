@@ -24,6 +24,70 @@ export const COLD_C = 0
 export const STALE_MS = 30 * 60e3
 
 /**
+ * 缓存最多留多久：比一天还旧的数就不再当它说过话。
+ *
+ * 天况说的是"今天外面什么样"，隔了一天的数已经不是一个东西了；
+ * 给它说话的资格，等于把前天的雨说成今天的（§25）。
+ */
+export const MAX_AGE_MS = 24 * 60 * 60e3
+
+/**
+ * now 落在 tz 的哪一天（'YYYY-MM-DD'）。
+ *
+ * 天气源给的日期是**它那个时区**的日历日，跟本机的不一定是同一天：
+ * 人在东八区、地方在纽约，"今天"差十三个小时。
+ * 时区名不认识就退回本机日历日——不猜，也不拿 UTC 硬顶。
+ */
+export function sourceDay(now, tz = null) {
+  const d = new Date(now)
+  if (tz) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d)
+    } catch {
+      // 落到下面：用本机的日历日
+    }
+  }
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+/** '2026-11-11' → '11 月 11 日'：别把日期原样倒给读者。 */
+export function dateText(date) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date ?? ''))
+  if (!m) return String(date ?? '那天')
+  return `${Number(m[2])} 月 ${Number(m[3])} 日`
+}
+
+/**
+ * 这份缓存还能怎么用（§25）。
+ *
+ *   none       没有（或读坏了）——联网失败就直说，没有旧数可退
+ *   fresh      半小时内取的、同一天——不联网
+ *   same-day   同一天，只是旧了点——能用，联网失败时提一句
+ *   cross-day  存的那天已经不是今天——不许说"今天"，只能当"上次看到的样子"
+ *   too-old    超过一天——当没有，宁可说没数
+ *
+ * 判跨日看的是数据里那个日期（daily[0].date = 取数那天源时区的今天），不是
+ * rec.at：at 是"什么时候取的"，跟"这份数说的是哪一天"是两件事。昨晚 23:50
+ * 取的数和今早取的数只差八小时，说的却是两天。
+ */
+export function cacheState(rec, { now = Date.now(), tz = null } = {}) {
+  const data = rec?.data
+  const at = rec?.at
+  if (!data || !Number.isFinite(at)) return 'none'
+  if (now - at > MAX_AGE_MS) return 'too-old'
+  const day = data.daily?.[0]?.date
+  if (typeof day !== 'string' || day !== sourceDay(now, tz)) return 'cross-day'
+  return now - at < STALE_MS ? 'fresh' : 'same-day'
+}
+
+/**
  * WMO weather code → 中文。只收会出现的那些，未知码照实说"未知天况(N)"，
  * 不猜成"多云"——猜错比空着更糟。
  */

@@ -25,6 +25,7 @@ import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
 import { main, parseArgs, FLAGS } from '../src/cli.mjs'
 import { inQuiet } from '../src/when.mjs'
+import { cacheState } from '../src/sky.mjs'
 
 // 时区不进用例：要"本地某天某点"就用本地时间构造。
 // 写死 +08:00 的 epoch 只在东八区等于那一天，UTC/纽约机器上 dayKey 会落到前一天。
@@ -1350,6 +1351,18 @@ function skyOf(over = {}) {
   }
 }
 
+/** now 在天气源时区的今天/明天（'YYYY-MM-DD'）。 */
+function sourceDates(now, tz = 'Asia/Shanghai') {
+  const fmt = (t) =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(t))
+  return [fmt(now), fmt(now + 24 * 3600e3)]
+}
+
 /** 假天气源：只记账、不发请求。天气是外部世界，测它必须能换数。 */
 function fakeNet() {
   const calls = { geocode: 0, sky: 0 }
@@ -1364,7 +1377,10 @@ function fakeNet() {
     async fetchSky(place, { now }) {
       calls.sky++
       if (net.error) throw net.error
-      return { ...net.data, at: now, place: place.short }
+      // 真天气源给的是**它那个时区**的今天：假的照做，否则用例换个时区就跑不通。
+      const [today, tomorrow] = sourceDates(now)
+      const daily = net.data.daily.map((d, i) => ({ ...d, date: i ? tomorrow : today }))
+      return { ...net.data, at: now, place: place.short, daily }
     },
   }
   return net
@@ -1450,6 +1466,58 @@ test('看天：取不到数就直说；有旧数才用旧数，并且要报出�
   out = recorder()
   assert.equal(await main(['sky'], { env, out, now: skyNow + 24 * 3600e3, net }), 0)
   assert.match(out.errs.join('\n'), /下面用的是 .*的数据/)
+})
+
+test('看天：缓存分四档——跨日的不许当今天说，超过一天就当没有', () => {
+  const at = Date.parse('2026-11-12T09:00:00+08:00')
+  const data = { daily: [{ date: '2026-11-12' }] }
+  const rec = { at, data }
+
+  assert.equal(cacheState(null), 'none')
+  assert.equal(cacheState({ at, data: null }, { now: at }), 'none')
+  assert.equal(cacheState(rec, { now: at + 60e3, tz: 'Asia/Shanghai' }), 'fresh')
+  assert.equal(cacheState(rec, { now: at + 3600e3, tz: 'Asia/Shanghai' }), 'same-day')
+
+  // 上海 13 号早上五点，纽约还是 12 号下午四点：同一个时刻，两个"今天"。
+  const later = Date.parse('2026-11-13T05:00:00+08:00')
+  assert.equal(cacheState(rec, { now: later, tz: 'Asia/Shanghai' }), 'cross-day')
+  assert.equal(cacheState(rec, { now: later, tz: 'America/New_York' }), 'same-day')
+
+  assert.equal(cacheState(rec, { now: at + 25 * 3600e3, tz: 'Asia/Shanghai' }), 'too-old')
+})
+
+test('看天：跨日那份数只报"上次的样子"，不装成今天，也不比"变了什么"', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+
+  // 隔了一天，断网：手上这份数说的是昨天，不许再拿"今天 13–18℃"糊过去。
+  net.error = new Error('连不上天气源（timeout）；这次没取到数')
+  const out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 24 * 3600e3, net }), 0)
+
+  const text = out.lines.join('\n')
+  // 报的是缓存里那天的日期（源时区的今天），不是本机的今天——别写死日期。
+  const [, mm, dd] = sourceDates(skyNow)[0].split('-')
+  assert.match(text, /今天没取到数/)
+  assert.match(text, new RegExp(`上次是 ${Number(mm)} 月 ${Number(dd)} 日：`))
+  assert.doesNotMatch(text, /变了什么/)
+  assert.doesNotMatch(text, /今天 \d+–\d+℃/)
+  assert.match(out.errs.join('\n'), /下面用的是 .*的数据/)
+})
+
+test('看天：超过一天的旧数当没有——宁可说没数，也不把前天的雨说成今天', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  await main(['sky'], { env, out: recorder(), now: skyNow, net })
+
+  net.error = new Error('连不上天气源（timeout）；这次没取到数')
+  const out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 25 * 3600e3, net }), 1)
+  assert.match(out.errs.join('\n'), /连不上天气源/)
+  assert.doesNotMatch(out.lines.join('\n'), /今天/)
 })
 
 test('看天：地方只查一次坐标，之后每次看天不再查地名', async () => {

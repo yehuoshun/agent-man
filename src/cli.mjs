@@ -39,7 +39,7 @@ import { buildTrace, neverShown, traceLine } from './trace.mjs'
 import { cue, MIN_GAP, describeQuiet } from './when.mjs'
 import { makeNote, pendingNotes } from './handoff.mjs'
 import { makePlan, pendingPlans, upcoming, todayPlans } from './plan.mjs'
-import { judgeSky, STALE_MS } from './sky.mjs'
+import { judgeSky, cacheState, dateText, snapshotOf, skyText } from './sky.mjs'
 import * as defaultNet from './net.mjs'
 
 const VERSION = '0.1.0'
@@ -823,17 +823,20 @@ async function cmdSky(home, flags, { out, now, net, env }) {
   if (!place) throw new Error('还不知道你在哪儿：先 agent-man place 上海（查一次坐标，之后不再问）')
 
   const rec = readSky(home)
-  const cached = rec?.data ?? null
-  const stale = !cached || now - rec.at >= STALE_MS
-  let data = cached
-  let at = rec?.at ?? null
+  const state = cacheState(rec, { now, tz: place.tz })
+  // 一天以前的那份数不再当它说过话（§25）；跨日的那份能看，但不能当"今天"。
+  const usable = state === 'fresh' || state === 'same-day' || state === 'cross-day'
+  let data = usable ? rec.data : null
+  let at = usable ? rec.at : null
+  let used = usable ? state : null
 
-  if (stale || flags.fresh || flags.force) {
+  if (state !== 'fresh' || flags.fresh || flags.force) {
     try {
       data = await net.fetchSky(place, { now })
       at = now
+      used = 'fresh'
     } catch (e) {
-      if (!cached) throw e
+      if (!usable) throw e
       out.error(`! ${e.message}；下面用的是 ${relTime(rec.at, { now })}的数据`)
     }
   }
@@ -841,6 +844,22 @@ async function cmdSky(home, flags, { out, now, net, env }) {
   const j = judgeSky(data, rec?.said?.snapshot ?? null)
   const head = `${place.short || place.name} ${clock(now)}`
   const today = todayPlans(readPlan(home).records, { now, dayStart })
+
+  // 手上那份数说的不是今天：只能报"上次看到的样子"，不能说"今天"（§25）。
+  // 也别比"变了什么"——比的对象是前一天，比出来的结论今天不成立。
+  if (used === 'cross-day') {
+    const snap = snapshotOf(data)
+    out.log(`${head}，今天没取到数`)
+    out.log(
+      `上次是 ${dateText(snap.date)}：${skyText(snap.code)}，` +
+        `${Math.round(snap.temp)}℃，${Math.round(snap.tmin)}–${Math.round(snap.tmax)}℃`,
+    )
+    if (today.length) {
+      out.log('今天的安排：')
+      for (const r of today) out.log(`· ${planLine(r)}`)
+    }
+    return 0
+  }
 
   if (!j.speak && !flags.force) {
     const extra = today.length ? `；今天还有 ${today.length} 条安排` : ''
