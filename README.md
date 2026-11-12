@@ -145,6 +145,16 @@ git clone git@github.com:yehuoshun/agent-man.git
 cd agent-man && node --test    # 用例只增不减，条数以输出为准
 ```
 
+或者拿打包好的 tarball（每个 main 构建都会挂一个，发版时挂在 Release 上）：
+
+```bash
+npm i -g ./agent-man-0.1.0.tgz
+```
+
+推 `v<version>` 标签就会发版：CI 先在 Linux/Windows × Node 20/22/24 上跑一遍用例，
+再打 tarball、建 Release。标签和 `package.json` 的版本对不上会直接失败
+（见 `docs/decisions.md` §27）。
+
 数据目录默认 `~/.agent-man`，用 `AGENT_MAN_HOME` 覆盖；日界默认午夜，
 用 `AGENT_MAN_DAY_START`（0..23）把它往后挪。
 

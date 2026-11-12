@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { parseAt, dayKey, dayStartFromEnv, relTime, stamp, weekKey } from '../src/time.mjs'
 import { cost, truncate } from '../src/cost.mjs'
@@ -1434,4 +1435,62 @@ test('cue：日程只是处境，不当开口的理由；列出来但不记水�
   assert.equal(main(['cue'], { env, out, now: skyNow + 60e3 }), 0)
   assert.match(out.all, /今天的安排：/)
   assert.match(out.all, /· 20:00  交电费/)
+})
+
+// ---------------------------------------------------------------- 仓库自身
+
+const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+
+function walkText(start, out = []) {
+  for (const d of fs.readdirSync(path.join(repoRoot, start), { withFileTypes: true })) {
+    if (d.name === '.git' || d.name === 'node_modules' || d.name === 'tmp') continue
+    const rel = path.posix.join(start, d.name)
+    if (d.isDirectory()) walkText(rel, out)
+    else if (/\.(mjs|json|md|ya?ml)$/.test(d.name) || d.name.startsWith('.')) out.push(rel)
+  }
+  return out
+}
+
+test('仓库里没有第三方依赖：import 只认 node: 与相对路径', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  assert.equal(pkg.dependencies, undefined)
+  assert.equal(pkg.devDependencies, undefined)
+  assert.equal(fs.existsSync(path.join(repoRoot, 'node_modules')), false)
+
+  for (const rel of walkText('src').concat(walkText('bin'), walkText('test'))) {
+    if (!rel.endsWith('.mjs')) continue
+    const src = fs.readFileSync(path.join(repoRoot, rel), 'utf8')
+    // 只看行首的 import/export：注释和字符串里提到 from ' 不算依赖
+    for (const line of src.split('\n')) {
+      const m = line.match(/^\s*(?:import|export)\b.*?from '([^']+)'/) || line.match(/^\s*import '([^']+)'/)
+      if (!m) continue
+      const spec = m[1]
+      assert.ok(spec.startsWith('node:') || spec.startsWith('.'), `${rel} 引了 ${spec}：不装依赖是硬约束`)
+    }
+  }
+})
+
+test('所有文本文件都是 LF、无 BOM：在 Windows 上改也不会整文件 diff', () => {
+  const files = walkText('.')
+  assert.ok(files.length > 10, '扫到的文件太少，说明遍历本身坏掉了')
+  for (const rel of files) {
+    const buf = fs.readFileSync(path.join(repoRoot, rel))
+    assert.ok(!(buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf), `${rel} 带 BOM`)
+    assert.equal(buf.includes(0x0d), false, `${rel} 里有 CR：行末必须是 LF`)
+  }
+})
+
+test('bin 指向真实文件，版本号两边一致——打包前先对账', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  assert.ok(fs.existsSync(path.join(repoRoot, pkg.bin['agent-man'])), 'bin 指的文件不存在')
+
+  const cli = fs.readFileSync(path.join(repoRoot, 'src/cli.mjs'), 'utf8')
+  const m = cli.match(/const VERSION = '([^']+)'/)
+  assert.ok(m, 'src/cli.mjs 里没有 VERSION')
+  assert.equal(m[1], pkg.version, 'VERSION 和 package.json 的 version 不一致')
+
+  // 打包带上的是这些东西，漏了 docs 就等于发了个没有说明书的东西
+  for (const p of pkg.files) {
+    assert.ok(fs.existsSync(path.join(repoRoot, p)), `package.json 的 files 里有不存在的路径：${p}`)
+  }
 })

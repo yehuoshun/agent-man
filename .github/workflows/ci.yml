@@ -1,0 +1,45 @@
+name: ci
+
+# 零依赖，所以这里没有 npm install：拉下来直接跑用例，几秒钟。
+# Windows 一定要进矩阵——CRLF、BOM、反斜杠这几类事故全都出在 Windows 上。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test · ${{ matrix.os }} · node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: node --test
+        run: node --test
+      # 每次 main 上都留一个能装的 tarball，不用等发版
+      - name: npm pack
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        run: npm pack --pack-destination dist
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        with:
+          name: agent-man-tarball
+          path: dist/*.tgz
+          if-no-files-found: error

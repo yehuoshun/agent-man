@@ -3,15 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "给 agent 一个会话之外的生活：记事、定时候、看天气、递话。",
+  "description": "给 agent 一个会话之外的生活：记事、定时候、看天气、递话、日程。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yehuoshun/agent-man.git"
+  },
   "bin": {
     "agent-man": "./bin/agent-man.mjs"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "AGENTS.md",
+    "docs/decisions.md"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "test": "node --test",
+    "pack:check": "npm pack --dry-run",
     "digest": "node bin/agent-man.mjs digest"
   }
 }

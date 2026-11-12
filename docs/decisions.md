@@ -436,3 +436,30 @@ refs 变成时间区间，列出那段时间里的日记原文。纯日期按本
 去重只能靠调用频率和模型自己看着办。只按本地日历日（受 `AGENT_MAN_DAY_START` 影响），
 没有时区换算、没有重复规则（"每周三"不存在）。划掉是单向的，没有撤销，想加回来就再记一条。
 时间只认 `parseAt` 认的几种写法。
+
+## 27. CI 与打包：标签就是发布，别的不算
+
+**决定**：仓库里加两条 GitHub Actions 工作流。`ci.yml`：push 到 main 或开 PR 时，在
+Linux + Windows × Node 20/22/24 六条腿上跑 `node --test`，其中一条腿顺手 `npm pack`
+并把 tarball 作为 artifact 传上来（`agent-man-tarball`）。`release.yml`：推 `v*` 标签时
+同样的矩阵跑用例 → 校验标签与 `package.json` 的 `version` 一致 → `npm pack` → 建
+GitHub Release 并把 tarball 挂上去；`workflow_dispatch` 可以手动演练打包，但不建 Release
+（`release` 任务带 `if: startsWith(github.ref, 'refs/tags/')`）。同时把三件"仓库自身的约束"
+升级成用例，让 CI 一跑就能证伪：没有 `dependencies`/`devDependencies`、没有 `node_modules`、
+每个 `import` 只认 `node:` 和相对路径；所有文本文件都是 LF 且无 BOM；`package.json` 的
+`bin` 指向真实文件、`files` 里的路径都存在、`VERSION` 与 `version` 一致。
+
+**来由**：五个零件写完，但"能不能在别人的机器上跑"一直只是我本机的一句 `node --test`。
+Windows 是这台机器的主战场，CRLF、BOM、反斜杠这三类事故在这里都真发生过（§三、§20 的
+BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须有 Windows。CI 里**没有
+`npm install`**：零依赖不只是口号，它让一次 CI 变成"拉代码 + 跑一条命令"，十几秒出结果。
+打包也不用 build——`npm pack` 把 `files` 白名单里的东西打成一个 tarball 就是产物。
+
+**代价**：六条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
+是为了不互相掩盖）。Windows 腿比 Linux 慢一倍多。不发 npm：`package.json` 里 `private: true`，
+也刻意不给仓库配 `NPM_TOKEN`，所以"装"只有两条路——`git clone`，或者下 tarball 再
+`npm i -g ./agent-man-0.1.0.tgz`。tarball 内容靠 `files` 白名单，新增的文档忘了写进去
+不会报错，所以补了一条"`files` 里的路径必须存在"的用例——但它只验存在，不验"该收的都收了"。
+Release notes 用 `--generate-notes` 自动按提交生成，噪音多（十几条 `修复:` 堆一起），
+但省掉了一个必须手工维护的 CHANGELOG。最后，CI 只证明"用例说的都对"，不证明"设计是对的"：
+`docs/decisions.md` 里那些代价，仍然只能靠人看。
