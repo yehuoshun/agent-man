@@ -40,6 +40,10 @@ node bin/agent-man.mjs digest --budget 800 --out ~/.agent-man/digest.md
 # 问一句"我欠了几次巩固"（不排 cron：被叫起来时顺手结账，见 docs/decisions.md#15）
 node bin/agent-man.mjs digest --due
 
+# 看账：每次 digest 装下了什么、丢了什么；哪些日记从来没进过摘要
+node bin/agent-man.mjs trace
+node bin/agent-man.mjs trace --never
+
 # 看原始流水 / 看长期记忆
 node bin/agent-man.mjs ls --limit 20
 node bin/agent-man.mjs recall --tier 0

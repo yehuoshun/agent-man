@@ -10,10 +10,13 @@ import {
   writeAtomic,
   readConsolidation,
   writeConsolidation,
+  appendTrace,
+  readTraces,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
+import { buildTrace, neverShown, traceLine } from './trace.mjs'
 
 const VERSION = '0.1.0'
 const DUP_WINDOW = 24 * 3600e3
@@ -26,6 +29,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man recall [选项]            看长期记忆
   agent-man digest [选项]            渲染当前摘要
   agent-man ls [--limit 20]          看原始事件
+  agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
   agent-man --help
 
 log 选项：
@@ -60,6 +64,10 @@ digest 选项：
   --out <文件>              写到文件（原子写），默认打到 stdout
   --title <标题>            第一行标题
 
+trace 选项：
+  --limit 10                最近几次 digest
+  --never                   反过来：哪些日记从来没进过摘要
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -92,10 +100,11 @@ export const FLAGS = {
   recall: { value: ['limit', 'tier', 'batch', 'grep'], bool: [] },
   digest: { value: ['budget', 'out', 'title'], bool: ['due'] },
   ls: { value: ['limit'], bool: [] },
+  trace: { value: ['limit'], bool: ['never'] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
-const NO_POS = new Set(['recall', 'digest', 'ls'])
+const NO_POS = new Set(['recall', 'digest', 'ls', 'trace'])
 
 /** 用法错误（解析层就拦下的）单独标一下：它和"要记的事是空的"不是一类，退出码也不同。 */
 function usage(msg) {
@@ -216,6 +225,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'recall') return cmdRecall(home, flags, { out })
     if (cmd === 'digest') return cmdDigest(home, flags, { out, now, env })
     if (cmd === 'ls') return cmdLs(home, flags, { out })
+    if (cmd === 'trace') return cmdTrace(home, flags, { out })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -360,6 +370,8 @@ function cmdDigest(home, flags, { out, now, env }) {
   if (badLong) out.error(`! ${badLong} 行长期记忆读不出来，已跳过`)
   reportDrops(stats, out)
   reportLongDrops(stats, out)
+  // 落账放在最后：中途抛错（比如 --out 写不进去）说明这份摘要没人用上，不该记账。
+  appendTrace(home, buildTrace(stats, { now }))
   return 0
 }
 
@@ -438,5 +450,42 @@ function cmdLs(home, flags, { out }) {
     out.log(`${stamp(e.at)}${e.weight ? ` w${e.weight}` : ''}  [${e.kind}]  ${e.fact}${feel}`)
   }
   if (bad) out.error(`! ${bad} 行读不出来`)
+  return 0
+}
+
+/**
+ * 账本：`trace` 看最近几次渲染，`trace --never` 反过来问哪些日记从没进过摘要。
+ *
+ * 这个命令刻意不总结、不排序"重要性"——账本只报事实。
+ * 读到的事要不要提，仍是模型自己的判断（docs/decisions.md §17）。
+ */
+function cmdTrace(home, flags, { out }) {
+  const limit = Number(flags.limit ?? 10)
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+
+  const { traces, bad } = readTraces(home)
+  if (flags.never) return traceNever(home, traces, limit, { out })
+
+  if (!traces.length) {
+    out.log('还没有账：digest 每渲染一次就落一行，先跑一次')
+  } else {
+    const tail = traces.slice(-limit)
+    out.log(`最近 ${tail.length} 次 digest（共 ${traces.length} 次）：`)
+    for (const t of tail) out.log(`${stamp(t.at)}  ${traceLine(t)}`)
+  }
+  if (bad) out.error(`! ${bad} 行账读不出来，已跳过`)
+  return 0
+}
+
+function traceNever(home, traces, limit, { out }) {
+  const { events, bad } = readEvents(home)
+  const miss = neverShown(events, traces)
+  const measured = traces.length ? `${traces.length} 次` : '0 次——还没量过'
+  out.log(`${miss.length} 条日记没进过摘要（共 ${events.length} 条；账本 ${measured}）`)
+  for (const e of miss.slice(-limit)) {
+    out.log(`${stamp(e.at)}${e.weight ? ` w${e.weight}` : ''}  ${e.fact}`)
+  }
+  if (miss.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
+  if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
   return 0
 }

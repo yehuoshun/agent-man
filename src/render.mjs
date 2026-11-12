@@ -166,6 +166,10 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
       longKept,
       longUsed: long.used,
       longDrops: long.drops,
+      // 装进摘要的是哪些条目：账本要能回答"哪几条从来没进过摘要"（见 src/trace.mjs）。
+      // 日记用 at 认，长期用 id 认——两者在各自文件里都是唯一的。
+      keptAt: [...day.pinned, ...day.recent].map((e) => e.at),
+      longKeptIds: long.shown.map((it) => it.id),
     },
   }
 }

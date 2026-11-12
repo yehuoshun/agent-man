@@ -22,6 +22,7 @@ export function paths(home) {
     digest: path.join(home, 'digest.md'),
     state: path.join(home, 'state'),
     consolidation: path.join(home, 'state', 'consolidation.json'),
+    trace: path.join(home, 'state', 'trace.jsonl'),
   }
 }
 
@@ -165,6 +166,52 @@ export function writeConsolidation(home, rec) {
   ensure(home)
   writeAtomic(paths(home).consolidation, JSON.stringify(rec) + '\n')
   return rec
+}
+
+/**
+ * 追加一行账（state/trace.jsonl）。和 events 一样只追加：账是回溯用的，
+ * 不是当前状态，覆盖写等于把历史抹掉（§17）。
+ */
+export function appendTrace(home, rec) {
+  const p = ensure(home)
+  fs.appendFileSync(p.trace, `${JSON.stringify(rec)}\n`, 'utf8')
+  return rec
+}
+
+/**
+ * 读全量账本，按时间升序。
+ * 坏行跳过并计数——一条账坏了不该让整个账本读不出来，但也不能装作没发生。
+ */
+export function readTraces(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.trace, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return { traces: [], bad: 0 }
+    throw e
+  }
+
+  const traces = []
+  let bad = 0
+  for (const line of raw.split('\n')) {
+    const s = line.trim()
+    if (!s) continue
+    let t
+    try {
+      t = JSON.parse(s)
+    } catch {
+      bad++
+      continue
+    }
+    if (!t || typeof t.at !== 'number' || !Number.isFinite(t.at)) {
+      bad++
+      continue
+    }
+    traces.push(t)
+  }
+  traces.sort((a, b) => a.at - b.at)
+  return { traces, bad }
 }
 
 /** 原子写。tmp + rename，写到一半断电不会留下半个文件。 */

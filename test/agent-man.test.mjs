@@ -15,6 +15,7 @@ import {
   resolveHome,
   writeAtomic,
   readConsolidation,
+  readTraces,
 } from '../src/store.mjs'
 import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
@@ -762,4 +763,93 @@ test('从没结过账时不说"上次结到"，那是另一件事', () => {
   assert.ok(out.all.includes('周结'), `三周没结过，周结那行也该出现：\n${out.all}`)
   assert.ok(out.all.includes('从第一条日记'), out.all)
   assert.ok(!out.all.includes('上次结到'), `从没结过账，不能说"上次结到"：\n${out.all}`)
+})
+
+// ---------------------------------------------------------------- 账本
+
+test('digest 落一行账：装下的与丢掉的分得开，账里不抄原文', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '今天风大', '--at', '2026-11-12 11:52'], { env, out: recorder(), now })
+  main(['log', '她把窗关上了', '--weight', '2', '--at', '2026-11-12 11:00'], { env, out: recorder(), now })
+
+  assert.equal(main(['digest', '--budget', '60'], { env, out: recorder(), now }), 0)
+  const { traces } = readTraces(home)
+  assert.equal(traces.length, 1, '一次 digest 一行账')
+
+  const t = traces[0]
+  assert.equal(t.at, now)
+  assert.equal(t.budget, 60)
+  assert.ok(t.used <= 60, `账上的实占不能超预算：${t.used}`)
+  const dropped = t.drops.map((d) => d.at)
+  assert.equal(
+    t.keptAt.length + dropped.length,
+    2,
+    `装下的 + 丢掉的 = 读到的，不许有条目凭空消失：${JSON.stringify(t)}`,
+  )
+  for (const at of t.keptAt) assert.ok(!dropped.includes(at), '同一条不能既算装下又算丢了')
+
+  // 账是账不是备份：原文在 events.jsonl，抄一份进来就有两个会不一致的副本。
+  const raw = fs.readFileSync(path.join(home, 'state', 'trace.jsonl'), 'utf8')
+  assert.ok(!raw.includes('她把窗关上了'), `账本不该抄原文：${raw}`)
+})
+
+test('trace --never 报的是"没进过摘要"，不是"不重要"', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '早就写下的那条', '--at', '2026-11-12 10:00'], { env, out: recorder(), now })
+  main(['digest'], { env, out: recorder(), now })
+
+  const none = recorder()
+  assert.equal(main(['trace', '--never'], { env, out: none }), 0)
+  assert.ok(none.lines[0].startsWith('0 条日记没进过摘要'), none.all)
+
+  main(['log', '进过账之后才写的', '--at', '2026-11-12 11:00'], { env, out: recorder(), now })
+  const some = recorder()
+  assert.equal(main(['trace', '--never'], { env, out: some }), 0)
+  assert.ok(some.lines[0].startsWith('1 条日记没进过摘要'), some.all)
+  assert.ok(some.all.includes('进过账之后才写的'), some.all)
+  assert.ok(!some.all.includes('早就写下的那条'), `进过摘要的不该被列出来：\n${some.all}`)
+})
+
+test('trace 列出每次 digest 的账；--due 不记账（它本身就是账）', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '今天的风'], { env, out: recorder(), now })
+
+  assert.equal(main(['digest', '--due'], { env, out: recorder(), now }), 0)
+  assert.deepEqual(readTraces(home).traces, [], '--due 是问账，不是用摘要，不落账')
+
+  const empty = recorder()
+  assert.equal(main(['trace'], { env, out: empty }), 0)
+  assert.ok(empty.lines[0].includes('还没有账'), empty.all)
+
+  main(['digest', '--budget', '800'], { env, out: recorder(), now })
+  main(['digest', '--budget', '400'], { env, out: recorder(), now })
+  const out = recorder()
+  assert.equal(main(['trace'], { env, out }), 0)
+  assert.ok(out.lines[0].includes('共 2 次'), out.all)
+  assert.ok(out.all.includes('预算 800') && out.all.includes('预算 400'), out.all)
+})
+
+test('账本坏行跳过并报出来，不让一条坏账藏住整本', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const file = path.join(home, 'state', 'trace.jsonl')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, '{"at":1794000000000,"budget":1200,"used":10,"keptAt":[]}\n坏了\n', 'utf8')
+
+  const out = recorder()
+  assert.equal(main(['trace'], { env, out }), 0)
+  assert.ok(out.all.includes('共 1 次'), out.all)
+  assert.ok(out.errs.join('\n').includes('1 行账读不出来'), out.errs.join('\n'))
+})
+
+test('trace --limit 只认正整数，多余的位置参数也不吃', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  assert.equal(main(['trace', '--limit', '0'], { env, out: recorder() }), 1)
+  assert.equal(main(['trace', '--never', '10'], { env, out: recorder() }), 2)
 })
