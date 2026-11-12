@@ -210,4 +210,5 @@ npm i -g ./agent-man-0.2.0.tgz
 
 ## 文档
 
+- [docs/a-day.md](docs/a-day.md) — 一天真跑一遍：每条命令当时的输出
 - [docs/decisions.md](docs/decisions.md) — 每个决定背后的那次事故
