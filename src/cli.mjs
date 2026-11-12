@@ -113,6 +113,7 @@ cue 选项：
   --force                   无视间隔与静默时段（手动问的时候用）
   --peek                    只看一眼，不记水位（下次还会报同样的东西）
   --limit 10                最多列几条新东西
+  --out <文件>              写到文件（原子写），默认打到 stdout
 
 leave 选项：
   --when <场合>             什么时候该看（必填，例：她提到加班时）
@@ -170,7 +171,7 @@ export const FLAGS = {
   ls: { value: ['limit'], bool: [] },
   find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
-  cue: { value: ['limit', 'min-gap'], bool: ['peek', 'force'] },
+  cue: { value: ['limit', 'min-gap', 'out'], bool: ['peek', 'force'] },
   show: { value: ['limit', 'fact'], bool: [] },
   leave: { value: ['when', 'ttl', 'at'], bool: [] },
   place: { value: [], bool: [] },
@@ -796,6 +797,22 @@ function refRange(ref, { dayStart }) {
  * 知道，也不该假装知道（§21 的代价）。
  */
 function cmdCue(home, flags, { out, now, env }) {
+  // 打哪儿由调用方定：屏幕上是一行行，文件里是同一批行的整段（§33）。
+  // 早退的出口有三个，所以正文只往 lines 里攒，攒完再决定去处。
+  const lines = []
+  const code = cueLines(home, flags, { out, now, env, say: (s) => lines.push(s) })
+
+  if (typeof flags.out === 'string') {
+    const target = path.resolve(flags.out)
+    writeAtomic(target, `${lines.join('\n')}\n`)
+    out.log(`写好了: ${target}`)
+    return code
+  }
+  for (const line of lines) out.log(line)
+  return code
+}
+
+function cueLines(home, flags, { out, now, env, say }) {
   const limit = Number(flags.limit ?? 10)
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
@@ -823,43 +840,43 @@ function cmdCue(home, flags, { out, now, env }) {
     // 不打扰也要交代过期作废的那几张：静默丢弃比多一行更糟。
     const dead = expired.length ? `；另有 ${expired.length} 张便条过期作废` : ''
     const planTail = today.length ? `；今天还有 ${today.length} 条安排` : ''
-    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}${planTail}`)
+    say(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}${planTail}`)
     if (!flags.peek) for (const n of expired) appendHandoff(home, { op: 'drop', id: n.id, at: now })
     return 0
   }
   if (!r.fresh.length && !r.notes.length) {
     const quietTail = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
     const planTail = today.length ? `（今天还有 ${today.length} 条安排）` : ''
-    out.log(`这会儿 ${clock(now)}，没有新东西${quietTail}${planTail}`)
+    say(`这会儿 ${clock(now)}，没有新东西${quietTail}${planTail}`)
     return 0
   }
 
-  out.log(`这会儿 ${clock(now)}。`)
-  out.log(lastCue ? `上次开口 ${relTime(lastCue.lastAt, { now })}。` : '你还没在这儿开过口。')
+  say(`这会儿 ${clock(now)}。`)
+  say(lastCue ? `上次开口 ${relTime(lastCue.lastAt, { now })}。` : '你还没在这儿开过口。')
   if (r.fresh.length) {
     const tail = r.fresh.slice(-limit)
-    out.log(`之后攒了 ${r.fresh.length} 条：`)
+    say(`之后攒了 ${r.fresh.length} 条：`)
     for (const e of tail) {
       const w = e.weight ? ` w${e.weight}` : ''
-      out.log(`${stamp(e.at)}${w}  ${eventLine(e)}`)
+      say(`${stamp(e.at)}${w}  ${eventLine(e)}`)
     }
-    if (r.fresh.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
-    out.log('想看全：digest --budget 300')
+    if (r.fresh.length > limit) say(`……（只列最近 ${limit} 条，--limit 可调）`)
+    say('想看全：digest --budget 300')
   }
   if (r.notes.length) {
-    out.log(`还留了 ${r.notes.length} 张便条（看过就烧，不会再端一次）：`)
+    say(`还留了 ${r.notes.length} 张便条（看过就烧，不会再端一次）：`)
     for (const n of r.notes) {
-      out.log(`· ${n.id}  ${n.text}`)
-      out.log(`  说的时候：${n.when}`)
+      say(`· ${n.id}  ${n.text}`)
+      say(`  说的时候：${n.when}`)
     }
   }
   for (const n of expired) {
     // 过期的不静默吞掉，但也只报这一次：记一条 drop，之后不再念。
-    out.log(`· ${n.id} 已过期作废（写的时候说：${n.when}）：${n.text}`)
+    say(`· ${n.id} 已过期作废（写的时候说：${n.when}）：${n.text}`)
   }
   if (today.length) {
-    out.log('今天的安排：')
-    for (const r of today) out.log(`· ${planItem(r, now)}`)
+    say('今天的安排：')
+    for (const r of today) say(`· ${planItem(r, now)}`)
   }
 
   if (!flags.peek) {

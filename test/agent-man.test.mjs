@@ -1198,6 +1198,30 @@ test('cue：有新的就说，说出来之后不再重复端上来（水位）',
   assert.ok(again.all.includes('没有新东西'), again.all)
 })
 
+test('cue --out：话照说，只是换个去处——文件里是同一批行，屏幕上只留一句指路', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '今天风大', '--at', '2026-11-12 09:00'], {
+    env, out: recorder(), now: t('2026-11-12 09:00'),
+  })
+
+  const file = path.join(env.AGENT_MAN_HOME, 'inbox', 'today.md')
+  const out = recorder()
+  assert.equal(main(['cue', '--out', file], { env, out, now: t('2026-11-12 21:40') }), 0)
+
+  assert.deepEqual(out.lines, [`写好了: ${path.resolve(file)}`])
+  assert.deepEqual(out.errs, [])
+  const text = fs.readFileSync(file, 'utf8')
+  assert.ok(text.includes('这会儿 21:40。'), text)
+  assert.ok(text.includes('今天风大'), text)
+  assert.ok(text.endsWith('\n'), '文件要以换行收尾，别让 cat 和下一行黏在一起')
+
+  // 水位照走：写进文件也算"交给模型看过了"，否则定时跑一晚就每 6 小时说一遍同样的话。
+  const again = recorder()
+  main(['cue'], { env, out: again, now: t('2026-11-12 22:00') })
+  assert.ok(again.all.includes('不打扰'), again.all)
+})
+
 test('cue：离上次开口不到六小时不叫人，--force 可以硬问', () => {
   const env = { AGENT_MAN_HOME: tmp() }
   const t = (s) => parseAt(s)
