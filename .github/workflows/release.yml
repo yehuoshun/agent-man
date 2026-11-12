@@ -94,6 +94,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          # -R 不能省：这个 job 没 checkout，没有 .git，gh 猜不出是哪个仓库
+          # （第一次真跑就是这里红的：Process completed with exit code 1）。
           gh release create "$GITHUB_REF_NAME" dist/*.tgz \
+            -R "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json tagName,assets
