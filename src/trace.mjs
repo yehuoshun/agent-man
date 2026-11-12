@@ -42,6 +42,9 @@ export function neverShown(events, traces) {
   const seen = new Set()
   for (const t of traces) {
     for (const at of t.keptAt ?? []) seen.add(at)
+    // 被合掉的逐字重复：内容其实露过面（它的孪生兄弟进去了），不算"从没进过摘要"。
+    // 不这么写的话，重复条目会永远挂在"从没露过面"的名单上，而那是个假警报。
+    for (const d of t.drops ?? []) if (d.why === 'dup') seen.add(d.at)
   }
   return events.filter((e) => !seen.has(e.at))
 }

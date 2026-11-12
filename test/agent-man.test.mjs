@@ -9,7 +9,7 @@ import { parseAt, dayKey, dayStartFromEnv, relTime, stamp, weekKey } from '../sr
 import { cost, truncate } from '../src/cost.mjs'
 import { select } from '../src/budget.mjs'
 import { renderDigest } from '../src/render.mjs'
-import { buildTrace, traceLine } from '../src/trace.mjs'
+import { buildTrace, neverShown, traceLine } from '../src/trace.mjs'
 import {
   readEvents,
   appendEvent,
@@ -437,6 +437,20 @@ test('账本：合掉的重复不算「截」，单独记「合」', () => {
   }
   const line = traceLine(buildTrace(stats, { now: 1794458529164 }))
   assert.match(line, /丢 0 · 截 0 · 合 1/)
+})
+
+test('账本：被合掉的重复不算"从没露过面"——那是假警报', () => {
+  const events = [
+    { at: 100, fact: '窗关上了', weight: 2 },
+    { at: 200, fact: '窗关上了', weight: 2 },
+    { at: 300, fact: '药要吃完', weight: 2 },
+  ]
+  const traces = [{ keptAt: [200], drops: [{ at: 100, why: 'dup', weight: 2 }] }]
+  assert.deepEqual(
+    neverShown(events, traces).map((e) => e.at),
+    [300],
+    '孪生兄弟露过面，就算露过了',
+  )
 })
 
 // ---------------------------------------------------------------- 存储
