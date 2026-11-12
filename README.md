@@ -102,18 +102,6 @@ node bin/agent-man.mjs plan --done 2026-11-14-p01
 
 选项名写错不会被忽略：`--waight` 直接报错并提示 `--weight`，退出码 2（见 `docs/decisions.md` §16）。
 
-扩展功能不往这个仓库里聚：它们是**独立的命令**。`agent-man <名字>` 在自己的命令表里找不到
-`<名字>` 时，去 PATH 上找 `agent-man-<名字>`，把参数原样转交、退出码原样返回；`npm i -g` 装上
-就有，卸了自动消失，这个仓库里不留任何清单。
-
-```bash
-# 本仓库不认识 bili → 转给 PATH 上的 agent-man-bili
-node bin/agent-man.mjs bili feed --limit 5
-```
-
-零件只守三条：一个进程，跑完退出（不常驻，见 §22）；数据用 `agent-man log … --src <名字>` 和
-`agent-man remember …` 写，不直接碰 JSONL；参数自己解释、报错也自己报（见 `docs/decisions.md` §32）。
-
 `digest` 的输出：
 
 ```markdown
@@ -143,6 +131,30 @@ node bin/agent-man.mjs bili feed --limit 5
 `events.jsonl` 是日记层，`memory.jsonl` 是长期层。两者都只追加：日记永不删，
 长期条目要合并就新写一条、用 `supersedes` 指过去，旧行不动。总结由模型做，
 脚本只负责挑和存——见 `docs/decisions.md` §11。
+
+## 扩展零件：不聚合进这个仓库
+
+扩展功能一律做成**独立的命令、独立的包**，不并进这个仓库。`agent-man` 在自己的命令表里找不到
+`<名字>` 时，去 PATH 上找 `agent-man-<名字>`，把参数原样转交、把它的退出码原样返回：
+`npm i -g` 装上就有，`npm rm -g` 卸了就回到"未知命令"，这个仓库里不留清单、也不 import 别人的包。
+PATH 就是注册表，npm 就是安装器（为什么这么定，见 `docs/decisions.md` §32）。
+
+```bash
+npm i -g agent-man-bili           # 一个零件 = 一个包：独立仓库、独立发版
+agent-man bili feed --limit 5     # 本仓库不认识 bili → 转给 PATH 上的 agent-man-bili
+agent-man bili --help             # 零件的选项是它自己的，这里不列
+```
+
+零件只守三条，改其中任何一条都算破坏兼容：
+
+1. **一个进程**——被调一次、跑完退出，不常驻、不轮询（见 §22）；要定时就由外部调度器来调它。
+2. **数据只走两个口子**——`agent-man log … --src <名字>` 和 `agent-man remember …`，不直接碰
+   `events.jsonl` / `memory.jsonl` 的格式。带上 `--src`，摘要里就看得见这条是谁记的（`[note|bili]`）。
+3. **参数自己解释**——主项目不认识零件的选项，写错了由零件自己报，`--help` 也不列它们。
+
+这个仓库不维护零件清单：PATH 上有谁，`agent-man <名字>` 就能用谁。反过来，如果一个"零件"反复
+需要动主项目内部——想 import 它的函数、想改存储格式、想跟它同版本发——那它就不是零件，该搬进
+`src/` 变成核心命令。
 
 ## 三条硬承诺
 
@@ -216,6 +228,9 @@ npm i -g ./agent-man-0.2.2.tgz
 推 `v<version>` 标签就会发版：CI 先在 Linux/Windows × Node 20/22/24 上跑一遍用例，
 再打 tarball、建 Release。标签和 `package.json` 的版本对不上会直接失败
 （见 `docs/decisions.md` §27）。
+
+零件（另装的 `agent-man-<名字>`，见「扩展零件」）会反过来调 `agent-man log` / `agent-man remember`，
+所以 `agent-man` 本身得在 PATH 上——`npm i -g`（或用上面的 tarball）装一次就够。
 
 数据目录默认 `~/.agent-man`，用 `AGENT_MAN_HOME` 覆盖；日界默认午夜，
 用 `AGENT_MAN_DAY_START`（0..23）把它往后挪。
