@@ -102,6 +102,18 @@ node bin/agent-man.mjs plan --done 2026-11-14-p01
 
 选项名写错不会被忽略：`--waight` 直接报错并提示 `--weight`，退出码 2（见 `docs/decisions.md` §16）。
 
+扩展功能不往这个仓库里聚：它们是**独立的命令**。`agent-man <名字>` 在自己的命令表里找不到
+`<名字>` 时，去 PATH 上找 `agent-man-<名字>`，把参数原样转交、退出码原样返回；`npm i -g` 装上
+就有，卸了自动消失，这个仓库里不留任何清单。
+
+```bash
+# 本仓库不认识 bili → 转给 PATH 上的 agent-man-bili
+node bin/agent-man.mjs bili feed --limit 5
+```
+
+零件只守三条：一个进程，跑完退出（不常驻，见 §22）；数据用 `agent-man log … --src <名字>` 和
+`agent-man remember …` 写，不直接碰 JSONL；参数自己解释、报错也自己报（见 `docs/decisions.md` §32）。
+
 `digest` 的输出：
 
 ```markdown

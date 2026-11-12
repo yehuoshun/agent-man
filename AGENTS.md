@@ -52,6 +52,9 @@
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
 | `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `readHandoff` / `appendHandoff` / `readPlan` / `appendPlan` / `readPlace` / `writePlace` / `readSky` / `writeSky` / `assertLanded` / `renameWithRetry` / `claimId` / `writeAtomic` | 不解析业务语义 |
 
+- 零件（进程外扩展）的入口在 `src/cli.mjs`：`findPart` 找 PATH 上的 `agent-man-<名字>`、
+  `assertPartArgs` 拦 Windows 的 `%名字%`、`runPart` 转交参数与退出码。零件**不进本仓库**，
+  契约见 §32：一个进程、只走 `log --src` / `remember` 写数据、不常驻。
 - 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令或未知选项（解析层就拦下的用法错误，见 `FLAGS` / §16）。
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。
 - 改版本号：`src/cli.mjs` 顶部的 `VERSION` 与 `package.json` 的 `version` 一起改。
@@ -122,6 +125,8 @@
   需要定时就由外部调度器来调 `cue`，脚本自己不睡不循环（用户 2026-11-12 的要求，见 §22）。
 - 业务代码里散落 `Date.now()`（只在参数默认值和 CLI 入口出现）。
 - 在仓库根或工作区根散落临时文件：本项目临时产物写本仓库 `tmp/`（已被 `.gitignore` 覆盖），需要保留的成果进 `docs/` 或 `src/`。
+- 把扩展功能聚合进本仓库：扩展一律是独立命令 `agent-man-<名字>`，靠 PATH 发现（§32）。
+- 零件直接读写 `events.jsonl` / `memory.jsonl`：只能走 `agent-man log --src` / `agent-man remember`。
 - 凭据进仓库：一律放工作区 `config/`，只引用路径，不回显内容。
 
 ## 十、与工作区的关系
