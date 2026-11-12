@@ -41,14 +41,64 @@ export function ensure(home) {
  */
 export function appendEvent(home, ev) {
   const p = ensure(home)
-  fs.appendFileSync(p.events, JSON.stringify(ev) + '\n', 'utf8')
+  appendLine(p.events, JSON.stringify(ev) + '\n')
+  assertTail(p.events, (back) => back.at === ev.at && back.fact === ev.fact)
   return ev
+}
+
+/**
+ * 追加一行，并且真的落盘。
+ *
+ * fsync 是"这句话归你了"的唯一证据。`appendFileSync` 返回只代表写进了页缓存：
+ * 进程死掉数据还在（内核替你看着），但停电、蓝屏、强制重启会把最后几秒抹掉，
+ * 而那时 log 已经打印过"记下了"。一次命令只写一行，多这一次 fsync 换的是
+ * "断电最多丢掉正在执行的那一次"。
+ */
+function appendLine(file, text) {
+  const fd = fs.openSync(file, 'a')
+  try {
+    fs.writeSync(fd, text)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+/**
+ * 写完读回最后一行核对。
+ *
+ * 断电可以留下半行：那段 JSON 解析不出来，要等到下次 readEvents 才被算成坏行——
+ * 那时候模型早就以为记下了。当场读一遍（只读文件尾），把"下次才发现"变成"现在报错"。
+ * 只读尾部：日记攒到几千条以后，每次写都全量读一遍是拿 O(历史) 换一次核对。
+ */
+export function assertTail(file, expect) {
+  const size = fs.statSync(file).size
+  const len = Math.min(size, 64 * 1024)
+  const buf = Buffer.alloc(len)
+  const fd = fs.openSync(file, 'r')
+  try {
+    fs.readSync(fd, buf, 0, len, size - len)
+  } finally {
+    fs.closeSync(fd)
+  }
+  const lines = buf.toString('utf8').split('\n').filter((line) => line.trim())
+  const last = lines[lines.length - 1]
+  let rec = null
+  try {
+    rec = JSON.parse(last)
+  } catch {
+    rec = null
+  }
+  if (!rec || !expect(rec)) {
+    throw new Error(`${file} 最后一行读不回来：写的时候没落全，别当它记下了`)
+  }
 }
 
 /** 长期层也只追加。合并靠条目的 supersedes 指针，不改旧行（见 docs/decisions.md#11）。 */
 export function appendMemory(home, item) {
   const p = ensure(home)
-  fs.appendFileSync(p.memory, JSON.stringify(item) + '\n', 'utf8')
+  appendLine(p.memory, JSON.stringify(item) + '\n')
+  assertTail(p.memory, (back) => back.id === item.id)
   return item
 }
 
@@ -174,7 +224,8 @@ export function writeConsolidation(home, rec) {
  */
 export function appendTrace(home, rec) {
   const p = ensure(home)
-  fs.appendFileSync(p.trace, `${JSON.stringify(rec)}\n`, 'utf8')
+  appendLine(p.trace, `${JSON.stringify(rec)}\n`)
+  assertTail(p.trace, (back) => back.at === rec.at)
   return rec
 }
 
@@ -214,10 +265,43 @@ export function readTraces(home) {
   return { traces, bad }
 }
 
-/** 原子写。tmp + rename，写到一半断电不会留下半个文件。 */
+/**
+ * 原子写：tmp + fsync + rename（POSIX 上再 fsync 目录），断电不会留下半个文件。
+ *
+ * 只 writeFileSync + rename 是不够的：内容还在页缓存里就改名，崩溃后可能拿到
+ * "新名字、空内容"。顺序必须是"内容先落盘，再改名，最后让目录项落盘"（§20）。
+ */
 export function writeAtomic(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const dir = path.dirname(file)
+  fs.mkdirSync(dir, { recursive: true })
   const tmp = `${file}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, text, 'utf8')
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeSync(fd, text)
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
   fs.renameSync(tmp, file)
+  syncDir(dir)
+}
+
+/**
+ * 目录项也要落盘，否则重命名可能还在半路上。
+ * Windows 上不能对目录 fsync（开着就 EPERM），退回"靠 NTFS 的元数据日志"——
+ * 这点差别写进 §20，不假装两边一样强。
+ */
+function syncDir(dir) {
+  if (process.platform === 'win32') return
+  let fd
+  try {
+    fd = fs.openSync(dir, 'r')
+  } catch {
+    return
+  }
+  try {
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
 }

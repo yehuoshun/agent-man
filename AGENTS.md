@@ -45,7 +45,7 @@
 | `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` | 不总结、不合并语义、不碰文件系统 |
 | `src/render.mjs` | 把两层选择结果渲成 markdown + `stats`；整段文本夹进预算（`attempt`） | 不做取舍决策（取舍全在 `budget.mjs` / `memory.mjs`） |
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
-| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `writeAtomic` | 不解析业务语义 |
+| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `assertTail` / `writeAtomic` | 不解析业务语义 |
 
 - 退出码约定：`0` 成功，`1` 输入或运行时错误（`main` 内 catch 后 `! <message>`），`2` 未知命令或未知选项（解析层就拦下的用法错误，见 `FLAGS` / §16）。
 - 加命令/加参数必须同步改 `src/cli.mjs` 的 `HELP` 文本和 `README.md` 的用法段。
@@ -66,9 +66,11 @@
 
 - 数据目录默认 `~/.agent-man`，`AGENT_MAN_HOME` 覆盖（`resolveHome`）；`state/` 子目录已预留。
 - 事件是 JSONL，一行一条：`{ at, kind, fact, weight?, feel?, src? }`；`at` 必须是有限数字（epoch ms）。
-- 写：`fs.appendFileSync(..., 'utf8')`，一次一行，不写 BOM。
+- 写：`appendLine()`（open → write → fsync → close），一次一行，不写 BOM。
 - 读：坏行跳过并计数，返回 `{ events, bad }`，由调用方用 `! ` 报出来。**不因一行坏掉丢整份记忆**，但也绝不装作没发生。
-- 覆盖写文件一律走 `writeAtomic()`（tmp + rename），不留 `.tmp`。
+- 覆盖写文件一律走 `writeAtomic()`（write → fsync → rename，不留 `.tmp`）。
+- 追加也要落盘：`appendLine()` 写完就 fsync，再用 `assertTail()` 读回最后一行核对；
+  不落盘不算记下（§20）。
 - 排序只认 `a.at - b.at` 数字差；禁止 `localeCompare` / `startsWith('YYYY-MM-DD')` 之类字符串比较。
 - 需要"展示时间"就走 `relTime()` / `stamp()`；需要"预算"就走 `cost()`；需要"切句子"就走 `truncate()`。不要就地手搓。
 

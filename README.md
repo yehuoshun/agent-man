@@ -53,6 +53,9 @@ node bin/agent-man.mjs find 窗 --since 2026-11-01
 node bin/agent-man.mjs find 关窗 --kind dm --limit 5
 ```
 
+断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，
+半行会立刻报错而不是等下次读才发现（见 `docs/decisions.md` §20）。
+
 选项名写错不会被忽略：`--waight` 直接报错并提示 `--weight`，退出码 2（见 `docs/decisions.md` §16）。
 
 `digest` 的输出：

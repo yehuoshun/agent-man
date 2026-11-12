@@ -14,6 +14,8 @@ import {
   readMemory,
   resolveHome,
   writeAtomic,
+  assertTail,
+  appendTrace,
   readConsolidation,
   readTraces,
 } from '../src/store.mjs'
@@ -399,6 +401,35 @@ test('since/until 按数值过滤', () => {
 test('AGENT_MAN_HOME 覆盖默认目录', () => {
   assert.equal(resolveHome({ AGENT_MAN_HOME: '/x/y' }, '/home/u'), path.resolve('/x/y'))
   assert.equal(resolveHome({}, '/home/u'), path.resolve('/home/u/.agent-man'))
+})
+
+test('半行会当场被抓住：尾巴不是一整条记录就报错，不等下次读', () => {
+  const home = tmp()
+  appendEvent(home, { at: 1, fact: '整条' })
+  const file = path.join(home, 'events.jsonl')
+  fs.appendFileSync(file, '{"at":2,"fact":"断在', 'utf8')
+  assert.throws(() => assertTail(file, () => true), /最后一行读不回来/)
+  // 半行确实会在下次读时被算成坏行：报出来，但前面的记录不受牵连
+  const { events, bad } = readEvents(home)
+  assert.equal(bad, 1)
+  assert.equal(events.length, 1)
+})
+
+test('覆盖写先把内容落盘再改名：写完立刻读得到完整内容，也不留 .tmp', () => {
+  const home = tmp()
+  const f = path.join(home, 'state', 'consolidation.json')
+  writeAtomic(f, '{"at":1}\n')
+  writeAtomic(f, '{"at":2}\n')
+  assert.equal(fs.readFileSync(f, 'utf8'), '{"at":2}\n')
+  assert.deepEqual(fs.readdirSync(path.dirname(f)), ['consolidation.json'])
+})
+
+test('账本也落盘核对：写进去的那行立刻读得回来', () => {
+  const home = tmp()
+  appendTrace(home, { at: 5, budget: 60, keptAt: [] })
+  const { traces, bad } = readTraces(home)
+  assert.equal(bad, 0)
+  assert.equal(traces[0].at, 5)
 })
 
 test('writeAtomic 不留 .tmp', () => {
