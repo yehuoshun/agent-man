@@ -449,6 +449,9 @@ GitHub Release 并把 tarball 挂上去；`workflow_dispatch` 可以手动演练
 每个 `import` 只认 `node:` 和相对路径；所有文本文件都是 LF 且无 BOM；`package.json` 的
 `bin` 指向真实文件、`files` 里的路径都存在、`VERSION` 与 `version` 一致。
 矩阵再加第 7 条腿：ubuntu + Node 24、`TZ=America/New_York`（其余腿显式钉 `TZ=UTC`）。
+七个组合在 `matrix.include` 里一条条写死，不用 `os × node` 两个维度：`include` 会**合并**到
+已匹配的组合上——给 ubuntu/node24 加 `tz` 那天，那条腿不是多出来一条，而是被改写，
+`npm pack` 和 artifact 跟着一起消失（`!matrix.tz` 没腿可匹配）。
 
 **来由**：五个零件写完，但"能不能在别人的机器上跑"一直只是我本机的一句 `node --test`。
 Windows 是这台机器的主战场，CRLF、BOM、反斜杠这三类事故在这里都真发生过（§三、§20 的
@@ -460,7 +463,7 @@ BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须�
 `supersedes 让旧条目退场`、`digest --due 只摊账`），本机东八区全绿，`TZ=UTC` 也全绿
 （12:00+08:00 是 04:00Z，日历日没跨过去），只有西半球才红——所以"CI 跑在 UTC 上"并不够。
 改法是把这几条的 `now` 用本地时间构造（`localAt(2026, 11, 12, 12)`），断言才不再依赖机器时区。
-六条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
+七条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
 是为了不互相掩盖）。Windows 腿比 Linux 慢一倍多。不发 npm：`package.json` 里 `private: true`，
 也刻意不给仓库配 `NPM_TOKEN`，所以"装"只有两条路——`git clone`，或者下 tarball 再
 `npm i -g ./agent-man-0.1.0.tgz`。tarball 内容靠 `files` 白名单，新增的文档忘了写进去

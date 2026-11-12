@@ -22,12 +22,25 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # 七个组合一条条写出来，不用 os × node 两个维度：matrix 的 include 会
+      # **合并**到已匹配的组合上（第一次踩：给 ubuntu/node24 加 tz 之后那条腿没了，
+      # pack 和 artifact 一起消失），写成显式列表才不会悄悄少一条腿。
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        node: ['20', '22', '24']
-        # 再加一条在西半球时区跑的腿：用例里凡是要"本地某天"的，
-        # 只有离开东八区才看得出它是不是把 +08:00 写死了（§27）。
         include:
+          - os: ubuntu-latest
+            node: '20'
+          - os: ubuntu-latest
+            node: '22'
+          - os: ubuntu-latest
+            node: '24'
+          - os: windows-latest
+            node: '20'
+          - os: windows-latest
+            node: '22'
+          - os: windows-latest
+            node: '24'
+          # 第 7 条腿：西半球时区。用例里凡是要"本地某天"的，只有离开东八区
+          # 才看得出它有没有把 +08:00 写死（§27）。
           - os: ubuntu-latest
             node: '24'
             tz: America/New_York
