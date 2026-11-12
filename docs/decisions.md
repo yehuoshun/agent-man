@@ -462,7 +462,7 @@ refs 变成时间区间，列出那段时间里的日记原文。纯日期按本
 Linux + Windows × Node 20/22/24 六条腿上跑 `node --test`，其中一条腿顺手 `npm pack`
 并把 tarball 作为 artifact 传上来（`agent-man-tarball`）。`release.yml`：推 `v*` 标签时
 同样的矩阵跑用例 → 校验标签与 `package.json` 的 `version` 一致 → `npm pack` → 建
-GitHub Release 并把 tarball 挂上去；`workflow_dispatch` 可以手动演练打包，但不建 Release
+GitHub Release 并把 tarball 挂上去（正文取标签注解，见下）；`workflow_dispatch` 可以手动演练打包，但不建 Release
 （`release` 任务带 `if: startsWith(github.ref, 'refs/tags/')`）。同时把三件"仓库自身的约束"
 升级成用例，让 CI 一跑就能证伪：没有 `dependencies`/`devDependencies`、没有 `node_modules`、
 每个 `import` 只认 `node:` 和相对路径；所有文本文件都是 LF 且无 BOM；`package.json` 的
@@ -496,8 +496,10 @@ BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须�
 也刻意不给仓库配 `NPM_TOKEN`，所以"装"只有两条路——`git clone`，或者下 tarball 再
 `npm i -g ./agent-man-0.1.0.tgz`。tarball 内容靠 `files` 白名单，新增的文档忘了写进去
 不会报错，所以补了一条"`files` 里的路径必须存在"的用例——但它只验存在，不验"该收的都收了"。
-Release notes 用 `--generate-notes` 自动按提交生成，噪音多（十几条 `修复:` 堆一起），
-但省掉了一个必须手工维护的 CHANGELOG。时区只钉住两种（UTC、纽约），`+14`、`+5:30` 这类半小时偏移没进矩阵；本地开发机若不在
+Release 正文取标签注解的正文（`git tag -a -m` 写的那段）：`release` 任务 checkout 深度改成 0
+才拿得到标签对象，再按 `-t tag` 决定用 `--notes-file` 还是退回 `--generate-notes`（轻量标签
+的 `%(contents)` 会退回成那条提交的信息，直接拿来当发布说明是误导）。代价是发布说明得有人写：
+写标签时忘了写正文，Release 就只剩自动 Changelog。时区只钉住两种（UTC、纽约），`+14`、`+5:30` 这类半小时偏移没进矩阵；本地开发机若不在
 矩阵里的时区，仍可能写出一条"只有我能跑绿"的用例。最后，CI 只证明"用例说的都对"，不证明"设计是对的"：
 `docs/decisions.md` 里那些代价，仍然只能靠人看。
 

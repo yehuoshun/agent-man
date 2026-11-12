@@ -84,20 +84,38 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # 要的是标签的注解正文（发布说明就写在那儿），浅克隆拿不到。
+          fetch-depth: 0
+          fetch-tags: true
+
       - uses: actions/download-artifact@v4
         with:
           name: tarball
           path: dist
 
-      - name: 建 Release
+      - name: 建 Release（正文来自标签）
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          # -R 不能省：这个 job 没 checkout，没有 .git，gh 猜不出是哪个仓库
-          # （第一次真跑就是这里红的：Process completed with exit code 1）。
-          gh release create "$GITHUB_REF_NAME" dist/*.tgz \
-            -R "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          set -euo pipefail
+          # v0.2.0 的 Release 正文只有自动生成的 Changelog，因为这条命令只会 --generate-notes。
+          # 发布说明本来就写在标签注解里（git tag -a -m），直接用它当正文，不再让 GitHub 从
+          # 提交标题里现凑——单人仓库的 compare 链接对读者没有信息量。
+          # 轻量标签没有正文：%(contents) 会退回成"那条提交的信息"，拿它当发布说明是误导，
+          # 所以先看对象类型，只有 annotated 才取。
+          args=(-R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME")
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" = tag ]; then
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+            if grep -q '[^[:space:]]' notes.md; then
+              args+=(--notes-file notes.md)
+            else
+              args+=(--generate-notes)
+            fi
+          else
+            args+=(--generate-notes)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/*.tgz "${args[@]}"
           gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json tagName,assets
