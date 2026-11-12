@@ -37,10 +37,11 @@ import {
   appendPlan,
   claimId,
 } from './store.mjs'
-import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
+import { makeItem, activeItems, longLine, itemLine, makeRule, ruleLine, RULE_LIMIT, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
+import { buildTimeline, timelineLine, timelineCounts, TIMELINE_NAMES, TIMELINE_KINDS } from './timeline.mjs'
 import { cue, MIN_GAP, describeQuiet } from './when.mjs'
 import { makeNote, pendingNotes } from './handoff.mjs'
 import { makePlan, pendingPlans, upcoming, todayPlans } from './plan.mjs'
@@ -55,11 +56,13 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
 用法：
   agent-man log <记的事> [选项]      记一条日记（原文，只追加）
   agent-man remember <结论> [选项]   记一条长期记忆（模型整理出来的）
+  agent-man rule <规矩> [选项]       给自己定一条规矩（只能收紧，不能扩权）
   agent-man recall [选项]            看长期记忆
   agent-man digest [选项]            渲染当前摘要
   agent-man ls [--limit 20]          看原始事件
   agent-man find <词> [选项]         在日记原文里搜（摘要只压不取，原文在这）
   agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
+  agent-man timeline [选项]          把日记、结论、规矩、判断摆成一条时间线
   agent-man cue [选项]               这会儿该不该开口（给处境，不给台词）
   agent-man show <主题|id> [选项]    顺着一条结论找回原文（refs 指向的日子）
   agent-man leave <便条> --when <场合>  给下一次的自己留一句（cue 递出，看过就烧）
@@ -88,6 +91,29 @@ remember 选项：
   --id <id>                 默认按日期发号
   --fact <文本>             等价于位置参数
 
+rule 选项：
+  --why <事>                必填：哪件具体的事让你定的这条（不是道理，是事情）
+  --refs <a,b>              指向原文的日期或时间
+  --supersedes <id,id>      改掉哪几条旧规矩（旧行不动，只是退场）
+  --id <id>                 默认按日期发号
+  --at <时间>               定这条的时刻，默认现在
+  --fact <文本>             等价于位置参数
+
+rule 选项：
+  --why <事>                必填：哪件具体的事让你定的这条（不是道理，是事情）
+  --refs <a,b>              指向原文的日期或时间
+  --supersedes <id,id>      这条改掉了哪几条旧规矩（旧行不动，只是退场）
+  --id <id>                 默认按日期发号
+  --at <时间>               定这条的时刻，默认现在
+  --fact <文本>             等价于位置参数
+
+rule 选项：
+  --why <事>                必填：哪件具体的事让你定的这条（不是道理，是事情）
+  --refs <a,b>              指向原文的日期或时间
+  --supersedes <id,id>      这条改掉了哪几条旧规矩（旧行不动，只是退场）
+  --id <id>                 默认按日期发号
+  --at <时间>               定这条的时刻，默认现在
+
 recall 选项：
   --tier 0|1|2              只看某一档
   --batch <标签>            只看某次整理
@@ -103,6 +129,11 @@ digest 选项：
 trace 选项：
   --limit 10                最近几次 digest
   --never                   反过来：哪些日记从来没进过摘要
+
+timeline 选项：
+  --limit 20                最多列几条，取最近的
+  --kind log|mem|rule|judge|digest  只看其中几份，逗号分开
+  --since <时间>            从这时起；只写日期（2026-11-05）按本地整天算
 
 find 选项：
   --since <时间>            从这时起；只写日期（2026-11-05）按本地整天算
@@ -169,11 +200,13 @@ export const FLAGS = {
     ],
     bool: ['no-refs'],
   },
+  rule: { value: ['why', 'refs', 'supersedes', 'id', 'at', 'fact'], bool: [] },
   recall: { value: ['limit', 'tier', 'batch', 'grep'], bool: [] },
   digest: { value: ['budget', 'out', 'title'], bool: ['due'] },
   ls: { value: ['limit'], bool: [] },
   find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
+  timeline: { value: ['limit', 'kind', 'since'], bool: [] },
   cue: { value: ['limit', 'min-gap', 'out', 'why'], bool: ['peek', 'force'] },
   show: { value: ['limit', 'fact'], bool: [] },
   leave: { value: ['when', 'ttl', 'at'], bool: [] },
@@ -367,11 +400,13 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     const home = resolveHome(env)
     if (cmd === 'log') return cmdLog(home, pos, flags, { out, now })
     if (cmd === 'remember') return cmdRemember(home, pos, flags, { out, now })
+    if (cmd === 'rule') return cmdRule(home, pos, flags, { out, now })
     if (cmd === 'recall') return cmdRecall(home, flags, { out })
     if (cmd === 'digest') return cmdDigest(home, flags, { out, now, env })
     if (cmd === 'ls') return cmdLs(home, flags, { out })
     if (cmd === 'find') return cmdFind(home, pos, flags, { out, env })
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
+    if (cmd === 'timeline') return cmdTimeline(home, flags, { out, now })
     if (cmd === 'cue') return cmdCue(home, flags, { out, now, env })
     if (cmd === 'show') return cmdShow(home, pos, flags, { out, env })
     if (cmd === 'leave') return cmdLeave(home, pos, flags, { out, now })
@@ -498,6 +533,43 @@ function settle(home, now) {
   const cleared = backlog(events, prev?.at ?? -Infinity).count
   writeConsolidation(home, { at: now, settled: cleared })
   return cleared
+}
+
+/**
+ * 给自己定一条规矩（§36）。
+ *
+ * 和 remember 的区别不在落盘，在写给谁看：结论是回忆，规矩是约束。
+ * 所以它排在摘要最前面、改版要留痕、而且必须有来由——没有来由的规矩，
+ * 下一次读到的时候没人知道它还算不算数。
+ */
+function cmdRule(home, pos, flags, { out, now }) {
+  const fact = (pos.join(' ') || String(flags.fact ?? '')).trim()
+  if (!fact) {
+    throw new Error('要定什么规矩？例：agent-man rule "夜里十一点后不提工作" --why "昨天 23:40 提加班，她只回了句嗯"')
+  }
+
+  const { items } = readMemory(home)
+  const item = makeRule(
+    {
+      fact,
+      why: flags.why,
+      refs: flags.refs,
+      supersedes: flags.supersedes,
+      id: flags.id,
+      at: flags.at,
+    },
+    { now, existing: items },
+  )
+  appendMemory(home, item)
+
+  const after = [...items, item]
+  out.log(`${item.id}  tier0  ${ruleLine(item, { items: after })}`)
+  out.log(`  为什么: ${item.why}`)
+  if (item.refs.length) out.log(`  出处: ${item.refs.join(', ')}`)
+  if (item.supersedes.length) out.log(`  取代: ${item.supersedes.join(', ')}`)
+  const live = activeItems(after).filter((it) => it.kind === 'rule').length
+  out.log(`  规矩: ${live} / ${RULE_LIMIT} 条`)
+  return 0
 }
 
 function cmdRecall(home, flags, { out }) {
@@ -802,6 +874,42 @@ function refRange(ref, { dayStart }) {
  * 水位记的是"交给模型看过"，不是"对用户说过"：有没有真说出口，脚本无从
  * 知道，也不该假装知道（§21 的代价）。
  */
+/**
+ * 时间线：四份日志摆成一条（§37）。
+ *
+ * 这是"追溯"的入口，不是第五份日志——它不落盘、不缓存，每次现读现排。
+ * 想知道某条规矩是怎么来的，就从这一行跳到 remember/rule 的原文；
+ * 想知道某天为什么没说话，就看那天的判断行。
+ */
+function cmdTimeline(home, flags, { out, now }) {
+  const limit = Number(flags.limit ?? 20)
+  if (!Number.isInteger(limit) || limit <= 0) throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
+
+  const kinds = flags.kind === undefined ? null : String(flags.kind).split(',').map((k) => k.trim()).filter(Boolean)
+  for (const k of kinds ?? []) {
+    if (!TIMELINE_NAMES.includes(k)) {
+      throw new Error(`--kind 只认 ${TIMELINE_NAMES.join(' / ')}（${TIMELINE_NAMES.map((n) => TIMELINE_KINDS[n]).join(' / ')}），收到 ${k}`)
+    }
+  }
+  const since = flags.since === undefined ? null : parseAt(flags.since, { now })
+
+  const { events } = readEvents(home)
+  const { items } = readMemory(home)
+  const { judges } = readJudges(home)
+  const { traces } = readTraces(home)
+
+  const all = buildTimeline({ events, items, judges, traces }, { since, kinds, limit: 0 })
+  if (!all.length) {
+    out.log(flags.since || kinds ? '这段时间里没有对得上的记录' : '一条都还没有：先 log 几笔')
+    return 0
+  }
+
+  const shown = all.slice(0, limit)
+  out.log(`${all.length} 条${all.length > shown.length ? `，列最近 ${shown.length} 条` : ''}（${timelineCounts(all)}）：`)
+  for (const row of shown) out.log(timelineLine(row))
+  return 0
+}
+
 function cmdCue(home, flags, { out, now, env }) {
   const why = flags.why === undefined ? '' : String(flags.why).trim()
   if (flags.why !== undefined && !why) {

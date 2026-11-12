@@ -38,6 +38,14 @@ node bin/agent-man.mjs log "她把窗关上了，说外面风大" --weight 2 --f
 # 记一条长期记忆（模型整理出来的结论，必须带出处）
 node bin/agent-man.mjs remember "入秋后先关窗再抱怨风" --topic 她怕冷 --refs 2026-11-05,2026-11-09
 
+# 给自己定一条规矩（是约束，不是回忆；没有 --why 定不下来，改就 --supersedes 一条新的）
+node bin/agent-man.mjs rule "夜里十一点后不提工作" --why "昨天 23:40 提加班，她只回了句嗯"
+node bin/agent-man.mjs rule "夜里十点后不提工作" --why "她说到十点就困" --supersedes 2026-11-10-02
+
+# 把日记、结论、规矩、判断摆成一条时间线（现读现排，不落任何新数据）
+node bin/agent-man.mjs timeline --limit 20
+node bin/agent-man.mjs timeline --kind rule --since 2026-11-01
+
 # 渲染成能直接贴进上下文的摘要（长期 60% / 日记 40%，谁没用完借给对方）
 node bin/agent-man.mjs digest --budget 1200
 node bin/agent-man.mjs digest --budget 800 --out ~/.agent-man/digest.md
@@ -113,6 +121,9 @@ node bin/agent-man.mjs plan --done 2026-11-14-p01
 # 我记得的事
 <!-- agent-man · 日记 5 条 / 长期 2 条 · 取 5+2 · 预算 1200 · 条目 240 · 丢 0 · 截 0 · 2026-11-12T01:08:05+08:00 -->
 
+## 我给自己定的规矩
+- 夜里十一点后不提工作（第 2 版）
+
 ## 记住的事
 - 她怕冷：入秋后先关窗再抱怨风（11-02 ~ 11-09）
 - 她喝什么：爱喝冰的，胃疼那两天会点热的
@@ -132,6 +143,9 @@ node bin/agent-man.mjs plan --done 2026-11-14-p01
 {"at":1794415872000,"kind":"dm","fact":"她把窗关上了，说外面风大","weight":2,"feel":"被照顾到"}
 {"id":"2026-11-12-01","at":1794424114448,"tier":0,"batch":"2026-11-12","topic":"她怕冷","fact":"入秋后先关窗再抱怨风","span":{"from":1793577600000,"to":1794182400000},"refs":["2026-11-05","2026-11-09"],"supersedes":[]}
 ```
+
+规矩和结论住同一个 `memory.jsonl`，只是多两个字段：`kind:"rule"` 和 `why`（哪件事让它出现）。
+摘要里规矩单独一节、排在结论前面——它是"我答应过自己怎么做"，不是"我记得这回事"（§36）。
 
 `events.jsonl` 是日记层，`memory.jsonl` 是长期层。两者都只追加：日记永不删，
 长期条目要合并就新写一条、用 `supersedes` 指过去，旧行不动。总结由模型做，

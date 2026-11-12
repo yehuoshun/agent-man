@@ -1,7 +1,7 @@
 import { relTime, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
 import { select, dedupeExact, pinnedFloor, recentFloor, PINNED_WEIGHT } from './budget.mjs'
-import { selectMemory, longLine } from './memory.mjs'
+import { selectMemory, longLine, itemLine, isRule } from './memory.mjs'
 
 /**
  * 把两层记忆渲染成一段能直接贴进上下文的 markdown：
@@ -202,7 +202,12 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
     // 掉下去的常常是"最近"，这时候写「（还没有）」是在骗人。
     const gone = day.drops.filter((d) => d.why === 'no-room')
     const gonePinned = gone.filter((d) => (d.weight ?? 0) >= PINNED_WEIGHT).length
-    if (long.shown.length) block(out, '记住的事', long.shown.map((it) => longLine(it, { dayStart })))
+    // 规矩单独一节：它不是"我记得的事"，是"我答应过自己怎么做"。混在结论里，
+    // 下一次读到的是一堆陈述句，分不出哪条在约束自己（§36）。
+    const rules = long.shown.filter(isRule)
+    const rest = long.shown.filter((it) => !isRule(it))
+    if (rules.length) block(out, '我给自己定的规矩', rules.map((it) => itemLine(it, { items: memory })))
+    if (rest.length) block(out, '记住的事', rest.map((it) => itemLine(it, { items: memory, dayStart })))
     block(out, '不会忘的', dayTexts(day.pinned, { now, dayStart }), emptyLine(gonePinned))
     block(out, '最近', dayTexts(day.recent, { now, dayStart }), emptyLine(gone.length - gonePinned))
   }

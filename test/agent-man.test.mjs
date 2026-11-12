@@ -25,7 +25,7 @@ import {
   readJudges,
   appendJudge,
 } from '../src/store.mjs'
-import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
+import { makeItem, activeItems, selectMemory, RULE_LIMIT } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
 import { main, parseArgs, FLAGS } from '../src/cli.mjs'
 import { inQuiet } from '../src/when.mjs'
@@ -2051,4 +2051,146 @@ test('日记带出处：行里能看见这条是谁记的', () => {
   main(['ls'], { env, out })
   assert.match(out.all, /\[note\|bili\]  刷了 B站/)
   assert.match(out.all, /\[note\]  手写的/)
+})
+
+// ---------------------------------------------------------------- 规矩（§36）
+
+const ruleHome = () => {
+  const home = tmp()
+  return { home, env: { AGENT_MAN_HOME: home } }
+}
+
+test('规矩进摘要最前面：「记住的事」往后让，两节分得开', () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 12)
+  main(['remember', '她怕冷', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out: recorder(), now })
+  const said = recorder()
+  assert.equal(
+    main(['rule', '夜里十一点后不提工作', '--why', '昨天 23:40 提加班，她只回了句嗯'], { env, out: said, now }),
+    0,
+  )
+  assert.ok(said.all.includes('为什么: 昨天 23:40'), said.all)
+
+  const out = recorder()
+  main(['digest'], { env, out, now })
+  assert.ok(out.all.includes('我给自己定的规矩'), out.all)
+  assert.ok(out.all.includes('夜里十一点后不提工作'))
+  assert.ok(out.all.includes('记住的事'), '普通结论还得有自己的地方')
+  assert.ok(
+    out.all.indexOf('我给自己定的规矩') < out.all.indexOf('记住的事'),
+    '规矩是约束，不该埋在结论后面',
+  )
+})
+
+test('没有来由的规矩不许定：--why 是必填，且一个字都不落盘', () => {
+  const { home, env } = ruleHome()
+  const out = recorder()
+  assert.equal(main(['rule', '夜里别提工作'], { env, out, now: localAt(2026, 11, 12, 12) }), 1)
+  assert.ok(out.errs.join('\n').includes('--why'), out.all)
+  assert.equal(readMemory(home).items.length, 0)
+})
+
+test('规矩只能取代规矩：--supersedes 指着一条结论会被拦下，并说清该用哪个命令', () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 12)
+  main(['remember', '她怕冷', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out: recorder(), now })
+  const id = readMemory(env.AGENT_MAN_HOME).items[0].id
+  const out = recorder()
+  assert.equal(main(['rule', '夜里别提工作', '--why', '一件具体的事', '--supersedes', id], { env, out, now }), 1)
+  assert.ok(out.errs.join('\n').includes('remember --supersedes'), out.all)
+})
+
+test('改规矩留痕：新版标「第 2 版」，旧版退场但那一行还在', () => {
+  const { home, env } = ruleHome()
+  const now = localAt(2026, 11, 12, 12)
+  main(['rule', '夜里十一点后不提工作', '--why', '第一次是因为她只回了句嗯'], { env, out: recorder(), now })
+  const first = readMemory(home).items[0].id
+  const out = recorder()
+  assert.equal(
+    main(['rule', '夜里十点后不提工作', '--why', '第二次她直接说困了', '--supersedes', first], { env, out, now }),
+    0,
+  )
+  assert.ok(out.all.includes('取代: ' + first), out.all)
+
+  const { items } = readMemory(home)
+  assert.equal(items.length, 2, '旧行不该被改写或删除')
+  assert.deepEqual(activeItems(items).map((it) => it.fact), ['夜里十点后不提工作'])
+
+  const dig = recorder()
+  main(['digest'], { env, out: dig, now })
+  assert.ok(dig.all.includes('夜里十点后不提工作（第 2 版）'), dig.all)
+  assert.ok(!dig.all.includes('夜里十一点后不提工作'), dig.all)
+})
+
+test('规矩超过上限就拦住：先让旧的退场，别越攒越厚', () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 12)
+  for (let i = 0; i < RULE_LIMIT; i += 1) {
+    assert.equal(main(['rule', `第 ${i} 条规矩`, '--why', '一件具体的事'], { env, out: recorder(), now }), 0)
+  }
+  const out = recorder()
+  assert.equal(main(['rule', '多出来的一条', '--why', '一件具体的事'], { env, out, now }), 1)
+  assert.ok(out.errs.join('\n').includes('--supersedes'), out.all)
+})
+
+test('规矩写太长也不行：一念不明白的，下次就不会读它', () => {
+  const { env } = ruleHome()
+  const out = recorder()
+  assert.equal(main(['rule', '很长'.repeat(70), '--why', '一件具体的事'], { env, out, now: localAt(2026, 11, 12, 12) }), 1)
+  assert.ok(out.errs.join('\n').includes('120'), out.all)
+})
+
+// ---------------------------------------------------------------- 时间线（§37）
+
+test('时间线：四份日志摆成一条，倒着排，规矩和判断都带着来由', () => {
+  const { env } = ruleHome()
+  const early = localAt(2026, 11, 12, 9, 0)
+  const mid = localAt(2026, 11, 12, 10, 0)
+  const late = localAt(2026, 11, 12, 11, 0)
+  main(['log', '她把窗关上了'], { env, out: recorder(), now: early })
+  main(['remember', '她怕冷', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out: recorder(), now: mid })
+  main(['rule', '夜里十一点后不提工作', '--why', '她只回了句嗯'], { env, out: recorder(), now: late })
+  main(['cue', '--force', '--why', '她在开会，晚点再提'], { env, out: recorder(), now: late })
+  main(['digest'], { env, out: recorder(), now: late })
+
+  const out = recorder()
+  assert.equal(main(['timeline', '--limit', '20'], { env, out }), 0)
+  const rows = out.lines.filter((l) => /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}  \S+  /.test(l))
+  assert.equal(rows.length, 5, '四份日志各来一条，加上这次 digest 的账：' + out.all)
+  for (let i = 1; i < rows.length; i += 1) {
+    assert.ok(rows[i - 1].slice(0, 16) >= rows[i].slice(0, 16), `顺序反了：\n${rows.join('\n')}`)
+  }
+  assert.ok(out.all.includes('她把窗关上了'), out.all)
+  assert.ok(out.all.includes('（因为：她只回了句嗯）'), out.all)
+  assert.ok(out.all.includes('说了——她在开会，晚点再提'), out.all)
+  assert.ok(out.all.includes('预算 1200'), '摘要也在时间线上，装了什么就写什么')
+})
+
+test('时间线能只看一份：--kind judge 就只剩判断', () => {
+  const { env } = ruleHome()
+  const now = localAt(2026, 11, 12, 11)
+  main(['log', '她把窗关上了'], { env, out: recorder(), now })
+  main(['cue', '--force', '--why', '她在开会'], { env, out: recorder(), now })
+
+  const out = recorder()
+  assert.equal(main(['timeline', '--kind', 'judge'], { env, out }), 0)
+  assert.ok(out.all.includes('判断'), out.all)
+  assert.ok(!out.all.includes('她把窗关上了'), out.all)
+
+  const bad = recorder()
+  assert.equal(main(['timeline', '--kind', 'nope'], { env, out: bad }), 1)
+  assert.ok(bad.errs.join('\n').includes('--kind 只认'), bad.all)
+})
+
+test('时间线的 --since 按本地整天算，早于那天的都不再列', () => {
+  const { env } = ruleHome()
+  main(['log', '前天的事'], { env, out: recorder(), now: localAt(2026, 11, 10, 12) })
+  main(['log', '昨天的事'], { env, out: recorder(), now: localAt(2026, 11, 11, 12) })
+  main(['log', '今天的事'], { env, out: recorder(), now: localAt(2026, 11, 12, 12) })
+
+  const out = recorder()
+  assert.equal(main(['timeline', '--since', '2026-11-11'], { env, out, now: localAt(2026, 11, 12, 13) }), 0)
+  assert.ok(out.all.includes('今天的事'), out.all)
+  assert.ok(out.all.includes('昨天的事'), out.all)
+  assert.ok(!out.all.includes('前天的事'), out.all)
 })

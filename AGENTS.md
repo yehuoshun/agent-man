@@ -42,7 +42,7 @@
 | `src/time.mjs` | 时间的唯一解释点：`parseAt` / `stamp` / `dayKey` / `daySpan` / `relTime` / `relWhen` / `clock` / `hourOf` | 别的模块不许自己 `new Date()` 解析或格式化 |
 | `src/cost.mjs` | 预算单位与切分：`cost()` / `truncate()` | 不判断"该不该记" |
 | `src/budget.mjs` | 纯函数选择：`select(events, {budget, pinnedShare})`、两条保底 `pinnedFloor` / `recentFloor` | 不碰文件系统、不看时钟、不生成文本 |
-| `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` | 不总结、不合并语义、不碰文件系统 |
+| `src/memory.mjs` | 长期层的纯逻辑：`makeItem`（校验/发号）/ `activeItems`（supersedes）/ `selectMemory` / `longLine` / 规矩：`makeRule`（必须带 why、≤`RULE_MAX` 字、活跃 ≤`RULE_LIMIT` 条）/ `ruleVersion` / `ruleLine` / `itemLine` | 不总结、不合并语义、不碰文件系统、不判断一条规矩该不该留 |
 | `src/render.mjs` | 把两层选择结果渲成 markdown + `stats`；整段文本夹进预算（`attempt`） | 不做取舍决策（取舍全在 `budget.mjs` / `memory.mjs`） |
 | `src/when.mjs` | 定时候的纯逻辑：`cue` / `inQuiet` / `describeQuiet` | 不碰文件系统、不生成台词、不判断"这条重不重要" |
 | `src/handoff.mjs` | 递话纯逻辑：`makeNote` / `pendingNotes` | 不碰文件系统、不判断条件成不成立（`--when` 是给人看的） |
@@ -50,6 +50,7 @@
 | `src/sky.mjs` | 看天气纯逻辑：`judgeSky` / `skyText` / `skyKind` / `snapshotOf` / `cacheState`（缓存四档） / `sourceDay` | 不联网、不读文件、不看时钟 |
 | `src/net.mjs` | 唯一联网层：`geocode` / `fetchSky`（Open-Meteo，不要 key） | 不重试、不缓存、不解析业务语义 |
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
+| `src/timeline.mjs` | 追溯纯逻辑：`buildTimeline`（四份日志合成一条）/ `timelineLine` / `timelineCounts` | 不落盘、不复制正文、不新增第五份日志（§37） |
 | `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `readJudges` / `appendJudge` / `readHandoff` / `appendHandoff` / `readPlan` / `appendPlan` / `readPlace` / `writePlace` / `readSky` / `writeSky` / `assertLanded` / `renameWithRetry` / `claimId` / `writeAtomic` | 不解析业务语义 |
 
 - 零件（进程外扩展）的入口在 `src/cli.mjs`：`findPart` 找 PATH 上的 `agent-man-<名字>`、
