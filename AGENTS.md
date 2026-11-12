@@ -47,7 +47,7 @@
 | `src/when.mjs` | 定时候的纯逻辑：`cue` / `inQuiet` / `describeQuiet` | 不碰文件系统、不生成台词、不判断"这条重不重要" |
 | `src/handoff.mjs` | 递话纯逻辑：`makeNote` / `pendingNotes` | 不碰文件系统、不判断条件成不成立（`--when` 是给人看的） |
 | `src/plan.mjs` | 日程纯逻辑：`makePlan` / `pendingPlans` / `upcoming` / `todayPlans` | 不碰文件系统、不判断"这条重不重要" |
-| `src/sky.mjs` | 看天气纯逻辑：`judgeSky` / `skyText` / `skyKind` / `snapshotOf` | 不联网、不读文件、不看时钟 |
+| `src/sky.mjs` | 看天气纯逻辑：`judgeSky` / `skyText` / `skyKind` / `snapshotOf` / `cacheState`（缓存四档） / `sourceDay` | 不联网、不读文件、不看时钟 |
 | `src/net.mjs` | 唯一联网层：`geocode` / `fetchSky`（Open-Meteo，不要 key） | 不重试、不缓存、不解析业务语义 |
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
 | `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `readHandoff` / `appendHandoff` / `readPlan` / `appendPlan` / `readPlace` / `writePlace` / `readSky` / `writeSky` / `assertTail` / `writeAtomic` | 不解析业务语义 |
