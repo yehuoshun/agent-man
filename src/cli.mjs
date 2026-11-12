@@ -31,6 +31,7 @@ import {
   writeSky,
   readPlan,
   appendPlan,
+  claimId,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
@@ -349,34 +350,62 @@ function cmdRemember(home, pos, flags, { out, now }) {
   }
 
   const { items } = readMemory(home)
-  const item = makeItem(
-    {
-      topic: flags.topic,
-      fact,
-      tier: flags.tier,
-      batch: flags.batch,
-      refs: flags.refs,
-      noRefs: Boolean(flags['no-refs']),
-      supersedes: flags.supersedes,
-      from: flags['span-from'],
-      to: flags['span-to'],
-      weight: flags.weight,
-      id: flags.id,
-      at: flags.at,
-    },
-    { now, existing: items },
-  )
+  const item = numberItem(home, items, flags, fact, now)
   appendMemory(home, item)
 
   // 结账：remember 就是"把日记整理成长期条目"的那一次动作，成功了才记账（§15）。
   // 上面任何一步抛错都走不到这里——校验不过的条目不配清账。
-  const settled = settle(home, now)
+  // 走到这里长期条目已经落盘了，所以结账失败只影响"欠账报多少"，不能让整个命令
+  // 看起来没发生：模型会照着那句 `! ...` 再记一遍（§29）。
+  let settled = null
+  try {
+    settled = settle(home, now)
+  } catch (e) {
+    out.error(`! 这条记下了，但"结账到哪儿"没更新：${e.message}`)
+    out.error('  下次 digest 会把这段日记再报一次欠账——那不是重记，别把这条再写一遍。')
+  }
 
   out.log(`${item.id}  tier${item.tier}  ${longLine(item)}`)
   if (item.refs.length) out.log(`  出处: ${item.refs.join(', ')}`)
   if (item.supersedes.length) out.log(`  取代: ${item.supersedes.join(', ')}`)
-  out.log(`  结账: 清了 ${settled} 条日记`)
+  out.log(`  结账: ${settled === null ? '没更新（见上面的警告）' : `清了 ${settled} 条日记`}`)
   return 0
+}
+
+/**
+ * 发号并抢名额。`--id` 是调用方自己认的号，不抢（撞了是调用方的事）；
+ * 默认号由"当天已有几条"算出来，并发时两个进程会算出同一个，所以算完要抢，
+ * 抢不到就把它当成已存在再算一次（§29）。
+ */
+function numberItem(home, items, flags, fact, now) {
+  const make = (existing) =>
+    makeItem(
+      {
+        topic: flags.topic,
+        fact,
+        tier: flags.tier,
+        batch: flags.batch,
+        refs: flags.refs,
+        noRefs: Boolean(flags['no-refs']),
+        supersedes: flags.supersedes,
+        from: flags['span-from'],
+        to: flags['span-to'],
+        weight: flags.weight,
+        id: flags.id,
+        at: flags.at,
+      },
+      { now, existing },
+    )
+
+  if (flags.id) return make(items)
+
+  let existing = items
+  for (let i = 0; i < 50; i += 1) {
+    const item = make(existing)
+    if (claimId(home, item.id)) return item
+    existing = [...existing, { id: item.id }]
+  }
+  throw new Error('发号抢了 50 次都没抢到：state/ids/ 里当天的号被谁一直占着，去看看')
 }
 
 /** 把"截至 now 的积压"记为已结，返回这次清掉的条数。 */

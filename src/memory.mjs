@@ -53,7 +53,10 @@ export function makeItem(input, { now = Date.now(), existing = [] } = {}) {
   return item
 }
 
-/** 同一天内顺序发号，看文件就能读出先后。并发写同一文件不在考虑范围内（单人 CLI）。 */
+/**
+ * 同一天内顺序发号，看文件就能读出先后。这里只算"看起来该发几号"——
+ * 并发下两个进程会算出同一个号，所以真正发号前要拿 `claimId()` 抢名额（§29）。
+ */
 function nextId(day, existing) {
   let n = 0
   for (const it of existing) {

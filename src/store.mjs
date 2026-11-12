@@ -28,6 +28,7 @@ export function paths(home) {
     plan: path.join(home, 'state', 'plan.jsonl'),
     place: path.join(home, 'state', 'place.json'),
     sky: path.join(home, 'state', 'sky.json'),
+    ids: path.join(home, 'state', 'ids'),
   }
 }
 
@@ -241,6 +242,25 @@ export function readEvents(home, { since, until } = {}) {
 }
 
 /**
+ * 抢一个发号名额：同一天的 id 由"现有几条"算出来，两个进程同时读到同一个数，
+ * 就会发出同一个号——20 个进程并发 remember，实测只发出 10 个不同的 id（§29）。
+ *
+ * 名额是 `state/ids/<id>` 这个空文件：`wx` 建文件是原子的，建上算抢到，
+ * EEXIST 就是别人先占了。不用锁文件，也就没有"进程崩了留下死锁"这件事。
+ */
+export function claimId(home, id) {
+  const dir = paths(home).ids
+  fs.mkdirSync(dir, { recursive: true })
+  try {
+    fs.closeSync(fs.openSync(path.join(dir, id), 'wx'))
+    return true
+  } catch (e) {
+    if (e.code === 'EEXIST') return false
+    throw e
+  }
+}
+
+/**
  * 读结账记录。没有就返回 null——"从来没结过账"和"结到很久以前"是两件事，
  * 都当成 0 的话，攒了一个月没整理的库会被报成"没有欠账"（见 src/consolidate.mjs）。
  *
@@ -425,8 +445,48 @@ export function writeAtomic(file, text) {
   } finally {
     fs.closeSync(fd)
   }
-  fs.renameSync(tmp, file)
+  renameWithRetry(fs.renameSync, tmp, file)
   syncDir(dir)
+}
+
+const RENAME_TRIES = 6
+const RENAME_WAIT_MS = 15
+
+/**
+ * 换个名字也要挑时候：Windows 上 rename 不是"原子替换"，目标正被别的进程打开着
+ * （或者被杀软/索引器扫）会直接 EPERM。实测 30 个 remember 同时跑，5–20 个栽在
+ * 这一步——文件其实好好的，坏的是"报错"本身：模型看见 `! ...` 会以为没记下，
+ * 于是再记一遍（§29）。
+ *
+ * 撞手的时间以毫秒计，所以先退避重试；重试还是不行才抛，并且把话说清楚是
+ * "别人拿着"而不是"写坏了"。非并发类错误（ENOENT、EISDIR…）不重试，原样抛。
+ */
+export function renameWithRetry(rename, tmp, file, { tries = RENAME_TRIES, waitMs = RENAME_WAIT_MS } = {}) {
+  for (let i = 1; ; i += 1) {
+    try {
+      rename(tmp, file)
+      return
+    } catch (e) {
+      const busy = e.code === 'EPERM' || e.code === 'EBUSY' || e.code === 'EACCES'
+      if (!busy || i >= tries) {
+        try {
+          fs.unlinkSync(tmp)
+        } catch {
+          // 临时文件本来就可能已经被搬走了；清不掉不算新事故，别盖住真正的错。
+        }
+        if (busy) {
+          throw new Error(`${file} 写不进去：另一个进程正拿着它，重试 ${i} 次还是不行（${e.code}）`)
+        }
+        throw e
+      }
+      sleepSync(waitMs * i)
+    }
+  }
+}
+
+/** 同步小睡：从 fs 到 rename 都是同步的，插不进 await。 */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
 /**

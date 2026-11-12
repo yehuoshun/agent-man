@@ -17,6 +17,8 @@ import {
   resolveHome,
   writeAtomic,
   assertLanded,
+  renameWithRetry,
+  claimId,
   appendTrace,
   readConsolidation,
   readTraces,
@@ -1692,4 +1694,85 @@ test('bin 指向真实文件，版本号两边一致——打包前先对账', (
   for (const p of pkg.files) {
     assert.ok(fs.existsSync(path.join(repoRoot, p)), `package.json 的 files 里有不存在的路径：${p}`)
   }
+})
+
+// ---------------------------------------------------------------- 并发写（§29）
+
+test('rename 撞上手：等一会儿再试，第三次成了就不报错', () => {
+  let calls = 0
+  const rename = () => {
+    calls += 1
+    if (calls >= 3) return
+    const e = new Error('EPERM: operation not permitted, rename')
+    e.code = 'EPERM'
+    throw e
+  }
+  renameWithRetry(rename, 'a.tmp', 'a.json', { tries: 5, waitMs: 1 })
+  assert.equal(calls, 3)
+})
+
+test('rename 一直是别人拿着：报"另一个进程正拿着它"，并收走临时文件', () => {
+  const dir = tmp()
+  const file = path.join(dir, 'a.json')
+  const t = `${file}.123.tmp`
+  fs.writeFileSync(t, '{}')
+  const rename = () => {
+    const e = new Error('EPERM: operation not permitted, rename')
+    e.code = 'EPERM'
+    throw e
+  }
+  assert.throws(() => renameWithRetry(rename, t, file, { tries: 3, waitMs: 1 }), /另一个进程正拿着它/)
+  assert.equal(fs.existsSync(t), false, '放弃以后不该把 .tmp 留在目录里')
+  assert.equal(fs.existsSync(file), false)
+})
+
+test('rename 的错不是"忙"就别重试：ENOENT 一次就抛', () => {
+  let calls = 0
+  const rename = () => {
+    calls += 1
+    const e = new Error('ENOENT: no such file or directory, rename')
+    e.code = 'ENOENT'
+    throw e
+  }
+  assert.throws(() => renameWithRetry(rename, 'missing.tmp', 'a.json', { tries: 4, waitMs: 1 }), /ENOENT/)
+  assert.equal(calls, 1, '不是并发的错，重试只是拖时间')
+})
+
+test('结账写不进去：长期条目照样算记下了，只警告一句，不让人以为要重记', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = localAt(2026, 11, 12, 12)
+  main(['log', '今天风大'], { env, out: recorder(), now })
+  // 结账记录的位置被一个目录占住：读不出来，也换不上去
+  fs.mkdirSync(path.join(home, 'state', 'consolidation.json'), { recursive: true })
+
+  const out = recorder()
+  const code = main(['remember', '入秋后先关窗', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out, now })
+  assert.equal(code, 0, '条目已经落盘，命令就不该像没发生一样报失败')
+  assert.equal(readMemory(home).items.length, 1, '条目本身必须已经落盘')
+  assert.ok(out.lines.some((l) => l.includes('结账: 没更新')), out.all)
+  assert.ok(out.errs.some((l) => l.includes('这条记下了')), out.all)
+  assert.ok(!out.all.includes('清了'), '不能假装结过账')
+})
+
+test('发号的号是抢来的：别人先占了当天第一号，我就从第二号开始', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = localAt(2026, 11, 12, 12)
+  assert.equal(claimId(home, '2026-11-12-01'), true, '第一个抢到')
+  assert.equal(claimId(home, '2026-11-12-01'), false, '同一个号抢第二次要落空')
+
+  main(['remember', '入秋后先关窗', '--topic', '她怕冷', '--refs', '2026-11-12'], { env, out: recorder(), now })
+  assert.equal(readMemory(home).items[0].id, '2026-11-12-02', '号被占了就该往后挪，不能发重复的')
+})
+
+test('--id 是调用方自己认的号：不抢名额，撞了也不改', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = localAt(2026, 11, 12, 12)
+  claimId(home, 'hand-made')
+  const out = recorder()
+  const argv = ['remember', '她自己认的号', '--topic', '她怕冷', '--refs', '2026-11-12', '--id', 'hand-made']
+  assert.equal(main(argv, { env, out, now }), 0)
+  assert.equal(readMemory(home).items[0].id, 'hand-made')
 })
