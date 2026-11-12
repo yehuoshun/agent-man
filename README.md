@@ -194,11 +194,11 @@ cd agent-man && node --test    # 用例只增不减，条数以输出为准
 ```
 
 或者下打包好的 tarball——每次 main 构建都会挂一个 artifact，发版时挂在 Release 上
-（最新：[v0.2.0](https://github.com/yehuoshun/agent-man/releases/latest)，68 kB）：
+（最新：[v0.2.2](https://github.com/yehuoshun/agent-man/releases/latest)，73 kB）：
 
 ```bash
-curl -LO https://github.com/yehuoshun/agent-man/releases/download/v0.2.0/agent-man-0.2.0.tgz
-npm i -g ./agent-man-0.2.0.tgz
+curl -LO https://github.com/yehuoshun/agent-man/releases/download/v0.2.2/agent-man-0.2.2.tgz
+npm i -g ./agent-man-0.2.2.tgz
 ```
 
 推 `v<version>` 标签就会发版：CI 先在 Linux/Windows × Node 20/22/24 上跑一遍用例，
