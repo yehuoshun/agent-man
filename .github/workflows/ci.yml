@@ -3,10 +3,15 @@ name: ci
 # 零依赖，所以这里没有 npm install：拉下来直接跑用例，几秒钟。
 # Windows 一定要进矩阵——CRLF、BOM、反斜杠这几类事故全都出在 Windows 上。
 
+# 只改 Markdown 的提交不跑用例：连推「代码 + 补文档」两个提交时，后一个不会
+# 把前一个的 windows 腿掐掉（cancel-in-progress 的代价）。代价：以后若给 main 开
+# 必过检查，纯文档 PR 会一直等一个永远不会出现的 run——届时要么去掉这条，要么改用 paths。
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md']
   pull_request:
+    paths-ignore: ['**/*.md']
   workflow_dispatch:
 
 permissions:
