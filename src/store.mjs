@@ -24,6 +24,7 @@ export function paths(home) {
     consolidation: path.join(home, 'state', 'consolidation.json'),
     trace: path.join(home, 'state', 'trace.jsonl'),
     cue: path.join(home, 'state', 'cue.json'),
+    judge: path.join(home, 'state', 'judge.jsonl'),
     handoff: path.join(home, 'state', 'handoff.jsonl'),
     plan: path.join(home, 'state', 'plan.jsonl'),
     place: path.join(home, 'state', 'place.json'),
@@ -377,6 +378,77 @@ export function readCue(home) {
 export function writeCue(home, rec) {
   ensure(home)
   writeAtomic(paths(home).cue, JSON.stringify(rec) + '\n')
+  return rec
+}
+
+/**
+ * 判断记录（state/judge.jsonl）：模型每次问过"这会儿该不该开口"之后，自己写一句
+ * 为什么说、为什么没说。脚本只存和还，不从里面推任何结论（§35）。
+ *
+ * 只留最近这么多条：这是"上次怎么想的"的备忘，不是账本；攒到几千行没人看，
+ * 每次 cue 还要多读一遍历史。
+ */
+export const JUDGE_KEEP = 200
+
+/** 读判断记录，按写入顺序（旧→新）。坏行跳过并计数——一条写坏了不该让整段历史消失。 */
+export function readJudges(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.judge, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return { judges: [], bad: 0 }
+    throw e
+  }
+
+  const judges = []
+  let bad = 0
+  for (const line of raw.split('\n')) {
+    const s = line.trim()
+    if (!s) continue
+    let j
+    try {
+      j = JSON.parse(s)
+    } catch {
+      bad++
+      continue
+    }
+    if (
+      !j ||
+      typeof j.at !== 'string' ||
+      !j.at.trim() ||
+      typeof j.said !== 'boolean' ||
+      typeof j.why !== 'string' ||
+      !j.why.trim()
+    ) {
+      bad++
+      continue
+    }
+    judges.push({ at: j.at, said: j.said, why: j.why })
+  }
+  return { judges, bad }
+}
+
+/**
+ * 追加一条判断。到上限就整体重写（writeAtomic，§20），只留最近 JUDGE_KEEP 条；
+ * 没到上限走追加 + 读回核对，和日记一个规矩：写完当场确认落盘。
+ */
+export function appendJudge(home, rec) {
+  const p = ensure(home)
+  const text = JSON.stringify(rec)
+  let raw = ''
+  try {
+    raw = fs.readFileSync(p.judge, 'utf8')
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+  const kept = raw.split('\n').map((s) => s.trim()).filter(Boolean)
+  kept.push(text)
+  if (kept.length > JUDGE_KEEP) {
+    writeAtomic(p.judge, `${kept.slice(-JUDGE_KEEP).join('\n')}\n`)
+    return rec
+  }
+  assertLanded(p.judge, appendLine(p.judge, `${text}\n`))
   return rec
 }
 

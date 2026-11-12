@@ -50,7 +50,7 @@
 | `src/sky.mjs` | 看天气纯逻辑：`judgeSky` / `skyText` / `skyKind` / `snapshotOf` / `cacheState`（缓存四档） / `sourceDay` | 不联网、不读文件、不看时钟 |
 | `src/net.mjs` | 唯一联网层：`geocode` / `fetchSky`（Open-Meteo，不要 key） | 不重试、不缓存、不解析业务语义 |
 | `src/trace.mjs` | 账本纯逻辑：`buildTrace` / `neverShown` / `traceLine` | 不碰文件系统、不看时钟、不判断"哪条重要" |
-| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `readHandoff` / `appendHandoff` / `readPlan` / `appendPlan` / `readPlace` / `writePlace` / `readSky` / `writeSky` / `assertLanded` / `renameWithRetry` / `claimId` / `writeAtomic` | 不解析业务语义 |
+| `src/store.mjs` | `resolveHome` / `paths` / `ensure` / `appendEvent` / `readEvents` / `appendMemory` / `readMemory` / `appendTrace` / `readTraces` / `readCue` / `writeCue` / `readJudges` / `appendJudge` / `readHandoff` / `appendHandoff` / `readPlan` / `appendPlan` / `readPlace` / `writePlace` / `readSky` / `writeSky` / `assertLanded` / `renameWithRetry` / `claimId` / `writeAtomic` | 不解析业务语义 |
 
 - 零件（进程外扩展）的入口在 `src/cli.mjs`：`findPart` 找 PATH 上的 `agent-man-<名字>`、
   `assertPartArgs` 拦 Windows 的 `%名字%`、`runPart` 转交参数与退出码。零件**不进本仓库**，

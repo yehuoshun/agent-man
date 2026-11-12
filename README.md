@@ -63,7 +63,12 @@ node bin/agent-man.mjs find 关窗 --kind dm --limit 5
 node bin/agent-man.mjs cue
 node bin/agent-man.mjs cue --force   # 手动问，无视 6 小时间隔与静默时段
 node bin/agent-man.mjs cue --peek    # 看一眼，不记水位
+node bin/agent-man.mjs cue --why "她在开会，晚点再提"   # 记下这次为什么说／为什么没说
 ```
+
+带上 `--why` 之后，这次判断会写进 `state/judge.jsonl`（只留最近 200 条），下次 `cue` 的末尾先还给你
+一句 `上次：3 小时前没说话——她在开会，晚点再提`。脚本只存和还，不评价上一次的理由对不对——
+判断仍然是每次会话里那个模型自己的事（见 `docs/decisions.md` §35）。
 
 ```bash
 # 顺着一条结论找回原文：recall 尾巴上那串 refs 现在能用了

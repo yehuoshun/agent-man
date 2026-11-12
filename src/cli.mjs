@@ -25,6 +25,8 @@ import {
   readTraces,
   readCue,
   writeCue,
+  readJudges,
+  appendJudge,
   readHandoff,
   appendHandoff,
   readPlace,
@@ -113,6 +115,7 @@ cue 选项：
   --force                   无视间隔与静默时段（手动问的时候用）
   --peek                    只看一眼，不记水位（下次还会报同样的东西）
   --limit 10                最多列几条新东西
+  --why <理由>              把这次的判断记下来（为什么说／为什么没说），下次 cue 会先看见
   --out <文件>              写到文件（原子写），默认打到 stdout
 
 leave 选项：
@@ -171,7 +174,7 @@ export const FLAGS = {
   ls: { value: ['limit'], bool: [] },
   find: { value: ['since', 'until', 'kind', 'limit'], bool: [] },
   trace: { value: ['limit'], bool: ['never'] },
-  cue: { value: ['limit', 'min-gap', 'out'], bool: ['peek', 'force'] },
+  cue: { value: ['limit', 'min-gap', 'out', 'why'], bool: ['peek', 'force'] },
   show: { value: ['limit', 'fact'], bool: [] },
   leave: { value: ['when', 'ttl', 'at'], bool: [] },
   place: { value: [], bool: [] },
@@ -800,18 +803,31 @@ function refRange(ref, { dayStart }) {
  * 知道，也不该假装知道（§21 的代价）。
  */
 function cmdCue(home, flags, { out, now, env }) {
+  const why = flags.why === undefined ? '' : String(flags.why).trim()
+  if (flags.why !== undefined && !why) {
+    throw new Error('--why 不能是空的：它记的是这一次为什么说／为什么没说')
+  }
+
   // 打哪儿由调用方定：屏幕上是一行行，文件里是同一批行的整段（§33）。
   // 早退的出口有三个，所以正文只往 lines 里攒，攒完再决定去处。
   const lines = []
-  const code = cueLines(home, flags, { out, now, env, say: (s) => lines.push(s) })
+  // 先读上一次的判断：这一次该踩着上一次，而不是从零开始（§35）。
+  const { judges, bad: badJudge } = readJudges(home)
+  const lastJudge = judges[judges.length - 1]
+  const { code, said } = cueLines(home, flags, { out, now, env, say: (s) => lines.push(s) })
+  if (badJudge) out.error(`! ${badJudge} 条判断记录读不出来，已跳过`)
+  if (lastJudge) lines.push(judgeLine(lastJudge, { now }))
 
   if (typeof flags.out === 'string') {
     const target = path.resolve(flags.out)
     writeAtomic(target, `${lines.join('\n')}\n`)
     out.log(`写好了: ${target}`)
-    return code
+  } else {
+    for (const line of lines) out.log(line)
   }
-  for (const line of lines) out.log(line)
+
+  // 判断记在说完之后：一次决定只有一个落点，"说了什么"和"为什么说"不该分开写。
+  if (why) appendJudge(home, { at: stamp(now), said, why })
   return code
 }
 
@@ -845,13 +861,13 @@ function cueLines(home, flags, { out, now, env, say }) {
     const planTail = today.length ? `；今天还有 ${today.length} 条安排` : ''
     say(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}${planTail}`)
     if (!flags.peek) for (const n of expired) appendHandoff(home, { op: 'drop', id: n.id, at: now })
-    return 0
+    return { code: 0, said: false }
   }
   if (!r.fresh.length && !r.notes.length) {
     const quietTail = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
     const planTail = today.length ? `（今天还有 ${today.length} 条安排）` : ''
     say(`这会儿 ${clock(now)}，没有新东西${quietTail}${planTail}`)
-    return 0
+    return { code: 0, said: false }
   }
 
   say(`这会儿 ${clock(now)}。`)
@@ -892,7 +908,16 @@ function cueLines(home, flags, { out, now, env, say }) {
       writeCue(home, { lastAt: now, watermark: lastCue?.watermark ?? null })
     }
   }
-  return 0
+  return { code: 0, said: !flags.peek }
+}
+
+/**
+ * 上一次的判断：什么时候、说没说话、为什么。脚本只复述，不评价——
+ * 判断对不对，仍然是模型自己的事（§35）。
+ */
+function judgeLine(j, { now }) {
+  const when = relTime(parseAt(j.at, { now }), { now })
+  return `上次：${when}${j.said ? '说了话' : '没说话'}——${j.why}`
 }
 /**
  * 账本：`trace` 看最近几次渲染，`trace --never` 反过来问哪些日记从没进过摘要。

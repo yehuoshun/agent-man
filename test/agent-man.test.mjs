@@ -22,6 +22,8 @@ import {
   appendTrace,
   readConsolidation,
   readTraces,
+  readJudges,
+  appendJudge,
 } from '../src/store.mjs'
 import { makeItem, activeItems, selectMemory } from '../src/memory.mjs'
 import { owed, owedCount, backlog, BACKLOG_COST } from '../src/consolidate.mjs'
@@ -1229,6 +1231,99 @@ test('cue --out：话照说，只是换个去处——文件里是同一批行�
   const again = recorder()
   main(['cue'], { env, out: again, now: t('2026-11-12 22:00') })
   assert.ok(again.all.includes('不打扰'), again.all)
+})
+
+test('cue --why：把这次为什么说记下来，下一次 cue 先看见上一次的判断', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '今天风大', '--at', '2026-11-12 09:00'], {
+    env, out: recorder(), now: t('2026-11-12 09:00'),
+  })
+
+  const first = recorder()
+  assert.equal(
+    main(['cue', '--why', '她在开会，晚点再提'], { env, out: first, now: t('2026-11-12 21:40') }),
+    0,
+  )
+  assert.ok(first.all.includes('今天风大'), first.all)
+
+  const file = path.join(env.AGENT_MAN_HOME, 'state', 'judge.jsonl')
+  const recs = fs
+    .readFileSync(file, 'utf8')
+    .trim()
+    .split('\n')
+    .map((s) => JSON.parse(s))
+  assert.equal(recs.length, 1)
+  assert.equal(recs[0].said, true, '这次真开口了')
+  assert.equal(recs[0].why, '她在开会，晚点再提')
+  assert.ok(Number.isFinite(parseAt(recs[0].at)), 'at 要能解析回时刻')
+
+  // 判断不能每次从零开始：下次即使没什么可说，也要先把上一次端出来。
+  const again = recorder()
+  assert.equal(main(['cue'], { env, out: again, now: t('2026-11-12 21:55') }), 0)
+  assert.ok(again.all.includes('不打扰'), again.all)
+  assert.ok(again.all.includes('上次：'), again.all)
+  assert.ok(again.all.includes('说了话——她在开会，晚点再提'), again.all)
+})
+
+test('cue --why：没开口也记（said:false），--peek 看过不算说过', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const t = (s) => parseAt(s)
+  main(['log', '今天风大', '--at', '2026-11-12 09:00'], {
+    env, out: recorder(), now: t('2026-11-12 09:00'),
+  })
+  // 先走一遍水位，第二次就落进"刚开过口，不到 6 小时"
+  main(['cue'], { env, out: recorder(), now: t('2026-11-12 10:00') })
+
+  const quiet = recorder()
+  assert.equal(
+    main(['cue', '--why', '刚说过，别念第二遍'], { env, out: quiet, now: t('2026-11-12 10:30') }),
+    0,
+  )
+  assert.ok(quiet.all.includes('不打扰'), quiet.all)
+
+  const peek = recorder()
+  assert.equal(
+    main(['cue', '--force', '--peek', '--why', '只看一眼'], {
+      env, out: peek, now: t('2026-11-12 10:40'),
+    }),
+    0,
+  )
+
+  const file = path.join(env.AGENT_MAN_HOME, 'state', 'judge.jsonl')
+  const recs = fs
+    .readFileSync(file, 'utf8')
+    .trim()
+    .split('\n')
+    .map((s) => JSON.parse(s))
+  assert.deepEqual(recs.map((r) => r.said), [false, false], '没开口和只看一眼，都不算说了话')
+})
+
+test('cue --why 给空串直接报错：可以没理由地说，但不能假装有理由', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['cue', '--why', ''], { env, out }), 1)
+  assert.ok(out.errs.join('\n').includes('--why 不能是空的'), out.all)
+  assert.equal(fs.existsSync(path.join(env.AGENT_MAN_HOME, 'state', 'judge.jsonl')), false)
+})
+
+test('判断记录只留最近 200 条；坏行跳过并计数，不让一行吃掉整段历史', () => {
+  const home = tmp()
+  const base = localAt(2026, 11, 12, 10, 0)
+  for (let i = 0; i < 205; i++) {
+    appendJudge(home, { at: stamp(base + i * 60_000), said: i % 2 === 0, why: `第 ${i} 条` })
+  }
+
+  const { judges, bad } = readJudges(home)
+  assert.equal(bad, 0)
+  assert.equal(judges.length, 200)
+  assert.equal(judges[0].why, '第 5 条', '超上限时从最旧的开始丢')
+  assert.equal(judges[199].why, '第 204 条')
+
+  fs.appendFileSync(path.join(home, 'state', 'judge.jsonl'), '{ 坏\n', 'utf8')
+  const after = readJudges(home)
+  assert.equal(after.bad, 1)
+  assert.equal(after.judges.length, 200)
 })
 
 test('cue：离上次开口不到六小时不叫人，--force 可以硬问', () => {
