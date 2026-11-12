@@ -283,7 +283,7 @@ function reportDue(home, { out, now, env }) {
   } else {
     out.log(`欠 ${n} 次巩固：`)
     if (d.days) out.log(`  · 日结 ${d.days} 次（${settledWhere(d)}）`)
-    if (d.weeks) out.log(`  · 周结 ${d.weeks} 次（上次结到 ${d.fromWeek}）`)
+    if (d.weeks) out.log(`  · 周结 ${d.weeks} 次（${settledWhere(d, d.fromWeek)}）`)
     if (d.over) {
       out.log(
         `  · 按量：积压 ${pile.count} 条 / ${pile.cost} 代价` +
@@ -296,10 +296,10 @@ function reportDue(home, { out, now, env }) {
 }
 
 /** 结账基准的说法：从来没有记录时不能说"上次结到第一条日记那天"，那是两件事。 */
-function settledWhere(d) {
+function settledWhere(d, key = d.fromDay) {
   if (d.from === null) return '一条日记都还没有'
-  if (!d.settled) return `从第一条日记 ${d.fromDay} 起就没结过`
-  return `上次结到 ${d.fromDay}`
+  if (!d.settled) return `从第一条日记 ${key} 起就没结过`
+  return `上次结到 ${key}`
 }
 
 function reportDrops(stats, out) {

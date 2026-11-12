@@ -656,3 +656,16 @@ test('结账记录坏了就报错，不猜', () => {
   assert.equal(main(['digest', '--due'], { env, out: noAt }), 1)
   assert.ok(noAt.errs.join('\n').includes('at'), noAt.errs.join('\n'))
 })
+
+test('从没结过账时不说"上次结到"，那是另一件事', () => {
+  const home = tmp()
+  const env = { AGENT_MAN_HOME: home }
+  const now = Date.parse('2026-11-12T12:00:00+08:00')
+  main(['log', '三周前的日记', '--at', '2026-10-21 10:00'], { env, out: recorder(), now })
+
+  const out = recorder()
+  assert.equal(main(['digest', '--due'], { env, out, now }), 0)
+  assert.ok(out.all.includes('周结'), `三周没结过，周结那行也该出现：\n${out.all}`)
+  assert.ok(out.all.includes('从第一条日记'), out.all)
+  assert.ok(!out.all.includes('上次结到'), `从没结过账，不能说"上次结到"：\n${out.all}`)
+})
