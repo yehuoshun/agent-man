@@ -33,11 +33,15 @@ export function renderDigest(input, opts = {}) {
   const { budget = 1200, now = Date.now(), title = '我记得的事', dayStart = 0, longShare = 0.6 } = opts
   if (!(budget > 0)) throw new Error(`预算必须为正: ${budget}`)
 
-  let r = attempt({ events, memory }, { budget, now, title, dayStart, longShare, form: FULL })
-  for (const form of FORMS.slice(1)) {
-    if (r.total <= budget) break
-    r = attempt({ events, memory }, { budget, now, title, dayStart, longShare, form })
-  }
+  // 每种头部都试一遍，再挑：以前是"从最详细的往下试，只要没超预算就收手"，
+  // 于是最详细的头部只要装下了一条，就再没机会换成便宜头部多装一条。
+  const picks = FORMS.map((form) =>
+    attempt({ events, memory }, { budget, now, title, dayStart, longShare, form }),
+  )
+  const fits = picks.filter((r) => r.total <= budget)
+  const nothingYet = !events.length && !memory.length
+  // 空库没什么可挑的：要最详细的那种，好把"还没有记录"说清楚。
+  const r = !fits.length ? picks[picks.length - 1] : nothingYet ? fits[0] : pickBest(fits)
 
   return {
     text: r.text,
@@ -48,6 +52,27 @@ export function renderDigest(input, opts = {}) {
       over: Math.max(0, r.total - budget),
     },
   }
+}
+
+/**
+ * 挑头部：装下的条目多的赢；一样多再比谁说得细（FORMS 在前者优先）；
+ * 一条都装不下时，别花几十个字的代价买一个空壳。
+ *
+ * 这条替换了"降到装得下为止"的老规则。老规则的洞在两头：
+ * - 实测预算 85：FULL 骨架 69，只剩 16，装得下 w0（12）装不下 w2（26），
+ *   于是它按"没超预算"收手，丢掉一条 w2——换成 compact，两条都装得下。
+ * - 实测预算 80：FULL 骨架 69，剩 11，两条都装不下，取 0 丢 2，
+ *   但它同样"没超预算"，交出去一份只有标题和「（还没有）」的空壳。
+ * 两件事都是同一个毛病：头部先挑，内容只能捡剩下的。
+ */
+function pickBest(fits) {
+  return fits.reduce((best, r) => {
+    const a = best.stats.kept + best.stats.longKept
+    const b = r.stats.kept + r.stats.longKept
+    if (b !== a) return b > a ? r : best
+    if (a === 0) return r.total < best.total ? r : best
+    return best
+  })
 }
 
 /**

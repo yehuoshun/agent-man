@@ -258,6 +258,46 @@ test('预算连头部都放不下时降级到只剩标题，不假装装下了',
   assert.ok(stats.drops.length >= 1)
 })
 
+test('头部装得下、内容装不下时也要降级：80 的预算不许买一份空摘要', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  // 实测老规则：FULL 骨架 69，剩 11 分给两条（要 26 和 12），取 0 丢 2，
+  // 而 69 ≤ 80 所以"没超预算"就算成功，交出去一份只有标题和「（还没有）」的空壳。
+  const events = [
+    { at: now - 8 * 60e3, fact: '今天风大', weight: 0 },
+    { at: now - 50 * 60e3, fact: '她把窗关上了，说外面风大', feel: '被照顾到', weight: 2 },
+  ]
+  const { text, stats } = renderDigest(events, { budget: 80, now })
+  assert.equal(stats.kept, 2, `没装下两条：\n${text}`)
+  assert.ok(cost(text) <= 80, `超了：${cost(text)}`)
+  assert.match(text, /她把窗关上了/)
+  // 换成 compact 头部，而不是留着最贵的那种
+  assert.match(text, /<!-- 2\/0 · 取 2\+0 · 丢 0 · 截 0 -->/)
+})
+
+test('宁可掉一行注释，也要多装一条：头部不是越详细越好', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  // 老规则在 85 这里：FULL 只装得下 w0（12），装不下 w2（26），照样收手；
+  // 换成 compact 两条都装得下。同样没超预算，凭什么要少的那个？
+  const events = [
+    { at: now - 8 * 60e3, fact: '今天风大', weight: 0 },
+    { at: now - 50 * 60e3, fact: '她把窗关上了，说外面风大', feel: '被照顾到', weight: 2 },
+  ]
+  const { text, stats } = renderDigest(events, { budget: 85, now })
+  assert.equal(stats.kept, 2, `少装了一条：\n${text}`)
+  assert.ok(cost(text) <= 85)
+})
+
+test('一条都装不下时不留空壳：宁肯只剩标题，也不花 69 买两行「（还没有）」', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  // 预算 100 时 select 还能把这条切开塞进去，所以压到 60：四种头部都装不下一条，
+  // 那就只剩标题，别留一份「（还没有）」的空壳。
+  const events = [{ at: now - 60e3, fact: '很长'.repeat(80), weight: 0 }]
+  const { text, stats } = renderDigest(events, { budget: 60, now })
+  assert.equal(stats.kept, 0)
+  assert.equal(text.trim(), '# 我记得的事')
+  assert.ok(stats.drops.length >= 1, '丢了要报出来')
+})
+
 // ---------------------------------------------------------------- 存储
 
 test('坏行跳过并计数，好行一条不丢；行首 BOM 能救回来', () => {
