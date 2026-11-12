@@ -1354,6 +1354,24 @@ test('递话：静默时段不打扰，便条留着等下次开口', () => {
   assert.ok(morning.all.includes('明早要问她睡得怎么样'), `下一场该递出来：\n${morning.all}`)
 })
 
+test('递话：--peek 看过不烧——定时器的输出只是被记录时，别把便条吃掉', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const now = parseAt('2026-11-12 20:00')
+  main(['leave', '带伞', '--when', '早上出门时'], { env, out: recorder(), now })
+
+  const peek = recorder()
+  assert.equal(main(['cue', '--peek', '--force'], { env, out: peek, now }), 0)
+  assert.ok(peek.all.includes('带伞'), `--peek 也得看得见：\n${peek.all}`)
+
+  const again = recorder()
+  assert.equal(main(['cue', '--force'], { env, out: again, now: now + 60e3 }), 0)
+  assert.ok(again.all.includes('带伞'), `--peek 不该烧掉便条，下一次还得递：\n${again.all}`)
+
+  const third = recorder()
+  assert.equal(main(['cue', '--force'], { env, out: third, now: now + 120e3 }), 0)
+  assert.ok(!third.all.includes('带伞'), `真递过一次就烧了：\n${third.all}`)
+})
+
 // ---------------------------------------------------------------- 看天气
 
 function skyOf(over = {}) {
