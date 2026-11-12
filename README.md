@@ -8,7 +8,8 @@
 记事   agent-man log / remember / digest / recall / find / trace / show
 定时候  agent-man cue
 递话    agent-man leave
-看天气  agent-man place / sky                 ← 现在在这里
+看天气  agent-man place / sky
+日程    agent-man plan                              ← 现在在这里
 ```
 
 ## 为什么
@@ -83,6 +84,16 @@ node bin/agent-man.mjs sky
 天气只报变化：天况换类、最高温跳 5℃、有雨而上次没有、第一次进极热极冷。
 取数走 Open-Meteo（不要 key），半小时内复用缓存；断网时能报旧数，但会写明那是几点的数
 （见 `docs/decisions.md` §25）。
+
+```bash
+# 记下要做的事：写一句话就是新加一条，--done 划掉
+node bin/agent-man.mjs plan "陪她去看牙" --at "2026-11-14 09:30"
+node bin/agent-man.mjs plan                     # 接下来 7 天
+node bin/agent-man.mjs plan --done 2026-11-14-p01
+```
+
+日程只做记录和陈列：`sky` / `cue` 会顺带说今天还剩几条，但日程自己不会"到点提醒"——
+什么时候提、怎么提是模型的事（见 `docs/decisions.md` §26）。
 
 断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，
 半行会立刻报错而不是等下次读才发现（见 `docs/decisions.md` §20）。

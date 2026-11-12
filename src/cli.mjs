@@ -1,5 +1,14 @@
 import path from 'node:path'
-import { parseAt, dayStartFromEnv, stamp, daySpan, dayRange, clock, relTime } from './time.mjs'
+import {
+  parseAt,
+  dayStartFromEnv,
+  stamp,
+  daySpan,
+  dayRange,
+  clock,
+  relTime,
+  relWhen,
+} from './time.mjs'
 import { cost } from './cost.mjs'
 import {
   resolveHome,
@@ -20,6 +29,8 @@ import {
   writePlace,
   readSky,
   writeSky,
+  readPlan,
+  appendPlan,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
@@ -27,6 +38,7 @@ import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
 import { cue, MIN_GAP, describeQuiet } from './when.mjs'
 import { makeNote, pendingNotes } from './handoff.mjs'
+import { makePlan, pendingPlans, upcoming, todayPlans } from './plan.mjs'
 import { judgeSky, STALE_MS } from './sky.mjs'
 import * as defaultNet from './net.mjs'
 
@@ -48,6 +60,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man leave <便条> --when <场合>  给下一次的自己留一句（cue 递出，看过就烧）
   agent-man place <城市>             记下你在哪儿（查一次坐标，以后不再问）
   agent-man sky [选项]               外面什么样、跟上次比变了什么
+  agent-man plan [选项]              接下来的安排；带一句话就是新加一条
   agent-man --help
 
 log 选项：
@@ -111,6 +124,11 @@ sky 选项：
   --fresh                   这次一定重新取数（不吃半小时内的缓存）
   --force                   连"和上次说的一样"也不管，这次一定说
 
+plan 选项：
+  --at <时间>               新安排的什么时候（加一条时必填）
+  --days 7                  列表看几天
+  --done <id>               划掉某条（id 见 agent-man plan）
+
 环境变量：
   AGENT_MAN_HOME            数据目录，默认 ~/.agent-man
   AGENT_MAN_DAY_START       日界小时数 0..23，默认 0`
@@ -150,6 +168,7 @@ export const FLAGS = {
   leave: { value: ['when', 'ttl', 'at'], bool: [] },
   place: { value: [], bool: [] },
   sky: { value: [], bool: ['fresh', 'force'] },
+  plan: { value: ['at', 'days', 'done'], bool: [] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
@@ -276,11 +295,12 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'ls') return cmdLs(home, flags, { out })
     if (cmd === 'find') return cmdFind(home, pos, flags, { out, env })
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
-    if (cmd === 'cue') return cmdCue(home, flags, { out, now })
+    if (cmd === 'cue') return cmdCue(home, flags, { out, now, env })
     if (cmd === 'show') return cmdShow(home, pos, flags, { out, env })
     if (cmd === 'leave') return cmdLeave(home, pos, flags, { out, now })
     if (cmd === 'place') return guarded(cmdPlace(home, pos, flags, { out, net }), out)
-    if (cmd === 'sky') return guarded(cmdSky(home, flags, { out, now, net }), out)
+    if (cmd === 'sky') return guarded(cmdSky(home, flags, { out, now, net, env }), out)
+    if (cmd === 'plan') return cmdPlan(home, pos, flags, { out, now, env })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -653,7 +673,7 @@ function refRange(ref, { dayStart }) {
  * 水位记的是"交给模型看过"，不是"对用户说过"：有没有真说出口，脚本无从
  * 知道，也不该假装知道（§21 的代价）。
  */
-function cmdCue(home, flags, { out, now }) {
+function cmdCue(home, flags, { out, now, env }) {
   const limit = Number(flags.limit ?? 10)
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error(`--limit 必须是正整数，收到 ${flags.limit}`)
@@ -664,24 +684,31 @@ function cmdCue(home, flags, { out, now }) {
     throw new Error(`--min-gap 是小时数，收到 ${flags['min-gap']}`)
   }
 
+  const dayStart = dayStartFromEnv(env)
   const { events, bad } = readEvents(home)
   const { records, bad: badNotes } = readHandoff(home)
   const { pending, expired } = pendingNotes(records, { now })
+  // 日程只是处境，不是开口的理由：它没有"说过了"的水位，硬当理由会每 6 小时念同一条。
+  const { records: planRecs, bad: badPlan } = readPlan(home)
+  const today = todayPlans(planRecs, { now, dayStart })
   const lastCue = readCue(home)
   const r = cue({ events, notes: pending, lastCue, now, minGap })
   if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
   if (badNotes) out.error(`! ${badNotes} 行便条读不出来，已跳过`)
+  if (badPlan) out.error(`! ${badPlan} 行日程读不出来，已跳过`)
 
   if (!r.speak && !flags.force) {
     // 不打扰也要交代过期作废的那几张：静默丢弃比多一行更糟。
     const dead = expired.length ? `；另有 ${expired.length} 张便条过期作废` : ''
-    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}`)
+    const planTail = today.length ? `；今天还有 ${today.length} 条安排` : ''
+    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}${planTail}`)
     if (!flags.peek) for (const n of expired) appendHandoff(home, { op: 'drop', id: n.id, at: now })
     return 0
   }
   if (!r.fresh.length && !r.notes.length) {
     const quietTail = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
-    out.log(`这会儿 ${clock(now)}，没有新东西${quietTail}`)
+    const planTail = today.length ? `（今天还有 ${today.length} 条安排）` : ''
+    out.log(`这会儿 ${clock(now)}，没有新东西${quietTail}${planTail}`)
     return 0
   }
 
@@ -707,6 +734,10 @@ function cmdCue(home, flags, { out, now }) {
   for (const n of expired) {
     // 过期的不静默吞掉，但也只报这一次：记一条 drop，之后不再念。
     out.log(`· ${n.id} 已过期作废（写的时候说：${n.when}）：${n.text}`)
+  }
+  if (today.length) {
+    out.log('今天的安排：')
+    for (const p of today) out.log(`· ${planLine(p)}${p.at < now ? '（已经过点了）' : ''}`)
   }
 
   if (!flags.peek) {
@@ -771,7 +802,8 @@ async function cmdPlace(home, pos, flags, { out, net }) {
  * 取不到数又非要报时的处理：有旧数就报旧数，但必须说清是几点的数（§22）。
  * 不拿"现在"冒充"刚才取到的"。
  */
-async function cmdSky(home, flags, { out, now, net }) {
+async function cmdSky(home, flags, { out, now, net, env }) {
+  const dayStart = dayStartFromEnv(env)
   const place = readPlace(home)
   if (!place) throw new Error('还不知道你在哪儿：先 agent-man place 上海（查一次坐标，之后不再问）')
 
@@ -793,9 +825,11 @@ async function cmdSky(home, flags, { out, now, net }) {
 
   const j = judgeSky(data, rec?.said?.snapshot ?? null)
   const head = `${place.short || place.name} ${clock(now)}`
+  const today = todayPlans(readPlan(home).records, { now, dayStart })
 
   if (!j.speak && !flags.force) {
-    out.log(`${head}，${j.lines[0]}——和上次说的一样，不打扰`)
+    const extra = today.length ? `；今天还有 ${today.length} 条安排` : ''
+    out.log(`${head}，${j.lines[0]}——和上次说的一样，不打扰${extra}`)
     if (at !== rec?.at) writeSky(home, { at, data, said: rec?.said ?? null })
     return 0
   }
@@ -810,8 +844,67 @@ async function cmdSky(home, flags, { out, now, net }) {
   } else {
     out.log('（和上次一样，这回是你让我再说一遍）')
   }
+  if (today.length) {
+    out.log('今天的安排：')
+    for (const r of today) out.log(`· ${planLine(r)}`)
+  }
   writeSky(home, { at, data, said: { at: now, snapshot: j.snapshot } })
   return 0
+}
+
+/**
+ * 日程：看接下来的安排，写一句话就是新加一条。
+ *
+ * 不判断"这条重不重要"，也不管它跟 weather 有没有关系——"时间到了该提一句"
+ * 是唯一确定的部分，剩下的（要不要提、怎么提）是模型的事。
+ */
+function cmdPlan(home, pos, flags, { out, now, env }) {
+  const dayStart = dayStartFromEnv(env)
+  const { records, bad } = readPlan(home)
+  if (bad) out.error(`! ${bad} 行日程读不出来，已跳过`)
+
+  if (flags.done) {
+    const id = String(flags.done)
+    const hit = pendingPlans(records).find((r) => r.id === id)
+    if (!hit) throw new Error(`没有这条安排：${id}（agent-man plan 列一下现在的）`)
+    appendPlan(home, { op: 'done', id, at: now })
+    out.log(`划掉了 ${id}：${hit.text}`)
+    return 0
+  }
+
+  const text = pos.join(' ').trim()
+  if (text) {
+    if (!flags.at) throw new Error('新安排要写时间：--at "2026-11-14 09:30"（没有时间的安排不是安排）')
+    const at = parseAt(flags.at, { now })
+    const rec = makePlan({ text, at }, { now, existing: records, dayStart })
+    appendPlan(home, rec)
+    out.log(`记下了 ${rec.id}：${rec.text}`)
+    out.log(`  ${atText(at)}（${relWhen(at, { now, dayStart })}）`)
+    return 0
+  }
+
+  const days = Number(flags.days ?? 7)
+  if (!Number.isInteger(days) || days <= 0) throw new Error(`--days 必须是正整数，收到 ${flags.days}`)
+
+  const list = upcoming(records, { now, days })
+  if (!list.length) {
+    out.log(`接下来 ${days} 天没有安排。`)
+    return 0
+  }
+  out.log(`接下来 ${days} 天：${list.length} 条`)
+  for (const r of list) {
+    const late = r.at < now ? '（已经过点了）' : ''
+    out.log(`· ${r.id}  ${atText(r.at)}  ${r.text}${late}`)
+  }
+  return 0
+}
+
+function atText(at) {
+  return stamp(at).slice(0, 16).replace('T', ' ')
+}
+
+function planLine(r) {
+  return `${clock(r.at)}  ${r.text}`
 }
 
 function cmdTrace(home, flags, { out }) {

@@ -97,6 +97,19 @@ export function dayStartFromEnv(env = process.env) {
  * 代价：同一时刻从两个锚点看可能一个说"11 小时前"、一个说"昨天 23:30"，
  * 但它们不会并排出现，事实正确优先。见 docs/decisions.md#2。
  */
+/**
+ * 对"还没发生的时间"说话：relTime 对未来一律给绝对时间（那是给"已发生"用的），
+ * 安排里写"2026-11-14 09:30（2026-11-14 09:30）"等于没说。
+ * 所以未来按日历日说：今天/明天/N 天后，隔得久了就给日期——时间本身另有一列。
+ */
+export function relWhen(at, { now = Date.now(), dayStart = 0 } = {}) {
+  if (!(at > now)) return relTime(at, { now, dayStart })
+  const days = dayIndex(at, { dayStart }) - dayIndex(now, { dayStart })
+  if (days === 0) return '今天'
+  if (days === 1) return '明天'
+  return `${days} 天后`
+}
+
 export function relTime(at, { now = Date.now(), dayStart = 0 } = {}) {
   const d = now - at
   if (d < 0) return stamp(at).slice(0, 16).replace('T', ' ') // 未来给绝对时间

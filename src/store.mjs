@@ -25,6 +25,7 @@ export function paths(home) {
     trace: path.join(home, 'state', 'trace.jsonl'),
     cue: path.join(home, 'state', 'cue.json'),
     handoff: path.join(home, 'state', 'handoff.jsonl'),
+    plan: path.join(home, 'state', 'plan.jsonl'),
     place: path.join(home, 'state', 'place.json'),
     sky: path.join(home, 'state', 'sky.json'),
   }
@@ -121,11 +122,10 @@ export function appendHandoff(home, rec) {
  * 便条是流水账（leave / take / drop 各一行），不覆盖写：
  * 覆盖写会把"这张取走了"变成一个不可回看的现状，出事时说不清是哪一张、谁先没的。
  */
-export function readHandoff(home) {
-  const p = paths(home)
+function readLedger(file) {
   let raw
   try {
-    raw = fs.readFileSync(p.handoff, 'utf8')
+    raw = fs.readFileSync(file, 'utf8')
   } catch (e) {
     if (e.code === 'ENOENT') return { records: [], bad: 0 }
     throw e
@@ -150,6 +150,25 @@ export function readHandoff(home) {
     records.push(rec)
   }
   return { records, bad }
+}
+
+export function readHandoff(home) {
+  return readLedger(paths(home).handoff)
+}
+
+/**
+ * 日程也是流水账（add / done 各一行）：划掉是新增一行，不是改上一行。
+ * 覆盖写会把"什么时候划掉的"抹掉，而那正是唯一能回答"那天到底去没去"的东西。
+ */
+export function appendPlan(home, rec) {
+  const p = ensure(home)
+  appendLine(p.plan, `${JSON.stringify(rec)}\n`)
+  assertTail(p.plan, (back) => back.op === rec.op && back.id === rec.id)
+  return rec
+}
+
+export function readPlan(home) {
+  return readLedger(paths(home).plan)
 }
 export function readMemory(home) {
   const p = paths(home)

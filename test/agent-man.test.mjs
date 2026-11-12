@@ -1351,3 +1351,87 @@ test('看天：没记下地方就不猜坐标，直接要城市名', async () =>
   assert.equal(await main(['sky'], { env, out, now: skyNow, net: fakeNet() }), 1)
   assert.match(out.errs.join('\n'), /agent-man place/)
 })
+
+// ---------------------------------------------------------------- 日程
+
+test('日程：记下、列出、划掉之后不再出现', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+
+  let out = recorder()
+  assert.equal(main(['plan', '陪她去看牙', '--at', '2026-11-14 09:30'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /记下了 2026-11-14-p01：陪她去看牙/)
+
+  out = recorder()
+  assert.equal(main(['plan'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /接下来 7 天：1 条/)
+  assert.match(out.all, /· 2026-11-14-p01  2026-11-14 09:30  陪她去看牙/)
+
+  out = recorder()
+  assert.equal(main(['plan', '--done', '2026-11-14-p01'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /划掉了 2026-11-14-p01/)
+
+  out = recorder()
+  assert.equal(main(['plan'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /接下来 7 天没有安排/)
+})
+
+test('日程：过点的不装作没有，标出来；划错了的 id 要能发现', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['plan', '早上寄快递', '--at', '2026-11-12 07:00'], { env, out: recorder(), now: skyNow })
+
+  const out = recorder()
+  assert.equal(main(['plan'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /早上寄快递（已经过点了）/)
+
+  const bad = recorder()
+  assert.equal(main(['plan', '--done', '2026-11-12-p99'], { env, out: bad, now: skyNow }), 1)
+  assert.match(bad.errs.join('\n'), /没有这条安排：2026-11-12-p99/)
+})
+
+test('日程：没有时间的安排不是安排', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['plan', '陪她去看牙'], { env, out, now: skyNow }), 1)
+  assert.match(out.errs.join('\n'), /新安排要写时间/)
+})
+
+test('看天：顺带报今天的安排；不打扰时只说还有几条', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  main(['plan', '陪她去看牙', '--at', '2026-11-12 15:30'], { env, out: recorder(), now: skyNow })
+
+  let out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow, net }), 0)
+  assert.match(out.all, /今天的安排：/)
+  assert.match(out.all, /· 15:30  陪她去看牙/)
+
+  out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 3600e3, net }), 0)
+  assert.match(out.all, /今天还有 1 条安排/)
+})
+
+test('日程：未来按日历日说话，不把同一个日期说两遍', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['plan', '陪她去看牙', '--at', '2026-11-14 09:30'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /2026-11-14 09:30（2 天后）/)
+  assert.doesNotMatch(out.all, /09:30（2026-11-14/)
+})
+
+test('cue：日程只是处境，不当开口的理由；列出来但不记水位', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['plan', '交电费', '--at', '2026-11-12 20:00'], { env, out: recorder(), now: skyNow })
+
+  let out = recorder()
+  assert.equal(main(['cue'], { env, out, now: skyNow }), 0)
+  assert.match(out.all, /不打扰：没有新东西；今天还有 1 条安排/)
+  assert.equal(fs.existsSync(path.join(env.AGENT_MAN_HOME, 'state', 'cue.json')), false)
+
+  // 有日记要端上来时，顺带把今天的安排摆在处境里（已经过点的标出来）。
+  main(['log', '她说电费又忘了'], { env, out: recorder(), now: skyNow })
+  out = recorder()
+  assert.equal(main(['cue'], { env, out, now: skyNow + 60e3 }), 0)
+  assert.match(out.all, /今天的安排：/)
+  assert.match(out.all, /· 20:00  交电费/)
+})
