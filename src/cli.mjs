@@ -48,7 +48,7 @@ import { makePlan, pendingPlans, upcoming, todayPlans } from './plan.mjs'
 import { judgeSky, cacheState, dateText, snapshotOf, skyText } from './sky.mjs'
 import * as defaultNet from './net.mjs'
 
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 const DUP_WINDOW = 24 * 3600e3
 /** cue 一次最多端出几条规矩：判断要看的是约束，不是一份手册。 */
 export const CUE_RULES = 8

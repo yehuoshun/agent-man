@@ -1,6 +1,6 @@
 {
   "name": "agent-man",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "给 agent 一个会话之外的生活：记事、定时候、看天气、递话、日程。",
