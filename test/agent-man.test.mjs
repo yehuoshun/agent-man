@@ -1794,3 +1794,60 @@ test('--id 是调用方自己认的号：不抢名额，撞了也不改', () => 
   assert.equal(main(argv, { env, out, now }), 0)
   assert.equal(readMemory(home).items[0].id, 'hand-made')
 })
+
+// ---------------------------------------------------------------- 一天
+
+test('看天：今天的安排过点了要标出来——和 cue 一个口径（§31）', async () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const net = fakeNet()
+  await main(['place', '上海'], { env, out: recorder(), now: skyNow, net })
+  main(['plan', '她要做体检', '--at', '2026-11-12 08:00'], { env, out: recorder(), now: skyNow })
+  main(['plan', '下午三点她开会', '--at', '2026-11-12 15:00'], { env, out: recorder(), now: skyNow })
+
+  const out = recorder()
+  assert.equal(await main(['sky'], { env, out, now: skyNow + 4 * 3600e3, net }), 0)
+  assert.ok(out.lines.includes('· 08:00  她要做体检（已经过点了）'), out.all)
+  assert.ok(out.lines.includes('· 15:00  下午三点她开会'), `还没到的别乱标：\n${out.all}`)
+})
+
+test('一天：新日记、便条、作废的便条、今天的安排同时在场——顺序和数字都对得上', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  main(['log', '早上她说梦到搬家', '--at', '2026-11-12 07:40'], {
+    env, out: recorder(), now: parseAt('2026-11-12 07:40'),
+  })
+  main(['log', '中午她自己煮了面', '--at', '2026-11-12 12:10'], {
+    env, out: recorder(), now: parseAt('2026-11-12 12:10'),
+  })
+  main(['remember', '入秋先关窗再抱怨风', '--topic', '她怕冷', '--refs', '2026-11-11'], {
+    env, out: recorder(), now: parseAt('2026-11-12 09:00'),
+  })
+  main(['leave', '别急着问结果，先说今天辛苦了', '--when', '她提体检', '--at', '2026-11-12 08:00'], {
+    env, out: recorder(), now: parseAt('2026-11-12 08:00'),
+  })
+  main(['leave', '旧的便条，早该作废', '--when', '下次开口时', '--ttl', '1', '--at', '2026-11-11 09:00'], {
+    env, out: recorder(), now: parseAt('2026-11-11 09:00'),
+  })
+  main(['plan', '她要做体检', '--at', '2026-11-12 09:30'], { env, out: recorder(), now: parseAt('2026-11-12 06:00') })
+
+  const now = parseAt('2026-11-12 13:27')
+  const out = recorder()
+  assert.equal(main(['cue'], { env, out, now }), 0)
+  const text = out.all
+  const marks = ['之后攒了 2 条', '还留了 1 张便条', '已过期作废', '今天的安排：'].map((s) => text.indexOf(s))
+  assert.ok(marks.every((i) => i >= 0), `四段都要在：\n${text}`)
+  assert.deepEqual([...marks].sort((a, b) => a - b), marks, `顺序是日记→便条→作废→安排：\n${text}`)
+  assert.ok(text.includes('· 09:30  她要做体检（已经过点了）'), text)
+
+  // 再看一次：便条烧掉了、作废的只念一次、日记不重复念
+  const again = recorder()
+  assert.equal(main(['cue'], { env, out: again, now: now + 7 * 3600e3 }), 0)
+  assert.ok(!again.all.includes('先说今天辛苦了'), `便条递过就烧：\n${again.all}`)
+  assert.ok(!again.all.includes('已过期作废'), `作废的只报一次：\n${again.all}`)
+  assert.ok(!again.all.includes('早上她说梦到搬家'), `同一条日记别念第二遍：\n${again.all}`)
+
+  const digest = recorder()
+  assert.equal(main(['digest', '--budget', '400'], { env, out: digest, now: now + 8 * 3600e3 }), 0)
+  assert.ok(digest.all.includes('## 记住的事'), digest.all)
+  assert.ok(digest.all.includes('入秋先关窗再抱怨风'), digest.all)
+  assert.ok(digest.all.includes('## 最近'), digest.all)
+})

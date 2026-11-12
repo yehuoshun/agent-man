@@ -781,7 +781,7 @@ function cmdCue(home, flags, { out, now, env }) {
   }
   if (today.length) {
     out.log('今天的安排：')
-    for (const p of today) out.log(`· ${planLine(p)}${p.at < now ? '（已经过点了）' : ''}`)
+    for (const r of today) out.log(`· ${planItem(r, now)}`)
   }
 
   if (!flags.peek) {
@@ -885,7 +885,7 @@ async function cmdSky(home, flags, { out, now, net, env }) {
     )
     if (today.length) {
       out.log('今天的安排：')
-      for (const r of today) out.log(`· ${planLine(r)}`)
+      for (const r of today) out.log(`· ${planItem(r, now)}`)
     }
     return 0
   }
@@ -909,7 +909,7 @@ async function cmdSky(home, flags, { out, now, net, env }) {
   }
   if (today.length) {
     out.log('今天的安排：')
-    for (const r of today) out.log(`· ${planLine(r)}`)
+    for (const r of today) out.log(`· ${planItem(r, now)}`)
   }
   writeSky(home, { at, data, said: { at: now, snapshot: j.snapshot } })
   return 0
@@ -956,7 +956,7 @@ function cmdPlan(home, pos, flags, { out, now, env }) {
   }
   out.log(`接下来 ${days} 天：${list.length} 条`)
   for (const r of list) {
-    const late = r.at < now ? '（已经过点了）' : ''
+    const late = lateMark(r, now)
     out.log(`· ${r.id}  ${atText(r.at)}  ${r.text}${late}`)
   }
   return 0
@@ -968,6 +968,20 @@ function atText(at) {
 
 function planLine(r) {
   return `${clock(r.at)}  ${r.text}`
+}
+
+/**
+ * 安排列表里的一行：过点的要当场说清。
+ *
+ * cue 和看天直接用它；plan 那边的列表还要带编号和完整时间，只借 lateMark。
+ * 分成两半是为了这条：**一处忘了标，模型就把 09:30 的事当还没到**。
+ */
+function planItem(r, now) {
+  return `${planLine(r)}${lateMark(r, now)}`
+}
+
+function lateMark(r, now) {
+  return r.at < now ? '（已经过点了）' : ''
 }
 
 function cmdTrace(home, flags, { out }) {
