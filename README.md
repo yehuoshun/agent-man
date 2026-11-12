@@ -138,6 +138,52 @@ node bin/agent-man.mjs plan --done 2026-11-14-p01
 - **不静默丢弃**。被切的记"截"，没进去的记"丢"，`weight=3` 被丢会单独报警。
 - **时间只解释一次**。入库全是 epoch ms，展示时才转本地时间；相对时间每次现算，不写死进文本。
 
+## 接进调度器：谁的钟
+
+零件自己不睡、不循环、不常驻：`cue` 被敲一次，回答一句"这会儿该不该开口"，然后退出。
+所以模型不在的时候，得有别的什么东西按时敲它——那个"别的"就是宿主或系统调度器。
+
+`cue` 的契约只有两条：
+
+- 该开口：把要说的话打到 stdout（几点了、上次说话多久前、之后攒了什么、几张便条、今天还剩几条安排），退出码 `0`；
+- 不该开口：打一行"这会儿 9:40，不打扰：…"，退出码**也是** `0`。"不打扰"不是失败，调度器别把它当成错误去重试。
+
+它不管投递：输出落到哪儿由你决定。两种接法，按宿主能力挑一个：
+
+1. **宿主本来就有定时器**（比如 DSH 的定时任务、别家的 cron 服务）：让它每 30 分钟跑一次
+   `node /path/to/agent-man/bin/agent-man.mjs cue`，把 stdout 原样喂给模型。通道现成，最省事。
+2. **系统调度器**：Linux/macOS 用 cron，Windows 用任务计划程序，输出重定向到文件，宿主起会话时读它。
+
+30 分钟一次是安全的：六小时内不重复开口由 `--min-gap`（默认 6 小时）管，半夜不叫人由静默时段
+（23:00–08:00）管。敲得再密也只是多读几个文件，不会多说一句话。
+
+```cron
+# 每 30 分钟敲一次；避开整点，免得跟别的整点任务挤在一起
+7,37 * * * * node $HOME/agent-man/bin/agent-man.mjs cue >> $HOME/.agent-man/state/cue-out.txt 2>&1
+```
+
+```powershell
+# Windows：每 30 分钟一次，开机后一直有效
+$act = New-ScheduledTaskAction -Execute 'node' -Argument '"D:\agent-man\bin\agent-man.mjs" cue'
+$trg = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30)
+Register-ScheduledTask -TaskName 'agent-man cue' -Action $act -Trigger $trg -Description '每隔半小时问一次该不该开口'
+```
+
+接上之后先手动敲一次自检——第一次的输出不该是"没有新东西"：
+
+```bash
+node bin/agent-man.mjs cue --force
+```
+
+一直是"不打扰：没有新东西"，八成是 `AGENT_MAN_HOME` 和模型那边用的不是同一个目录：两边各记各的，
+谁也不报错。
+
+退出码：`0` 正常（含"不打扰"、"什么都没有"）、`1` 读不出或写不进数据目录（下一次照常敲即可，别写重试循环）、
+`2` 参数写错了（配置问题，得改配置，不会自己好）。`cue` 不联网，没有"网断了"这一类。
+
+**`--peek`：只看不烧。** 便条默认"递出即焚"，因为递出等于模型看见了。定时器的输出如果只是被记进一个文件、
+没人真读，就用 `--peek`——否则便条会被静默吃掉（见 `docs/decisions.md` §24、§30）。
+
 ## 安装
 
 零依赖，Node ≥ 20。
