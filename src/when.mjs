@@ -35,7 +35,7 @@ export function describeQuiet({ from = QUIET_FROM, to = QUIET_TO } = {}) {
  * 返回的 reasons 是"为什么不说"——不说也得给理由，否则模型分不清是脚本拦住了、
  * 还是自己没话说。沉默没有解释，等于让人猜。
  */
-export function cue({ events = [], lastCue = null, now, minGap = MIN_GAP, quiet = {} } = {}) {
+export function cue({ events = [], notes = [], lastCue = null, now, minGap = MIN_GAP, quiet = {} } = {}) {
   if (!Number.isFinite(now)) throw new Error(`cue 需要 now（epoch ms），收到 ${now}`)
   const watermark = Number.isFinite(lastCue?.watermark) ? lastCue.watermark : -Infinity
   const fresh = events.filter((e) => e.at > watermark)
@@ -43,12 +43,13 @@ export function cue({ events = [], lastCue = null, now, minGap = MIN_GAP, quiet 
   const quietNow = inQuiet(now, quiet)
 
   const reasons = []
-  if (!fresh.length) reasons.push('没有新东西')
+  // 便条也是“该开口”的理由：它是上一个我特意留给这一次的。
+  if (!fresh.length && !notes.length) reasons.push('没有新东西')
   if (gap < minGap) {
     const hours = minGap % 3600e3 === 0 ? minGap / 3600e3 : (minGap / 3600e3).toFixed(1)
     reasons.push(`${relTime(lastCue.lastAt, { now })}才开过口，不到 ${hours} 小时`)
   }
   if (quietNow) reasons.push(`这会儿 ${clock(now)} 是静默时段（${describeQuiet(quiet)}）`)
 
-  return { speak: reasons.length === 0, reasons, fresh, gap, quiet: quietNow, watermark }
+  return { speak: reasons.length === 0, reasons, fresh, notes, gap, quiet: quietNow, watermark }
 }

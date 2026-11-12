@@ -1160,3 +1160,61 @@ test('show 只查长期层：没有这条结论就直说，并指向 find', () =
   assert.equal(main(['show'], { env, out: bad }), 1)
   assert.ok(bad.errs.join('\n').includes('要给个词'))
 })
+
+test('递话：便条由 cue 递出，递过就烧——不会再端第二次', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const now = parseAt('2026-11-12 20:00')
+  const left = recorder()
+  const code = main(['leave', '记得问她头痛好点没', '--when', '她提到加班时'], { env, out: left, now })
+  assert.equal(code, 0)
+  assert.ok(left.all.includes('留好了 2026-11-12-01'), left.all)
+
+  const first = recorder()
+  assert.equal(main(['cue'], { env, out: first, now }), 0)
+  assert.ok(first.all.includes('记得问她头痛好点没'), first.all)
+  assert.ok(first.all.includes('说的时候：她提到加班时'), first.all)
+
+  const second = recorder()
+  assert.equal(main(['cue'], { env, out: second, now: now + 7 * 3600e3 }), 0)
+  assert.ok(!second.all.includes('记得问她头痛好点没'), `便条只能端一次：\n${second.all}`)
+})
+
+test('递话：没写什么时候看的便条不收——那是噪音', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const out = recorder()
+  assert.equal(main(['leave', '随便一句'], { env, out }), 1)
+  assert.ok(out.errs.join('\n').includes('--when'), out.errs.join('\n'))
+})
+
+test('递话：过期的便条不端上来，但也不装作没有——只报一次', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const now = parseAt('2026-11-12 20:00')
+  main(['leave', '三天前的计划', '--when', '下次开口时', '--ttl', '2'], { env, out: recorder(), now })
+  const late = now + 3 * 24 * 3600e3
+
+  const out = recorder()
+  assert.equal(main(['cue'], { env, out, now: late }), 0)
+  assert.ok(out.all.includes('过期作废'), out.all)
+  assert.ok(!out.all.includes('· 2026-11-12-01  三天前的计划'), `作废的不能再端：\n${out.all}`)
+
+  const again = recorder()
+  assert.equal(main(['cue', '--force'], { env, out: again, now: late + 7 * 3600e3 }), 0)
+  assert.ok(!again.all.includes('过期作废'), `报过一次就别念了：\n${again.all}`)
+})
+
+test('递话：静默时段不打扰，便条留着等下次开口', () => {
+  const env = { AGENT_MAN_HOME: tmp() }
+  const at = parseAt('2026-11-12 09:00')
+  main(['leave', '明早要问她睡得怎么样', '--when', '下次开口时', '--at', '2026-11-12 09:00'], {
+    env, out: recorder(), now: at,
+  })
+
+  const quiet = recorder()
+  assert.equal(main(['cue'], { env, out: quiet, now: parseAt('2026-11-12 23:30') }), 0)
+  assert.ok(quiet.all.includes('静默时段'), quiet.all)
+  assert.ok(!quiet.all.includes('明早要问她'), `静默时段不该递：\n${quiet.all}`)
+
+  const morning = recorder()
+  assert.equal(main(['cue'], { env, out: morning, now: parseAt('2026-11-13 08:05') }), 0)
+  assert.ok(morning.all.includes('明早要问她睡得怎么样'), `下一场该递出来：\n${morning.all}`)
+})

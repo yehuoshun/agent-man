@@ -24,6 +24,7 @@ export function paths(home) {
     consolidation: path.join(home, 'state', 'consolidation.json'),
     trace: path.join(home, 'state', 'trace.jsonl'),
     cue: path.join(home, 'state', 'cue.json'),
+    handoff: path.join(home, 'state', 'handoff.jsonl'),
   }
 }
 
@@ -107,6 +108,47 @@ export function appendMemory(home, item) {
  * 读长期层。坏行跳过并计数，和 readEvents 同一套容忍度。
  * 这里额外校验 id/topic/fact：条目没有这三个字段，渲染和 supersedes 都会失效。
  */
+export function appendHandoff(home, rec) {
+  const p = ensure(home)
+  appendLine(p.handoff, JSON.stringify(rec) + '\n')
+  assertTail(p.handoff, (back) => back.id === rec.id && back.op === rec.op)
+  return rec
+}
+
+/**
+ * 便条是流水账（leave / take / drop 各一行），不覆盖写：
+ * 覆盖写会把"这张取走了"变成一个不可回看的现状，出事时说不清是哪一张、谁先没的。
+ */
+export function readHandoff(home) {
+  const p = paths(home)
+  let raw
+  try {
+    raw = fs.readFileSync(p.handoff, 'utf8')
+  } catch (e) {
+    if (e.code === 'ENOENT') return { records: [], bad: 0 }
+    throw e
+  }
+
+  const records = []
+  let bad = 0
+  for (const line of raw.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    let rec
+    try {
+      rec = JSON.parse(t)
+    } catch {
+      bad++
+      continue
+    }
+    if (!rec || typeof rec.id !== 'string' || typeof rec.op !== 'string') {
+      bad++
+      continue
+    }
+    records.push(rec)
+  }
+  return { records, bad }
+}
 export function readMemory(home) {
   const p = paths(home)
   let raw

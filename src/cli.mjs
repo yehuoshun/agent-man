@@ -14,12 +14,15 @@ import {
   readTraces,
   readCue,
   writeCue,
+  readHandoff,
+  appendHandoff,
 } from './store.mjs'
 import { makeItem, activeItems, longLine, TIERS } from './memory.mjs'
 import { backlog, owed, owedCount, BACKLOG_COUNT, BACKLOG_COST } from './consolidate.mjs'
 import { renderDigest } from './render.mjs'
 import { buildTrace, neverShown, traceLine } from './trace.mjs'
 import { cue, MIN_GAP, describeQuiet } from './when.mjs'
+import { makeNote, pendingNotes } from './handoff.mjs'
 
 const VERSION = '0.1.0'
 const DUP_WINDOW = 24 * 3600e3
@@ -36,6 +39,7 @@ const HELP = `agent-man ${VERSION} — 给 agent 一个会话之外的生活
   agent-man trace [选项]             看每次 digest 装下了什么、丢了什么
   agent-man cue [选项]               这会儿该不该开口（给处境，不给台词）
   agent-man show <主题|id> [选项]    顺着一条结论找回原文（refs 指向的日子）
+  agent-man leave <便条> --when <场合>  给下一次的自己留一句（cue 递出，看过就烧）
   agent-man --help
 
 log 选项：
@@ -86,6 +90,11 @@ cue 选项：
   --peek                    只看一眼，不记水位（下次还会报同样的东西）
   --limit 10                最多列几条新东西
 
+leave 选项：
+  --when <场合>             什么时候该看（必填，例：她提到加班时）
+  --ttl 7                   活几天，过期作废
+  --at <时间>               留这张的时刻（默认现在）
+
 show 选项：
   --limit 20                每个出处最多列几条原文
   --fact <文本>             等价于位置参数
@@ -126,6 +135,7 @@ export const FLAGS = {
   trace: { value: ['limit'], bool: ['never'] },
   cue: { value: ['limit', 'min-gap'], bool: ['peek', 'force'] },
   show: { value: ['limit', 'fact'], bool: [] },
+  leave: { value: ['when', 'ttl', 'at'], bool: [] },
 }
 
 /** 不吃位置参数的命令：多出来的词没人会看见，那就不许它静默落在地上。 */
@@ -254,6 +264,7 @@ export function main(argv = process.argv.slice(2), ctx = {}) {
     if (cmd === 'trace') return cmdTrace(home, flags, { out })
     if (cmd === 'cue') return cmdCue(home, flags, { out, now })
     if (cmd === 'show') return cmdShow(home, pos, flags, { out, env })
+    if (cmd === 'leave') return cmdLeave(home, pos, flags, { out, now })
     out.error(`未知命令: ${cmd}\n\n${HELP}`)
     return 2
   } catch (e) {
@@ -537,6 +548,24 @@ function cmdLs(home, flags, { out }) {
 }
 
 /**
+ * 留一张便条给"下一次的自己"。
+ *
+ * 为什么不用 log：日记记的是"发生过什么"，把自己的备忘混进去会把事实搞脏。
+ * 为什么不用 remember：长期层是"我认定的事"，有效期是永远，用完还得记得 supersedes——
+ * 忘了就是永久生效，比忘了便利贴危险得多。便条是这两层都装不下的那类话。
+ */
+function cmdLeave(home, pos, flags, { out, now }) {
+  const text = pos.join(' ').trim()
+  const { records } = readHandoff(home)
+  const note = makeNote({ ...flags, text }, { now, existing: records })
+  appendHandoff(home, note)
+  out.log(`留好了 ${note.id}：${note.text}`)
+  out.log(`  说的时候：${note.when}`)
+  const days = Math.round((note.until - note.at) / (24 * 3600e3))
+  out.log(`  留 ${days} 天，到 ${stamp(note.until).slice(0, 10)} 为止；递出一次就烧掉`)
+  return 0
+}
+/**
  * 顺着一条结论找回原文。
  *
  * 长期层的 refs 一直只是显示出来（`recall` 尾巴上的 `refs: 2026-11-05`），没有入口能跳回
@@ -620,32 +649,60 @@ function cmdCue(home, flags, { out, now }) {
   }
 
   const { events, bad } = readEvents(home)
+  const { records, bad: badNotes } = readHandoff(home)
+  const { pending, expired } = pendingNotes(records, { now })
   const lastCue = readCue(home)
-  const r = cue({ events, lastCue, now, minGap })
+  const r = cue({ events, notes: pending, lastCue, now, minGap })
   if (bad) out.error(`! ${bad} 行日记读不出来，已跳过`)
+  if (badNotes) out.error(`! ${badNotes} 行便条读不出来，已跳过`)
 
   if (!r.speak && !flags.force) {
-    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}`)
+    // 不打扰也要交代过期作废的那几张：静默丢弃比多一行更糟。
+    const dead = expired.length ? `；另有 ${expired.length} 张便条过期作废` : ''
+    out.log(`这会儿 ${clock(now)}，不打扰：${r.reasons.join('；')}${dead}`)
+    if (!flags.peek) for (const n of expired) appendHandoff(home, { op: 'drop', id: n.id, at: now })
     return 0
   }
-  if (!r.fresh.length) {
-    const note = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
-    out.log(`这会儿 ${clock(now)}，没有新东西${note}`)
+  if (!r.fresh.length && !r.notes.length) {
+    const quietTail = r.quiet ? `（${describeQuiet()} 静默时段，本来也不叫人）` : ''
+    out.log(`这会儿 ${clock(now)}，没有新东西${quietTail}`)
     return 0
   }
 
   out.log(`这会儿 ${clock(now)}。`)
   out.log(lastCue ? `上次开口 ${relTime(lastCue.lastAt, { now })}。` : '你还没在这儿开过口。')
-  const tail = r.fresh.slice(-limit)
-  out.log(`之后攒了 ${r.fresh.length} 条：`)
-  for (const e of tail) {
-    const w = e.weight ? ` w${e.weight}` : ''
-    out.log(`${stamp(e.at)}${w}  ${eventLine(e)}`)
+  if (r.fresh.length) {
+    const tail = r.fresh.slice(-limit)
+    out.log(`之后攒了 ${r.fresh.length} 条：`)
+    for (const e of tail) {
+      const w = e.weight ? ` w${e.weight}` : ''
+      out.log(`${stamp(e.at)}${w}  ${eventLine(e)}`)
+    }
+    if (r.fresh.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
+    out.log('想看全：digest --budget 300')
   }
-  if (r.fresh.length > limit) out.log(`……（只列最近 ${limit} 条，--limit 可调）`)
-  out.log('想看全：digest --budget 300')
+  if (r.notes.length) {
+    out.log(`还留了 ${r.notes.length} 张便条（看过就烧，不会再端一次）：`)
+    for (const n of r.notes) {
+      out.log(`· ${n.id}  ${n.text}`)
+      out.log(`  说的时候：${n.when}`)
+    }
+  }
+  for (const n of expired) {
+    // 过期的不静默吞掉，但也只报这一次：记一条 drop，之后不再念。
+    out.log(`· ${n.id} 已过期作废（写的时候说：${n.when}）：${n.text}`)
+  }
 
-  if (!flags.peek) writeCue(home, { lastAt: now, watermark: r.fresh[r.fresh.length - 1].at })
+  if (!flags.peek) {
+    for (const n of r.notes) appendHandoff(home, { op: 'take', id: n.id, at: now })
+    for (const n of expired) appendHandoff(home, { op: 'drop', id: n.id, at: now })
+    // 只看过便条、没有新日记时也要抬 lastAt（6 小时间隔照算），但水位不能乱动。
+    if (r.fresh.length) {
+      writeCue(home, { lastAt: now, watermark: r.fresh[r.fresh.length - 1].at })
+    } else {
+      writeCue(home, { lastAt: now, watermark: lastCue?.watermark ?? null })
+    }
+  }
   return 0
 }
 /**

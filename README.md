@@ -5,10 +5,10 @@
 不是框架，是零件。每个零件只做确定性的那部分，语义判断留给模型。
 
 ```
-记事   agent-man log / remember / digest / recall / find / trace
-定时候  agent-man cue                                  ← 现在在这里
+记事   agent-man log / remember / digest / recall / find / trace / show
+定时候  agent-man cue
+递话    agent-man leave                       ← 现在在这里
 看天气  …
-递话    …
 ```
 
 ## 为什么
@@ -65,6 +65,11 @@ node bin/agent-man.mjs cue --peek    # 看一眼，不记水位
 ```bash
 # 顺着一条结论找回原文：recall 尾巴上那串 refs 现在能用了
 node bin/agent-man.mjs show 她怕冷
+```
+
+```bash
+# 给下一次的自己留一句：cue 递出，递过就烧，7 天不取作废
+node bin/agent-man.mjs leave "记得问她头痛好点没" --when 她提到加班时
 ```
 
 断电、闪退、卡死都不会悄悄丢记忆：每次写入都 fsync，写完当场读回最后一行核对，
