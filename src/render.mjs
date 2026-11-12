@@ -1,6 +1,6 @@
 import { relTime, stamp } from './time.mjs'
 import { cost } from './cost.mjs'
-import { select, pinnedFloor, PINNED_WEIGHT } from './budget.mjs'
+import { select, pinnedFloor, recentFloor, PINNED_WEIGHT } from './budget.mjs'
 import { selectMemory, longLine } from './memory.mjs'
 
 /**
@@ -69,7 +69,11 @@ function pickBest(fits) {
   return fits.reduce((best, r) => {
     // 0) 保住了最重那条（见 budget.mjs 的 pinnedFloor）就算赢了一半：
     //    条数一样时也不能选"装了一条近况、丢了那条疤"的那个形态。
+    //    最近那条只做第二优先——两条保底撞车时，先保重的（不然预算一紧就整个偏向今天）。
     if (r.stats.floorKeep !== best.stats.floorKeep) return r.stats.floorKeep ? r : best
+    if (r.stats.recentFloorKeep !== best.stats.recentFloorKeep) {
+      return r.stats.recentFloorKeep ? r : best
+    }
     const a = best.stats.kept + best.stats.longKept
     const b = r.stats.kept + r.stats.longKept
     if (b !== a) return b > a ? r : best
@@ -97,7 +101,10 @@ function attempt({ events, memory }, { budget, now, title, dayStart, longShare, 
     dayStart,
   }).total
   const entBudget = Math.max(0, budget - skeleton)
-  const floor = pinnedFloor(events, entBudget)
+  const pFloor = pinnedFloor(events, entBudget)
+  // 最近那条也要保底：重的那条先占，近的这条拿剩下的额度（见 budget.mjs 的 recentFloor）。
+  const rFloor = recentFloor(events, entBudget - pFloor)
+  const floor = pFloor + rFloor
   let allowLong = memory.length ? Math.floor(entBudget * longShare) : 0
   let allowDay = entBudget - allowLong
   let long = pickLong(memory, allowLong, { now, dayStart })
@@ -157,6 +164,7 @@ function nothingFits(events) {
     used: 0,
     drops: events.map((e) => ({ ...e, why: 'no-room' })),
     floorKeep: false,
+    recentFloorKeep: false,
   }
 }
 
@@ -200,6 +208,7 @@ function compose({ events, memory, day, long, form, now, title, budget, dayStart
       kept: dayKept,
       entries: day.used,
       floorKeep: day.floorKeep === true,
+      recentFloorKeep: day.recentFloorKeep === true,
       budget,
       noRoom,
       cutoff,

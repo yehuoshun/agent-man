@@ -346,6 +346,40 @@ test('保底只保一条：两条 w2 抢预算时同权重取近的，丢的那�
   assert.equal(r.drops[0].why, 'no-room')
 })
 
+test('对称保底：预算紧到只够一边时，仍给"最近"留一个位子', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const mk = (min, fact, weight) => ({ at: now - min * 60e3, fact, weight })
+  // 六条 w2 之外还有一条长近况。份额（70%）装得下三条旧的，但"最近"那一层
+  // 只剩 30%——装不下代价 60 的那条近况。旧规则下它整块掉出去，只剩三句旧疤。
+  const events = [
+    mk(600, '她把窗关上了，说外面风大', 2),
+    mk(540, '医生说要吃满一疗程，别自己停', 2),
+    mk(480, '她妈下周三来，得把屋子收拾出来', 2),
+    mk(8, '今天风大，她出门没带围巾，回来以后一句话没说，坐了很久才说有点累', 0),
+  ]
+  const { text, stats } = renderDigest(events, { budget: 100, now })
+  assert.match(text, /今天风大/, '"最近"是这个零件存在的理由，不许整块消失')
+  assert.equal(stats.kept, 2, '少装一条旧的，换一条近的')
+  assert.equal(stats.floorKeep, true)
+  assert.equal(stats.recentFloorKeep, true)
+  assert.ok(cost(text) <= 100)
+})
+
+test('两条保底撞车：先保重的那条，近的如实记 no-room，不假装保住了', () => {
+  const now = Date.parse('2026-11-12T09:50:00+08:00')
+  const events = [
+    { at: now - 50 * 60e3, fact: '她把窗关上了，说外面风大', weight: 2 },
+    { at: now - 8 * 60e3, fact: '今天风大', weight: 0 },
+  ]
+  // 两条代价 26 + 12 装不进 30：重的那条留下，近的那条记 no-room（顺序是硬的，不掷骰子）
+  const r = select(events, { budget: 30 })
+  assert.equal(r.pinned.length, 1)
+  assert.equal(r.pinned[0].weight, 2)
+  assert.equal(r.recent.length, 0)
+  assert.equal(r.recentFloorKeep, false)
+  assert.equal(r.drops.find((d) => d.weight === 0).why, 'no-room')
+})
+
 // ---------------------------------------------------------------- 存储
 
 test('坏行跳过并计数，好行一条不丢；行首 BOM 能救回来', () => {
