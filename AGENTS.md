@@ -57,6 +57,7 @@
 - 改版本号：`src/cli.mjs` 顶部的 `VERSION` 与 `package.json` 的 `version` 一起改。
 - 发布：改完版本推 `v<version>` 标签，`release.yml` 跑用例、打 tarball、建 Release；
   标签与版本不一致会失败。CI 在 Linux + Windows × Node 20/22/24 上跑同一份用例，外加一条纽约时区的腿（§27）。
+  标签一旦被外人下过就**不移动**；开发期验证发布链路时用 `git push -f origin v<version>` 挪标签重跑（§27）。
 - 关键常量就地定义、具名导出，不散落魔数：`PINNED_WEIGHT = 2`、`LINE_OVERHEAD = 8`、`pinnedShare = 0.7`、`longShare = 0.6`、`DUP_WINDOW = 24h`。
 
 ## 五、代码风格（照现有代码写，别引入第二套）

@@ -147,9 +147,11 @@ git clone git@github.com:yehuoshun/agent-man.git
 cd agent-man && node --test    # 用例只增不减，条数以输出为准
 ```
 
-或者拿打包好的 tarball（每个 main 构建都会挂一个，发版时挂在 Release 上）：
+或者下打包好的 tarball——每次 main 构建都会挂一个 artifact，发版时挂在 Release 上
+（最新：[v0.1.0](https://github.com/yehuoshun/agent-man/releases/latest)，61 kB）：
 
 ```bash
+curl -LO https://github.com/yehuoshun/agent-man/releases/download/v0.1.0/agent-man-0.1.0.tgz
 npm i -g ./agent-man-0.1.0.tgz
 ```
 

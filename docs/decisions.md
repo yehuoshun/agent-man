@@ -454,6 +454,11 @@ GitHub Release 并把 tarball 挂上去；`workflow_dispatch` 可以手动演练
 `npm pack` 和 artifact 跟着一起消失（`!matrix.tz` 没腿可匹配）。
 
 **来由**：五个零件写完，但"能不能在别人的机器上跑"一直只是我本机的一句 `node --test`。
+真跑第一遍 v0.1.0 标签时，打包链路上还栽了三下，都不在用例能覆盖的地方：
+①`npm pack --pack-destination dist` 不会自己建 `dist/`，ENOENT；②`tar -tzf dist/*.tgz | grep -q …`
+里 `grep -q` 找到就退出，`tar` 吃 SIGPIPE，而 GH 的 bash 默认带 `pipefail`——**检查通过反而让整步失败**，
+并且 Windows 上 `tar` 的清单是 CRLF，`grep -x` 一条也对不上；③`gh release create` 在没 checkout 的
+job 里猜不出仓库，必须显式 `-R "$GITHUB_REPOSITORY"`。
 Windows 是这台机器的主战场，CRLF、BOM、反斜杠这三类事故在这里都真发生过（§三、§20 的
 BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须有 Windows。CI 里**没有
 `npm install`**：零依赖不只是口号，它让一次 CI 变成"拉代码 + 跑一条命令"，十几秒出结果。
@@ -463,6 +468,10 @@ BOM 那次）；Linux 上这些坑一个都不会露头，所以矩阵里必须�
 `supersedes 让旧条目退场`、`digest --due 只摊账`），本机东八区全绿，`TZ=UTC` 也全绿
 （12:00+08:00 是 04:00Z，日历日没跨过去），只有西半球才红——所以"CI 跑在 UTC 上"并不够。
 改法是把这几条的 `now` 用本地时间构造（`localAt(2026, 11, 12, 12)`），断言才不再依赖机器时区。
+发布链路上只有"真推一个标签"才算验证过——所以 `release.yml` 的每次改动都靠挪标签重跑
+（`git push -f origin v0.1.0`）：`package.json` 与标签版本必须一致，改工作流又得让**被发布的那个提交**
+带上修复。开发期允许这样做，一旦真有人下了 tarball，标签就不再移动。首个版本用 `--generate-notes`
+只有一行 "Full Changelog"（前面没有标签可比），从第二个版本起才会自动列出提交。
 七条腿是纯浪费——同一个 bug 会在六条上各红一次，看日志要挑着看（`fail-fast: false`
 是为了不互相掩盖）。Windows 腿比 Linux 慢一倍多。不发 npm：`package.json` 里 `private: true`，
 也刻意不给仓库配 `NPM_TOKEN`，所以"装"只有两条路——`git clone`，或者下 tarball 再
