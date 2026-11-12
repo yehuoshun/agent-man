@@ -53,12 +53,24 @@ jobs:
         run: |
           mkdir -p dist
           npm pack --pack-destination dist
+          ls -l dist
 
       - name: tarball 里得有 bin 和 src
         shell: bash
         run: |
-          tar -tzf dist/*.tgz | grep -q 'package/bin/agent-man.mjs'
-          tar -tzf dist/*.tgz | grep -q 'package/src/cli.mjs'
+          # 先把清单落成文件再 grep：grep -q 找到就退出，会让 tar 吃到 SIGPIPE，
+          # 而 GH 的 bash 默认带 pipefail，于是"检查通过"反倒让整步失败。
+          set -e
+          # tr -d '\r'：Windows 上 tar 的清单带 CRLF，`grep -x` 会一条都对不上
+          tar -tzf dist/*.tgz | tr -d '\r' > tarball-list.txt
+          cat tarball-list.txt
+          missing=''
+          grep -qxF 'package/bin/agent-man.mjs' tarball-list.txt || missing="$missing package/bin/agent-man.mjs"
+          grep -qxF 'package/src/cli.mjs' tarball-list.txt || missing="$missing package/src/cli.mjs"
+          if [ -n "$missing" ]; then
+            echo "::error::tarball 里缺：$missing；实际清单：$(tr '\n' ' ' < tarball-list.txt)"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
