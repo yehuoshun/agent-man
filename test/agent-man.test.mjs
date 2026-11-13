@@ -695,6 +695,14 @@ test('HELP 里写的选项和 FLAGS 表对得上（加参数不会只改一半�
   }
 })
 
+test('HELP 里每个命令的选项段只出现一次（同一段粘三遍，读的人会以为有三个命令）', () => {
+  const help = recorder()
+  main(['--help'], { out: help })
+  const heads = [...help.all.matchAll(/^([a-z-]+) 选项：$/gm)].map((m) => m[1])
+  const dup = [...new Set(heads.filter((name, i) => heads.indexOf(name) !== i))]
+  assert.deepEqual(dup, [], `HELP 里重复的选项段：${dup.join('、')}`)
+})
+
 test('CLI log → digest 端到端', () => {
   const home = tmp()
   const env = { AGENT_MAN_HOME: home }
