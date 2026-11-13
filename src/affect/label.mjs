@@ -3,19 +3,20 @@
 import { AFFECT_BASE, AFFECT_DEADBAND, AFFECT_HYST } from '../core/index.mjs'
 import { decay, EMOTION_HALF } from './decay.mjs'
 
-// 16 格：行 = 愉悦（高 65+ / 中高 51–64 / 中低 36–50 / 低 ≤35），
-// 列 = 精力（高 76+ / 中 51–75 / 低中 26–50 / 低 ≤25）。顺序照 §14.2 的表。
+// 16 格：行 = 愉悦（高 68+ / 中高 50–67 / 中低 33–49 / 低 ≤32），
+// 列 = 精力（高 76+ / 中 58–75 / 低中 29–57 / 低 ≤28）。分界围着基线 (50,60) 排，
+// 所以基线本身落在 (中高, 中) = 「平淡」——"没变化"必须读作平淡，不能读作不安（§14.2）。
 export const MOODS = Object.freeze([
   Object.freeze(['兴奋', '愉快', '满足', '平静']),
-  Object.freeze(['期待', '轻松', '平淡', '慵懒']),
+  Object.freeze(['期待', '平淡', '轻松', '慵懒']),
   Object.freeze(['紧张', '不安', '疲倦', '低落']),
   Object.freeze(['焦躁', '烦躁', '沮丧', '消沉']),
 ])
 
-// 档位分界（表的整数写法）：v 的 65 / 51 / 35，e 的 76 / 51 / 25。
-// 表按整数写，"36–50"与"≤35"之间留了 1 分缝；小数取中点 35.5，否则 35.7 会无家可归。
-const V_EDGES = Object.freeze([65, 51, 35.5])
-const E_EDGES = Object.freeze([76, 51, 25.5])
+// 档位分界：v 的 68 / 50 / 33，e 的 76 / 58 / 29。每档都是半开区间 [下沿, 上沿)，
+// 基线 (50,60) 恰好是「中高 × 中」那一格的下沿——边界归上档，否则 50 会掉到中立以下。
+const V_EDGES = Object.freeze([68, 50, 33])
+const E_EDGES = Object.freeze([76, 58, 29])
 
 // 词 → 它所在的格子：滞回要问"上一格在哪"，只能靠这张反查表。
 const CELL_OF = new Map()
@@ -35,8 +36,7 @@ function bounded(value, fallback) {
 }
 
 // 16 格之一（design §14.2）：格子只由这两个数决定，不许模型挑词。
-// 没有上一格又落在死区时给「平淡」：§14.8 把 (52,61) 钉成"恒为平淡"，而按表它落「轻松」
-// （v 中高 × e 中）——表与例子对不上，这里让例子赢，16 个字本身一个没改。
+// 基线那一格就是「平淡」，所以 (52,61)、(58,61) 天然读作平淡，不需要另开特例。
 // prev 给上一格的词时走滞回：新格子要越过边界 AFFECT_HYST 分才真换（§14.8 抖动 ≤1 次）。
 // 死区（§14.2 末）：两轴都贴着基线就算"没变"，标签不刷新。
 export function moodOf(v, e, prev) {
@@ -45,7 +45,7 @@ export function moodOf(v, e, prev) {
   const row = indexOf(x, V_EDGES)
   const col = indexOf(y, E_EDGES)
   const was = typeof prev === 'string' ? CELL_OF.get(prev) : undefined
-  if (!was) return deadband(x, y) ? '平淡' : MOODS[row][col]
+  if (!was) return MOODS[row][col]
   if (was.row === row && was.col === col) return prev
   if (deadband(x, y)) return prev
   if (was.row !== row && !pastEdge(x, V_EDGES, was.row, row)) return prev

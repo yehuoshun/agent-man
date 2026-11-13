@@ -95,12 +95,12 @@ test('100 条 task.fail 走完整链路落盘后，24h 的 v 回到基线附近'
 
 test('格子只由两个数决定：16 个词与表逐字一致，且同一输入永远同一个词', () => {
   assert.deepEqual([...MOODS[0]], ['兴奋', '愉快', '满足', '平静'])
-  assert.deepEqual([...MOODS[1]], ['期待', '轻松', '平淡', '慵懒'])
+  assert.deepEqual([...MOODS[1]], ['期待', '平淡', '轻松', '慵懒'])
   assert.deepEqual([...MOODS[2]], ['紧张', '不安', '疲倦', '低落'])
   assert.deepEqual([...MOODS[3]], ['焦躁', '烦躁', '沮丧', '消沉'])
-  // 四档 v × 四档 e 各取一格中点，落进的是表上那一格。
-  const v = [80, 58, 43, 20]
-  const e = [85, 60, 38, 10]
+  // 四档 v × 四档 e 各取一格中点，落进的是表上那一格（分界 68/50/33 与 76/58/29）。
+  const v = [80, 58, 44, 20]
+  const e = [85, 66, 44, 10]
   for (let i = 0; i < 4; i += 1) {
     for (let j = 0; j < 4; j += 1) assert.equal(moodOf(v[i], e[j]), MOODS[i][j])
   }
@@ -108,11 +108,11 @@ test('格子只由两个数决定：16 个词与表逐字一致，且同一输�
   const first = moodOf(52, 61)
   assert.ok(MOODS.flat().includes(first))
   for (let i = 0; i < 50; i += 1) assert.equal(moodOf(52, 61), first)
-  // §14.8 的 (52,61) 恒为「平淡」：按表它该落「轻松」（v 中高 × e 中），表与例子对不上，
-  // 实现让例子赢：贴着基线又没上一格就算「平淡」。16 个字与表的位置都没动。
+  // §14.8 的 (52,61) 恒为「平淡」：基线 (50,60) 那一格就是「平淡」，靠分界保证，不靠特例。
   assert.equal(moodOf(52, 61), '平淡')
-  // 表上那格（v 中高 × e 低中）也还是「平淡」，两条路都通。
-  assert.equal(moodOf(58, 40), '平淡')
+  assert.equal(moodOf(58, 61), '平淡')
+  // 精力掉到基线以下那一格是「轻松」（v 中高 × e 低中）。
+  assert.equal(moodOf(58, 40), '轻松')
 })
 
 test('滞回：跨边界抖动 100 次，标签最多换 1 次', () => {
@@ -368,12 +368,12 @@ test('删光刺激日志就是基线：日志没了，数值就没了', async ()
 test('标签只在越过 3 分才换：从高一档回落，压着边界时还留上一格', async () => {
   await inHome(async (home) => {
     const first = moodOf(60, 40)
-    assert.equal(first, '平淡')
-    assert.equal(moodOf(62, 40, first), '平淡')
-    // 掉到边界下但不到 3 分：不换。
-    assert.equal(moodOf(49, 40, first), '平淡')
+    assert.equal(first, '轻松')
+    assert.equal(moodOf(62, 40, first), '轻松')
+    // 掉到边界（v=50）下但不到 3 分：不换。
+    assert.equal(moodOf(49, 40, first), '轻松')
     // 掉够 3 分：换。
-    assert.equal(moodOf(48, 40, '平淡'), MOODS[2][2])
+    assert.equal(moodOf(47, 40, '轻松'), MOODS[2][2])
     // 死区里怎么抖都还是原来那个词（±3 之外才算变化）。
     assert.equal(AFFECT_HYST, 3)
     assert.equal(moodOf(52, 58, '轻松'), '轻松')
