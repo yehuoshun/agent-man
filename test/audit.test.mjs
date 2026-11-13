@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { trace } from '../src/audit/index.mjs'
+import { timeline, trace } from '../src/audit/index.mjs'
 import { DEFAULT_WINDOW_DAYS, RULE_LIMIT, SELF_MAX, cost } from '../src/core/index.mjs'
 import { notes, plans } from '../src/intent/index.mjs'
 import { add as addMemory } from '../src/memory/index.mjs'
@@ -140,4 +140,82 @@ test('trace 在没有数据的地方不抛也不建库', async () => {
     assert.deepEqual(trace({ home, now: NOW }), { items: [], total: 0, limit: 20, skipped: 0 })
     assert.deepEqual(fs.readdirSync(home), [])
   })
+})
+test('timeline 把五类记忆按 at 排成一条线，kind 用记录的单数名', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW - 5 * HOUR, text: '她关了窗' })
+    await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', at: NOW - 4 * HOUR, evidence: { ids: ['e-1'] } },
+      { home, now: NOW },
+    )
+    seedRule(home, { id: 'r-1', at: NOW - 3 * HOUR })
+    await notes.add(home, { text: '问她头痛好点没', trigger: '她提到加班', at: NOW - 2 * HOUR })
+    await plans.add(home, { text: '陪她看牙', due: NOW + DAY, at: NOW - HOUR })
+
+    const got = timeline({ home, now: NOW })
+    assert.deepEqual(got.items.map((one) => one.kind), ['plan', 'note', 'rule', 'memory', 'event'])
+    assert.deepEqual(Object.keys(got.items[0]).sort(), ['at', 'id', 'kind', 'text'])
+    assert.match(got.items[0].id, /^p-/)
+    assert.match(got.items[1].id, /^n-/)
+    assert.equal(got.items[2].id, 'r-1')
+    assert.equal(got.items[3].text, '她关窗是因为冷')
+    assert.equal(got.items[4].text, '她关了窗')
+    assert.equal(got.total, 5)
+    assert.equal(got.since, NOW - DEFAULT_WINDOW_DAYS * DAY)
+    assert.equal(got.all, false)
+  })
+})
+test('timeline 默认只给窗口内的，给了 all 才把更早的也放进来', async () => {
+  await inHome(async (home) => {
+    const old = NOW - (DEFAULT_WINDOW_DAYS + 1) * DAY
+    seedEvent(home, { id: 'e-old', at: old, text: '很久以前' })
+    seedEvent(home, { id: 'e-new', at: NOW - HOUR, text: '刚刚' })
+
+    const recent = timeline({ home, now: NOW })
+    assert.deepEqual(recent.items.map((one) => one.id), ['e-new'])
+    assert.equal(recent.since, NOW - DEFAULT_WINDOW_DAYS * DAY)
+
+    const full = timeline({ home, now: NOW, all: true })
+    assert.deepEqual(full.items.map((one) => one.id), ['e-new', 'e-old'])
+    assert.equal(full.since, null)
+    assert.equal(full.all, true)
+  })
+})
+test('timeline 的 limit 只截显示条数，被截掉的用 total 说出来', async () => {
+  await inHome(async (home) => {
+    for (let i = 1; i <= 3; i += 1) seedEvent(home, { id: `e-${i}`, at: NOW - i * HOUR, text: `第 ${i} 件` })
+    const got = timeline({ home, now: NOW, limit: 2 })
+    assert.equal(got.items.length, 2)
+    assert.equal(got.total, 3)
+    assert.equal(got.limit, 2)
+    assert.throws(() => timeline({ home, now: NOW, limit: -2 }), /limit/)
+    // 不给 limit 就是不截：时间线的条数由窗口决定，不另设隐藏上限。
+    assert.equal(timeline({ home, now: NOW }).limit, null)
+  })
+})
+test('timeline 把坏行记为 skipped，不装作时间线是干净的', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW - HOUR, text: '她关了窗' })
+    seedRule(home, { id: 'r-1', at: NOW - 2 * HOUR })
+    fs.appendFileSync(eventsFile(home, NOW), 'oops\n')
+    // 合法 JSON 但缺 text 的规矩行：读不出正文，算坏行而不是一条空规矩。
+    fs.appendFileSync(path.join(home, 'rules.jsonl'), `${JSON.stringify({ id: 'r-2', at: NOW })}\n`)
+    const got = timeline({ home, now: NOW })
+    assert.equal(got.skipped, 2)
+    assert.deepEqual(got.items.map((one) => one.id), ['e-1', 'r-1'])
+  })
+})
+test('timeline 不落盘：跑完数据目录的文件数与字节都不变', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW - HOUR, text: '她关了窗' })
+    seedRule(home, { id: 'r-1', at: NOW - 2 * HOUR })
+    await notes.add(home, { text: '问她头痛好点没', trigger: '她提到加班', at: NOW - 3 * HOUR })
+    const before = snapshot(home)
+    timeline({ home, now: NOW, all: true })
+    assert.deepEqual(snapshot(home), before)
+  })
+})
+test('timeline 没有 home 就报错，不去读进程的当前目录', async () => {
+  assert.throws(() => timeline({ now: NOW }), /timeline 需要一个数据目录/)
+  assert.throws(() => timeline({ home: '   ', now: NOW }), /timeline 需要一个数据目录/)
 })

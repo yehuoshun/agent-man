@@ -2,3 +2,4 @@
 // 判定不在这儿长：证据解析归 memory，折叠归 intent，时间与成本归 core。
 // 这里没有任何写入口（AGENTS 二·2）。
 export { trace } from './trace.mjs'
+export { timeline } from './timeline.mjs'
