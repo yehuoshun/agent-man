@@ -3,16 +3,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { capture } from './call.mjs'
+import { PART_TIMEOUT, PART_TIMEOUT_MAX } from '../core/index.mjs'
 
 const WIN = process.platform === 'win32'
 const PREFIX = 'agent-man-'
 
 // Windows 上按这个次序试，前面的赢；末尾的空串表示"无扩展名"。
 const WIN_PATTERNS = ['.exe', '.cmd', '.bat']
-
-// 与 design.md §10 同值。core 门面还没落地，先在本目录声明；落地后改成 import ../core/index.mjs。
-const PART_TIMEOUT = 5000
-const PART_TIMEOUT_MAX = 30000
 
 // 一个名字在 PATH 上的优先次序：扩展名靠前 > 扩展名靠后 > 无扩展名。
 function rank(ext) {

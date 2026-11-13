@@ -3,8 +3,8 @@
 export { scan, describe } from './discover.mjs'
 export { passthrough, capture } from './call.mjs'
 
-// §10 PART_FAIL_LIMIT。与 core 落地前的其它常数一样，先在这里声明。
-const PART_FAIL_LIMIT = 3
+// §10 的常数只从 core 门面取（唯一来源），这里不再留副本。
+import { PART_FAIL_LIMIT } from '../core/index.mjs'
 
 // 连续失败计数。第 3 次失败把 until 设成 Infinity：那是"下一次会话"的哨兵，由调用方在
 // 会话开始时把计数清零（{fail:0, until:null}），这里不认识时钟，也不自己解除。

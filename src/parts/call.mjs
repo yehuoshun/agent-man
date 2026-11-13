@@ -3,12 +3,9 @@
 // 契约见 docs/design.md §8，Windows 上的引号与 %名字% 结论见 docs/decisions.md §32。
 import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
+import { PART_TIMEOUT, PART_STDOUT_MAX } from '../core/index.mjs'
 
 const WIN = process.platform === 'win32'
-
-// 与 design.md §10 同值。core 门面还没落地，先在本目录声明；落地后改成 import ../core/index.mjs。
-const PART_TIMEOUT = 5000
-const PART_STDOUT_MAX = 8192
 
 // Windows 的 cmd 会把 %名字% 换成环境变量，包在引号里也照换，^% 和 %% 更错（§32 实测四种写法）。
 // 所以命中就拒绝，不猜着转义：悄悄改掉调用方给的字符串，比让它看到一句"不安全的参数"危险得多。
