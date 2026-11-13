@@ -51,6 +51,12 @@ export const CLUSTER_DAYS = 2 // 天
 export const DEBT_SUM_IMP = 12
 export const DEBT_UNREFLECTED = 40
 
+// —— 一屏的形状（design §1：工作记忆约 4 个组块、一张屏最多 4 段）——
+export const SECTION_ITEMS_MAX = 4 // 条：每段最多几条
+export const SECTION_MAX = 4 // 段：一屏最多几段
+export const MIN_KEEP_RATIO = 0.4 // 超长条目切完至少留原文的多少
+export const MIN_KEEP_COST = 32 // cost：切完不足这个数就不切了，整条丢
+
 // —— 插件（design §8）——
 export const PART_TIMEOUT = 5000 // ms
 export const PART_TIMEOUT_MAX = 30000 // ms

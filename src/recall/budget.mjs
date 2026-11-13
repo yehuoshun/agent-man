@@ -1,16 +1,11 @@
 // 一屏的成本账：每行先记 LINE_OVERHEAD，再按 core/cost 的权重量字。
 // fit 只做夹逼，不做判断——哪条更重是 rank 的结论，这里只回答"装得下多少、装不下怎么说"。
-import { LINE_OVERHEAD, cost, cut as coreCut } from '../core/index.mjs'
+import {
+  LINE_OVERHEAD, SECTION_ITEMS_MAX, SECTION_MAX, MIN_KEEP_RATIO, MIN_KEEP_COST,
+  cost, cut as coreCut,
+} from '../core/index.mjs'
 import { atOf, idOf } from './strength.mjs'
 import { guarantee } from './pick.mjs'
-
-// design §1「每段最多 4 条、最多 4 段」；§10 没给这两个数，先按设计原文写在这里（报告·待决）。
-const SECTION_ITEMS_MAX = 4
-const SECTION_MAX = 4
-// 切了才留的下限：留不到四成、或者留不到 32 个 cost，等于用半句话占掉一整行的开销。
-// 这两个数 design 没写，是"截断要可读"的保守取值（报告·待决）。
-const MIN_KEEP_RATIO = 0.4
-const MIN_KEEP_COST = 32
 
 // 一段正文占多少预算：正文的成本 + 这一行的开销。谁都不许只数字符。
 export function costOf(text) {
