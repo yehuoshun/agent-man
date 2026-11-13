@@ -311,6 +311,20 @@ test('往事装填：常驻的先上，其余按 order 降序', async () => {
   })
 })
 
+test('额度用尽后剩下的示范组一组一条记账，不许悄悄消失', async () => {
+  await inHome(async (home) => {
+    writeCard(home, '三组', {
+      ...BASE,
+      'dialogue.md': '<START>\n你: 一\n我: 一。\n<START>\n你: 二\n我: 二。\n<START>\n你: 三\n我: 三。\n',
+    })
+    const full = build(home, { name: '三组', budget: 9999, now: T })
+    const at = full.lines.findIndex((line) => line.startsWith('[示范] '))
+    const budget = cost(full.lines.slice(0, at + 1).join('\n'))
+    const tight = build(home, { name: '三组', budget, now: T })
+    assert.deepEqual(tight.dropped.map((one) => one.section), ['第 2 组', '第 3 组'])
+  })
+})
+
 test('一条来源都没有时，整张卡都是推断的要说出口（但不拒绝）', async () => {
   await inHome(async (home) => {
     writeCard(home, '没来源', {
