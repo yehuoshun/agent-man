@@ -1,9 +1,14 @@
 import { doctor as checkData } from '../audit/index.mjs'
+import { config } from '../core/index.mjs'
 import { home } from '../store/index.mjs'
 
 // 命令表只有一张：命令名 → 处理函数。命令逻辑住领域模块，这里只做取参、调用与渲染，
 // 免得 CLI 层再长出一套业务（AGENTS 四）。
-export const TABLE = new Map([['doctor', doctor]])
+// config 自己有渲染（它要打 `~` 提示"这是默认值不是文件里写的"），所以原样递 ctx，不再包一层。
+export const TABLE = new Map([
+  ['doctor', doctor],
+  ['config', (ctx) => config.run(ctx)],
+])
 
 // 两词命令（"memory add"）先按最长匹配试一次，M3 往里加条目时不用改这个函数。
 export function resolve(argv) {
