@@ -210,6 +210,11 @@ test('list 与 ls 是同一个读法（design §7 叫 list）', async () => {
   assert.equal(list({ all: true }, ctxOf(home)).items[0].id, written.id)
 })
 
+test('key 过滤给空串：拒绝，空库上也不装作没看见', async () => {
+  const home = newHome()
+  assert.throws(() => ls({ all: true, key: '  ' }, ctxOf(home)), /key 过滤要给非空槽位名/)
+})
+
 test('find 只做字面搜索：不做语义相似度，也不搜 key', async () => {
   const home = newHome()
   const written = await one(home, { key: '她怕冷', fact: '她关窗是因为冷' })

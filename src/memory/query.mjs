@@ -32,17 +32,19 @@ function select(state, opts, ctx) {
   const until = timeOf(opts.until, base, 'until')
   const live = all ? opts.live === true : opts.live !== false
   const from = since ?? (all ? null : base - DEFAULT_WINDOW_DAYS * DAY_MS)
+  let key = null
+  if (opts.key !== undefined) {
+    if (typeof opts.key !== 'string' || opts.key.trim() === '') {
+      throw new Error('key 过滤要给非空槽位名（空串不是"不筛"）')
+    }
+    key = opts.key.trim()
+  }
 
   let items = state.records.filter((rec) => {
     if (live && !isLive(rec)) return false
     if (from !== null && rec.at < from) return false
     if (until !== null && rec.at > until) return false
-    if (opts.key !== undefined) {
-      if (typeof opts.key !== 'string' || opts.key.trim() === '') {
-        throw new Error('key 过滤要给非空槽位名（空串不是"不筛"）')
-      }
-      if (rec.key !== opts.key.trim()) return false
-    }
+    if (key !== null && rec.key !== key) return false
     return true
   })
   items = items.sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
