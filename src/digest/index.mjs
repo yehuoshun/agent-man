@@ -4,3 +4,4 @@
 export { build } from './build.mjs'
 export { retell } from './seen.mjs'
 export { record, list as trace } from './trace.mjs'
+export { run } from './run.mjs'
