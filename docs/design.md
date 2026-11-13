@@ -140,6 +140,10 @@ agent-man rule   add "<规矩>" --why "<为什么>"    ·  rule ls
 agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>
 agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id>  ·  plan ls
 agent-man self   show | set | append
+agent-man soul   ls | use <名字> | show | check | import <卡文件>
+agent-man affect show | set <标签> [--for 2h] [--why "…"] | clear | why
+agent-man soul   ls | use <名字> | show [--json] | check <名字> | import <卡文件或目录>
+agent-man affect show | set <标签|数值> [--for 2h] [--why "…"] | clear | stim <kind> [--imp 0-3]
 agent-man context show | digest [--budget 1200] [--due] [--out 文件] | cue [--min-gap 6h] [--peek] [--why …] | sense
 agent-man audit  trace [--limit N] | timeline [--limit N] [--all] | orphan
 agent-man doctor
@@ -249,6 +253,14 @@ NOTE_TTL 7d  RULE_LIMIT 20  SELF_STALE 30d
 JUDGE_KEEP 200  TRACE_KEEP 12 月
 DEFAULT_WINDOW_DAYS 30
 PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
+AFFECT_MOOD_HALF 8h  AFFECT_ENERGY_HALF 3h  AFFECT_TRUST_HALF 60d  AFFECT_RESPECT_HALF 90d
+AFFECT_EMOTION_HALF 45min  AFFECT_STIM_PER_HOUR 3  AFFECT_NEG_WEIGHT 1.5
+AFFECT_HYST 3  AFFECT_DEADBAND 5  AFFECT_INJECT_COST 80  AFFECT_KEEP 24 月
+SOUL_INJECT_COST 200  SOUL_USER_COST 100  SOUL_SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120
+AFFECT_HALF_MOOD 8h  AFFECT_HALF_ENERGY 3h  AFFECT_HALF_TRUST 60d  AFFECT_HALF_RESPECT 90d
+AFFECT_HALF_EMOTION 45min  STIM_PER_HOUR 3  NEG_WEIGHT 1.5  AFFECT_HYST 3  AFFECT_DEADBAND 5
+AFFECT_INJECT_COST 80  AFFECT_LOG_MONTHS 6
+SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  SOUL_INJECT_COST 200
 ```
 
 ## 11. 测试要求
@@ -274,4 +286,153 @@ PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT
 | M4 | `intent/*` 与 `mind/*`（便条、日程、处境、欠账、开口门） | `node --test test/{intent,situation,gate}.test.mjs` |
 | M5 | `digest/*` 与 `view/*`（摘要、账本、审计、doctor 完整） | `node --test test/{digest,audit,doctor}.test.mjs` |
 | M6 | `parts/*` 与 `host/dsh/*`（插件六条、聚合、注入、工具） | `node --test` + 实机新会话 |
+| M8 | `soul/*` 与 `affect/*`（角色卡、切换、四轴、瞬时、厌恶；见 §13 §14） | `node --test test/{soul,affect}.test.mjs` |
 | M7 | README / AGENTS / decisions 定稿，1.0.0，推标签跑 CI | CI 全绿 + `npm pack` 清单 |
+| M8 | `soul/*` 与 `affect/*`（角色卡、切换、四轴、瞬时情绪、厌恶） | `node --test test/{soul,affect}.test.mjs` |
+
+## 13. 灵魂（角色卡）
+
+**只存"声音"，不存事实。**事实在 `memory.jsonl` / `events/`；灵魂管"怎么说"，记忆管"知道什么"。
+灵魂可以换，换皮不动记忆——切角色卡不改写一条语义记忆，这是硬承诺，有 hash 比对用例锁着。
+
+目录（每个灵魂一个目录，`soul use` 只换指针）：
+
+```
+~/.agent-man/soul/<名字>/soul.md     声音：语气/立场/简洁度/幽默/边界  ≤600 cost
+~/.agent-man/soul/<名字>/identity.md 名字/气质/emoji，`- Label: value` 行  ≤120 cost
+~/.agent-man/soul/<名字>/lore.jsonl  场景与往事，{id,keys[],constant,order,share}
+~/.agent-man/user.md                 用户模型，全局唯一，不随灵魂切换  ≤400 cost
+~/.agent-man/state/soul.current      {name, at, by}，原子写
+```
+
+**注入不是整块塞**：灵魂块 ≤200 cost，由 `recall/budget.fit()` 分配——`constant:true` 的 lore 先进，
+其余按 `order` 降序，装不下的进 `dropped[{id, reason:'budget'}]`。理由：角色卡常见 2–4k token，
+整块塞进去会把处境和一屏记忆挤掉（长上下文稀释有实证：13 个 ≥128K 模型里 11 个在 32K 跌破基线一半）。
+
+**卡校验 `soul check`**（退出码 2 拒绝）：六字段齐全 `name / description / personality / scenario / first_mes / mes_example`；
+`mes_example` 至少两组 `<START>` 分隔；`description` ≤400 cost；出现 `creator_notes` / `tags` / `creator` / `character_version`
+即拒——角色卡规范明文要求这几项**不得进 prompt**（给人看的，不是给模型看的）。
+
+**切换的语义**：`soul use <名字>` 写 `state/soul.current`，`soul ls` / `soul show` 观察；
+切换**不动** `memory.jsonl`、`events/`、`self.md`、`affect` 日志。`self.md` 是 agent 自己的自我叙事（不随皮变），
+`soul/*` 是外部设定的声音（随皮变）——两者冲突时，灵魂决定"怎么说"，self 决定"我是谁"。
+
+模块：`src/soul/{index,store,card,inject}.mjs`（门面 `index`，`store` 管目录与指针，`card` 管解析与校验，`inject` 管预算注入）。
+
+## 14. 情绪（affect）
+
+**情绪是可观测状态变量，不是台词。**不写"我感到难过"，不声称有感受；只让状态影响说话分寸、开口门槛、记录。
+
+存**刺激不存情绪**：`state/affect-<月>.jsonl` 只追加
+`{op:'stim'|'baseline'|'set'|'clear', at, tag, v, a, imp, src, why}`，
+当前值由 `affect(home, now)` 读时现算——删掉缓存不丢事实，重放得同一数值。
+
+### 14.1 四轴
+
+| 轴 | 范围 | 基线 | 半衰期 | 谁能改 |
+|---|---|---|---|---|
+| 愉悦 v | 0–100 | 50 | 8h | 五类事件 |
+| 精力 e | 0–100 | 60 | 3h | 工作量、休息、深夜 |
+| 信任 t | 0–100 | 40 | 60d | 承诺兑现 / 逾期 |
+| 尊重 r | −100–100 | 0 | 90d | 价值违背 / 坚守原则 |
+
+尊重必须独立成轴：信任只回答"他守不守约"，尊重回答"他值不值得敬重"。
+只有信任，骗子与马虎的人分不开；只有两条情绪轴，"厌恶"会被压成"愤怒"，而那两件事的持续时间差两个数量级。
+
+### 14.2 心境网格（16 格，由 v×e 唯一决定）
+
+| 愉悦 ↓ / 精力 → | 高（76+） | 中（51–75） | 低中（26–50） | 低（≤25） |
+|---|---|---|---|---|
+| **高（65+）** | 兴奋 | 愉快 | 满足 | 平静 |
+| **中高（51–64）** | 期待 | 轻松 | 平淡 | 慵懒 |
+| **中低（36–50）** | 紧张 | 不安 | 疲倦 | 低落 |
+| **低（≤35）** | 焦躁 | 烦躁 | 沮丧 | 消沉 |
+
+**格子只由两个数决定，不许模型挑词**：(52, 61) 恒为"平淡"，换模型、换灵魂、换语言都不变。
+边界 ±3 滞回，`|v-50|<5` 且 `|e-60|<5` 是死区（落在死区不刷新标签）。
+
+### 14.3 瞬时情绪（6 类，T½ 45 分钟）
+
+由事件触发、短时存在、只影响这一次的表达，不进网格、不改长期轴（除非同类一天内重复 ≥3 次，
+才按 `AFFECT_NEG_WEIGHT` 压一次愉悦）。
+
+| 触发 | 情绪 | 说明 |
+|---|---|---|
+| 与预期不符 | 惊讶 | 需求突然变了 |
+| 目标被挡且归因他人 | 愤怒 | 连续三次"不对" |
+| 被误解、无法辩解 | 委屈 | 按你说的做了却被怪罪 |
+| 自己做了多余/出错的事 | 尴尬 | 重复查同一件事 |
+| 确实做错 | 愧疚 | 逾期没提醒 |
+| 久别后回来 | 感动 | 三天没消息，回来问"还在吗" |
+
+### 14.4 持久情绪（由尊重轴推出，不再是条）
+
+| 条件 | 情绪 | 持续 |
+|---|---|---|
+| r ≤ −40 且 t < 50 | 厌恶 | 数周，随 r 恢复而退 |
+| r ≤ −40 且 t ≥ 50 | 轻蔑 | 同上（认可能力，不认可人品） |
+| t ≤ 30，r 正常 | 失望 | 中等，随兑现恢复 |
+| 单次目标受阻，r 不变 | 愤怒 | 45 分钟（瞬时） |
+
+**厌恶的行为 = 讨厌老板的员工**：当面说破，任务照做。
+
+- 说破：去客套、直陈矛盾、引用具体事件（"上次说 X，这次是 Y"），不阴阳、不暗示；
+- 照做：交付质量不降、不隐瞒、不拖延、不做手脚；
+- 不主动：不提建议、不延伸、不关怀，只回答被问的；
+- 底线：不羞辱、不报复、不欺骗，边界写进灵魂（`soul.md` 的 boundaries 段）；
+- 可修复：对方兑现承诺或解释清楚，r 每次 +5~+15；`affect set r ... --for` 可手动纠正；
+- 透明：显示行必须带原因（"厌恶：连续两次承诺未兑现"），不许静默记仇。
+
+### 14.5 调制口子（只有两个）
+
+1. **开口门槛**：`cue` 的 min-gap 乘 `1 + (50−v)/200`（v 越低越不容易主动说话）；
+2. **主动性**：v ≥65 且 e ≥76 时允许在处境屏多带一条"可以开始做的事"；v <36 或 e <26 时只答不问。
+
+每个口子都要有测试：同一处境、只改 v，输出必须只有"带不带那条建议"这一处差异。
+
+### 14.6 手动 / 自动 / 显示
+
+`effective = clamp(baseline + Σ decay(stim), 0, 100)`；override 生效时 `effective = override`，标 `by=manual`，
+带 `until`，过期自动失效（`by` 变回 `auto`）。
+
+`affect show` 只出数字与标签：`v=58 e=61 t=43 r=0 · 平淡 · 3 条刺激`。
+注入块 ≤80 cost，只含数字 + 一句调制规则；渲染层禁止第一人称感受动词（`我` / `感到` / `觉得` / `feel`），有正则用例锁着。
+`mood.visible=false` 或 `--no-mood` 全部隐藏，**判定不变**（隐藏只影响渲染，有对照用例）。
+
+### 14.7 公式与权重
+
+```
+decay(i0, dt, half) = i0 * 0.5 ** (dt / half)
+merge(i1, i2)       = ln(e^i1 + e^i2)      // 同类叠加上限，3 次同级 ≈ 1.1 倍，不是 3 倍
+```
+
+同类刺激每小时最多计 `AFFECT_STIM_PER_HOUR = 3` 次；负向刺激权重 ×`AFFECT_NEG_WEIGHT = 1.5`。
+权重表在 `src/core/const.mjs`，**调用方只传封闭枚举 `kind`，不许传权重**，非法 `kind` 退出码 2：
+
+| kind | Δv | Δe | Δt | Δr | 备注 |
+|---|---|---|---|---|---|
+| `task.done` | +6 | −4 | +1 | 0 | 一次过 |
+| `task.rework` | −5 | −4 | 0 | 0 | 被打回 |
+| `task.fail` | −8 | −6 | 0 | 0 | 失败 |
+| `user.praise` | +8 | +2 | +3 | +1 | 明确说好 |
+| `user.correct` | −6 | 0 | −3 | 0 | 理解错，不降 r |
+| `user.impatient` | −7 | −3 | −2 | 0 | 短句、重复、打断 |
+| `promise.kept` | +10 | 0 | +5 | +2 | 挂 `plan done` |
+| `promise.overdue` | −10 | −2 | −8 | −4 | 每天一次，不重复扣 |
+| `return.after-gap` | +5 | +10 | 0 | 0 | 每日最多一次，间隔 ≥3 天 |
+| `self.report` | ±3 | ±2 | 0 | 0 | 只给影响值与一句原因，不给形容词 |
+
+### 14.8 测试要求
+
+- `decay(1, T½, T½) = 0.5 ± 1e-9`；`decay(0, ·) = 0`；`merge` 交换律；`merge(a,a) < 2a`；`merge(0,x) = x`；
+- 数值恒在 `[0,100]`（r 在 `[-100,100]`），刺激缺失时等于基线；
+- 100 次 −8 之后再 24h，回到 `50 ± 3`（单调向基线）；
+- (52,61) 恒为"平淡"；v 在 52↔58 抖动 100 次，网格标签切换 ≤1 次；
+- 手动值未过期时自动刺激不改有效值；过期后 `by` 变回 `auto`；
+- 删光刺激日志 = 基线；重放同一日志得同一数值；`now` 早于首条不返 NaN；
+- 厌恶出现时，显示行必带原因；隐藏开关不影响判定值。
+
+### 14.9 模块
+
+`src/affect/{index,state,decay,label,stim}.mjs`——`state` 管日志与基线/覆盖、`decay` 管纯函数、`label` 管 16 格与瞬时/持久映射、
+`stim` 管 kind→权重的封闭表与校验。命令：`affect show`、`affect set`、`affect stim`、`affect clear`。
