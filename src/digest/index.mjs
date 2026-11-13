@@ -3,5 +3,5 @@
 // 复述记账只发生在这里（design §5）：别的层要 seen +1，走 run 或 retell，别自己写 memory.jsonl。
 export { build } from './build.mjs'
 export { retell } from './seen.mjs'
-export { record, list as trace } from './trace.mjs'
+export { record, list as trace, never } from './trace.mjs'
 export { run } from './run.mjs'
