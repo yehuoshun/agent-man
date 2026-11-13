@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { renderScreen } from '../src/view/index.mjs'
+import { renderDigest, renderScreen } from '../src/view/index.mjs'
 
 // 一律断言整段字符串，不做"包含某词"的探针：这一屏是别人读的字面，
 // 多一个空行、少一个缩进都会改掉它读到的东西，includes 锁不住（AGENTS 六）。
@@ -113,5 +113,47 @@ test('过点的日程在括号里写「已经过点了」，不再摆倒计时',
       '  今天 22:00 陪她看牙（已经过点了）',
       '  明天 09:00 交房租（还有 11 小时）',
     ].join('\n'),
+  )
+})
+
+test('摘要页脚：丢条时列出条数与原因，没丢东西时直说「没丢东西」', () => {
+  const body = '她怕冷：上周关窗那次她没穿外套'
+
+  const withDrops = renderDigest({
+    header: 'digest',
+    body,
+    stats: {
+      used: 1087,
+      budget: 1200,
+      kept: ['m-20261113-01', 'e-20261113-02'],
+      dropped: [
+        { id: 'e-20261112-04', reason: 'budget' },
+        { id: 'e-20261112-05', reason: 'budget' },
+      ],
+    },
+  })
+  assert.equal(
+    withDrops,
+    ['digest', '', body, '', '—— 用了 1087/1200 · 装下 2 条 · 丢 2 条（budget）'].join('\n'),
+  )
+
+  // 一条没丢也必须说出口：页脚只在丢条时出现，等于"没丢"和"没算"分不清。
+  const clean = renderDigest({
+    header: 'digest',
+    body,
+    stats: { used: 900, budget: 1200, kept: 2, dropped: [] },
+  })
+  assert.equal(clean, ['digest', '', body, '', '—— 用了 900/1200 · 装下 2 条 · 没丢东西'].join('\n'))
+})
+
+test('摘要正文为空：写「（今天没什么可巩固的）」，不留空段', () => {
+  const text = renderDigest({
+    header: 'digest',
+    body: '',
+    stats: { used: 0, budget: 1200, kept: [], dropped: [] },
+  })
+  assert.equal(
+    text,
+    ['digest', '', '（今天没什么可巩固的）', '', '—— 用了 0/1200 · 装下 0 条 · 没丢东西'].join('\n'),
   )
 })

@@ -2,3 +2,5 @@
 // 这一层只吃已经算好的普通对象，不读盘、不问时间、不 import 任何业务模块（design §7）：
 // 与判断分开，才能拿字面 fixture 把每段字钉死。
 export { render as renderScreen } from './screen.mjs'
+// 两个 render 撞名，门面按用途起别名：CLI 侧一眼能看出在渲染哪一屏。
+export { render as renderDigest } from './digest.mjs'
