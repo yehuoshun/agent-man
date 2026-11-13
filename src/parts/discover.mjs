@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { capture } from './call.mjs'
-import { PART_TIMEOUT, PART_TIMEOUT_MAX } from '../core/index.mjs'
+import { PART_TIMEOUT, PART_TIMEOUT_MAX, PART_STDOUT_MAX } from '../core/index.mjs'
 
 const WIN = process.platform === 'win32'
 const PREFIX = 'agent-man-'
@@ -93,8 +93,11 @@ function missingField(data) {
   return null
 }
 
-function whyNot(r, name, timeout) {
-  if (r.status === 'timeout') return `${name} 的 --describe 超时（超过 ${timeout}ms 没有回话）`
+// 报"为什么不可用"时用的是实际生效的期限（capture 夹过上限之后的），不是请求的那个数：
+// 说了"超过 60000ms"，实际 30000ms 就收手，那是把自己做的事说错。
+function whyNot(r, name) {
+  const ms = r.timeout ?? PART_TIMEOUT
+  if (r.status === 'timeout') return `${name} 的 --describe 超时（超过 ${ms}ms 没有回话）`
   if (r.status === 'missing') return `${name} 的 --describe 起不来（${r.why ?? `退出码 ${r.code}`}）`
   const tail = (r.err || '').split('\n')[0].trim()
   return `${name} 的 --describe 崩了（退出码 ${r.code}）${tail ? `：${tail}` : ''}`
@@ -106,7 +109,12 @@ function whyNot(r, name, timeout) {
 export async function describe(part, { timeout = PART_TIMEOUT, env = process.env } = {}) {
   const name = part?.name ?? path.basename(String(part?.file ?? ''))
   const r = await capture(part, { args: ['--describe'], timeout, env })
-  if (r.status !== 'ok') return { ok: false, why: whyNot(r, name, timeout) }
+  if (r.status !== 'ok') return { ok: false, why: whyNot(r, name) }
+  // 截断之后剩下的 JSON 一定是坏的。说"不是 JSON"是在怪零件写错了格式，实际是我们的
+  // 8KB 预算把它切掉了——把它做的事说错，就没人想到去看那句 truncated。
+  if (r.truncated) {
+    return { ok: false, why: `${name} 的 --describe 超过 ${PART_STDOUT_MAX} 字节被截断` }
+  }
   let data
   try {
     data = JSON.parse(r.out)

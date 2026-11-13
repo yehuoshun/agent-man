@@ -87,6 +87,15 @@ test('describe 拿到不是 JSON 的输出时返回 ok:false 而不是抛', asyn
   assert.match(d.why, /不是 JSON/)
 })
 
+test('describe 碰上被截断的 --describe 说"截断"，不把责任推给零件的格式', async () => {
+  const dir = tmp()
+  const js = says("{name:'big',desc:'x'.repeat(9000),section:'s',timeout_ms:1000,side_effects:[]}")
+  const d = await describe({ name: 'big', file: makePart(dir, 'big', js) })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /截断/)
+  assert.doesNotMatch(d.why, /不是 JSON/)
+})
+
 test('describe 缺字段时返回 ok:false 并说缺哪个', async () => {
   const dir = tmp()
   const file = makePart(dir, 'half', says("{name:'half',desc:'x',section:'y'}"))
@@ -105,6 +114,24 @@ test('describe 把零件自己报的 timeout_ms 夹在 30 秒上限内，原值�
 test('describe 碰上一个起不来的零件也返回 ok:false', async () => {
   const d = await describe({ name: 'ghost', file: path.join(tmp(), 'agent-man-ghost') })
   assert.equal(d.ok, false)
+})
+
+test('describe 碰上不回话的零件报超时，说的是实际生效的期限', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'silent', 'setTimeout(() => {}, 5000)')
+  const d = await describe({ name: 'silent', file }, { timeout: 300 })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /超时/)
+  assert.match(d.why, /300ms/) // 请求多少就是多少，没被 5 秒默认值盖掉
+})
+
+test('describe 碰上崩掉的零件把退出码和 stderr 首行带出来', async () => {
+  const dir = tmp()
+  const js = `console.error('boom: no args'); process.exit(3)`
+  const d = await describe({ name: 'dud', file: makePart(dir, 'dud', js) })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /退出码 3/)
+  assert.match(d.why, /boom: no args/)
 })
 
 // ---------------------------------------------------------------- capture
@@ -130,6 +157,21 @@ test('超时在 Windows 上连 cmd.exe 的孙子进程一起杀', winOnly('POSIX
   assert.equal(fs.existsSync(marker), false, '孙子进程活到了 1.2 秒：只杀了 cmd.exe')
 })
 
+test('超时杀树不靠 PATH：PATH 清空后照样按时收手', winOnly('POSIX 走 child.kill'), async () => {
+  const dir = tmp()
+  // PATH 里只有空目录：cmd.exe 靠 ComSpec 的绝对路径照旧起得来，PATH 里没有 taskkill。
+  const empty = path.join(dir, 'empty-path')
+  fs.mkdirSync(empty)
+  const file = path.join(dir, 'agent-man-hang.cmd')
+  // 零件自己也得用绝对路径，否则 cmd.exe 也找不到 node。
+  fs.writeFileSync(file, `@${process.execPath} -e "setTimeout(() => {}, 1500)"\r\n`, 'utf8')
+  const env = { ...process.env, PATH: empty, Path: empty, ComSpec: process.env.ComSpec }
+  const t0 = Date.now()
+  const r = await capture({ name: 'hang', file }, { timeout: 300, env })
+  assert.equal(r.status, 'timeout')
+  assert.ok(Date.now() - t0 < 3000, `PATH 里没有 taskkill 就卡住了：等了 ${Date.now() - t0}ms`)
+})
+
 test('capture 的截断落在 UTF-8 边界上，不切出半个汉字', async () => {
   const dir = tmp()
   // 汉 = U+6C49；用码点拼，免得 .cmd 里的汉字被 cmd 的代码页换掉
@@ -142,10 +184,12 @@ test('capture 的截断落在 UTF-8 边界上，不切出半个汉字', async ()
   assert.equal(r.out, String.fromCharCode(0x6c49).repeat(2730))
 })
 
-test('capture 把 75/69 分别折成 timeout/missing，其它非零码是 crash', async () => {
+test('capture 把 64/75/69 分别折成 usage/timeout/missing，其它非零码才是 crash', async () => {
   const dir = tmp()
   const exits = (code) =>
     capture({ name: `x${code}`, file: makePart(dir, `x${code}`, `process.exit(${code})`) })
+  const u = await exits(64)
+  assert.deepEqual([u.status, u.code], ['usage', 64]) // 参数错不能算"零件崩了"
   const a = await exits(75)
   assert.deepEqual([a.status, a.code], ['timeout', 75])
   const b = await exits(69)
@@ -156,12 +200,46 @@ test('capture 把 75/69 分别折成 timeout/missing，其它非零码是 crash'
   assert.deepEqual([d.status, d.code], ['ok', 0])
 })
 
-test('%名字% 形式的参数在 Windows 上被拒，说"不安全的参数"', winOnly('cmd 展开只发生在 Windows'), async () => {
+test('capture 把调用方要的超时夹在 30 秒上限内，不许零件把调用方拴住', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'quick', 'process.exit(0)')
+  const r = await capture({ name: 'quick', file }, { timeout: 10 * 60 * 1000 })
+  assert.deepEqual([r.status, r.timeout], ['ok', 30000])
+})
+
+test('capture 拿到 0 / NaN / 负的超时退回默认 5 秒，不当成"立刻超时"', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'quick2', 'process.exit(0)')
+  for (const given of [0, NaN, -1, undefined]) {
+    const r = await capture({ name: 'quick2', file }, { timeout: given })
+    assert.equal(r.timeout, 5000, `timeout=${String(given)} 没退回默认值`)
+  }
+})
+
+test('参数里有 %名字% 时拒收，算调用方的参数错(usage)，不算零件缺了', winOnly('cmd 展开只发生在 Windows'), async () => {
   const dir = tmp()
   const file = makePart(dir, 'echoit', 'console.log(process.argv.slice(2).join())')
   const r = await capture({ name: 'echoit', file }, { args: ['%PATH%'] })
-  assert.deepEqual([r.status, r.why], ['missing', '不安全的参数'])
+  assert.deepEqual([r.status, r.why], ['usage', '不安全的参数'])
   assert.throws(() => passthrough({ name: 'echoit', file }, ['%PATH%']), /不安全的展开/)
+})
+
+test('子串与替换语法也拦：%PATH:~0,5% 与 %COMSPEC:cmd=zzz% 一样会被 cmd 换掉', winOnly('cmd 展开只发生在 Windows'), async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'echoit2', 'console.log(process.argv.slice(2).join())')
+  for (const arg of ['%PATH:~0,5%', '%COMSPEC:cmd=zzz%', '%OS:Windows=xyz%']) {
+    const r = await capture({ name: 'echoit2', file }, { args: [arg] })
+    assert.deepEqual([r.status, r.why], ['usage', '不安全的参数'], `${arg} 没被拦下`)
+  }
+})
+
+test('单个 % 不算展开：50% off 50% 这类参数不误拦', winOnly('cmd 展开只发生在 Windows'), async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'echoit3', `console.log('ok')`)
+  for (const arg of ['50%', '50% off 50%', '100%%', '%NOPE']) {
+    const r = await capture({ name: 'echoit3', file }, { args: [arg] })
+    assert.equal(r.status, 'ok', `${arg} 被误拦：${r.why ?? ''}`)
+  }
 })
 
 test('capture 碰上一个不存在的文件返回 missing，不抛', async () => {
@@ -198,4 +276,18 @@ test('blocked 认时间冷却，也认"下一次会话"哨兵', () => {
   assert.equal(blocked({ fail: 1, until: null }, 5000), false)
   assert.equal(blocked({ fail: 1, until: Infinity }, 5000), true)
   assert.equal(blocked(undefined, 5000), false)
+})
+
+test('冷却到下一次会话的哨兵过一遍 JSON 也不许解除(Infinity 落盘后是 null)', () => {
+  const three = bump(bump(bump({ fail: 0, until: null })))
+  const persisted = JSON.parse(JSON.stringify(three))
+  assert.deepEqual(persisted, { fail: 3, until: null }) // JSON 里没有 Infinity
+  assert.equal(blocked(persisted, 1000), true)
+})
+
+test('会话开始清零之后冷却真的解除，两次失败不算冷却', () => {
+  assert.equal(blocked({ fail: 0, until: null }, 1000), false)
+  const two = JSON.parse(JSON.stringify(bump(bump({ fail: 0, until: null }))))
+  assert.deepEqual(two, { fail: 2, until: null })
+  assert.equal(blocked(two, 1000), false)
 })

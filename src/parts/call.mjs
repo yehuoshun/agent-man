@@ -3,13 +3,17 @@
 // 契约见 docs/design.md §8，Windows 上的引号与 %名字% 结论见 docs/decisions.md §32。
 import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { PART_TIMEOUT, PART_STDOUT_MAX } from '../core/index.mjs'
+import { PART_TIMEOUT, PART_TIMEOUT_MAX, PART_STDOUT_MAX } from '../core/index.mjs'
 
 const WIN = process.platform === 'win32'
 
 // Windows 的 cmd 会把 %名字% 换成环境变量，包在引号里也照换，^% 和 %% 更错（§32 实测四种写法）。
 // 所以命中就拒绝，不猜着转义：悄悄改掉调用方给的字符串，比让它看到一句"不安全的参数"危险得多。
-const ENV_EXPANSION = /%[A-Za-z_][A-Za-z0-9_]*%/
+// 判据不能只认「完整的 %名字%」：子串与替换语法（%PATH:~0,5%、%COMSPEC:cmd=zzz%、
+// %OS:Windows=xyz%）实测一样照换，只是冒号后面换了个样子。所以认「% + 名字开头 + 直到下一个 %」
+// 这一段，冒号、逗号、等号都在里面。单靠 % 不算数：50% off 50%、100%%、% 结尾这些实测都是原样
+// 落地的，拦下来只会让正常参数过不去。
+const ENV_EXPANSION = /%[A-Za-z_][^%]*%/
 
 function unsafeArg(args) {
   if (!WIN) return null
@@ -34,18 +38,36 @@ function commandOf(file, args, env) {
 // 超时要立刻收手，不能等零件自己结束。Windows 上真正的零件是 cmd.exe 的孙子进程：
 // child.kill() 只终止 cmd.exe，零件会活下来接着跑（实测：杀掉之后它照样写文件），
 // "超时"就成了嘴上说说。taskkill /t 才是整棵树，而且必须在 cmd.exe 还活着的时候发。
+// 但 taskkill 是外部程序：它可能根本不在（PATH 被改过、被安全软件挡下），也可能跑起来
+// 却办不成事（权限不足、pid 已经没了）。原来这条路径是 fire-and-forget，spawn 出来的
+// ChildProcess 没人听它的 'error'，ENOENT 一到就是未处理的 'error' 事件，把整个进程
+// 带走——超时保护自己成了崩溃点，还连带丢掉这次调用的结果。两种失败都退回 child.kill()，
+// 少杀一棵子树也强过留一个没人管的进程。
 function killTree(child) {
   if (!child?.pid) return
-  try {
-    if (WIN) {
-      const argv = ['/pid', String(child.pid), '/t', '/f']
-      spawn('taskkill', argv, { stdio: 'ignore', windowsHide: true })
-    } else {
+  const lastResort = () => {
+    try {
       child.kill('SIGKILL')
+    } catch {
+      // 进程已经自己退了：不是错误，结果由 close 决定，这里不抢答。
     }
-  } catch {
-    // 进程已经自己退了：不是错误，结果由 close 决定，这里不抢答。
   }
+  if (!WIN) return lastResort()
+  let killer = null
+  try {
+    killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  } catch {
+    return lastResort()
+  }
+  if (!killer) return lastResort()
+  killer.on('error', lastResort)
+  // 退出码非 0 说明它没办成（进程没了、权限不足）：cmd.exe 至少得死。
+  killer.on('close', (code) => {
+    if (code !== 0) lastResort()
+  })
 }
 
 // 不主动断开管道的话，万一有孙子进程还攥着写端，我们的句柄不关、事件循环不退出。
@@ -98,10 +120,21 @@ function sink(cap) {
   }
 }
 
-// 契约（§8）把 75 定为超时、69 定为依赖缺失：这两个码要穿透成 status，好让上游按
-// "摘掉这个能力/冷却"处理，而不是当成一次普通崩溃。
+// 上限要夹在真正计时的地方，不能只夹 --describe 回包里那个数：§8 说的是"骨架强制超时"，
+// 那对零件自己报的数、对调用方随手给的数都得成立。0 / NaN / 负数不当成"立刻超时"，
+// 退回默认值——1ms 的超时是个没人想要的答案。
+function deadline(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return PART_TIMEOUT
+  return Math.min(ms, PART_TIMEOUT_MAX)
+}
+
+// 契约（§8）的四个退出码各自成一个 status：0 成功、64 参数错、69 依赖缺失、75 超时。
+// 64 必须单独站出来——参数错是调用方写错了参数，§8 里"摘掉能力/连续失败冷却"针对的是
+// 崩溃、超时、缺失这三类；把参数错折成 crash 或 missing，等于让人写错三次参数就把一个
+// 好零件白白冷却掉，屏上还会多一行"这个能力不可用"的假降级说明。
 function classify(code) {
   if (code === 0) return 'ok'
+  if (code === 64) return 'usage'
   if (code === 75) return 'timeout'
   if (code === 69) return 'missing'
   return 'crash'
@@ -112,7 +145,7 @@ function classify(code) {
 export function passthrough(part, args = [], env = process.env) {
   const argv = [...args].map(String)
   const bad = unsafeArg(argv)
-  if (bad) throw new Error(`零件参数里有不安全的展开 ${bad}：Windows 上 cmd 会把它换成环境变量`)
+  if (bad) throw new Error(`零件参数里有不安全的展开 ${bad}：Windows 上 cmd 可能把它换成环境变量`)
   const { cmd, argv: line, verbatim } = commandOf(part.file, argv, env)
   const r = spawnSync(cmd, line, {
     stdio: 'inherit',
@@ -128,7 +161,10 @@ export function passthrough(part, args = [], env = process.env) {
   return r.signal ? 128 : (r.status ?? 1)
 }
 
-// 捕获：返回 {status, code, out, err, truncated}，永不抛。
+// 捕获：返回 {status, code, out, err, truncated, timeout}，永不抛。timeout 是实际生效的期限
+// （夹过上限之后的），调用方和 whyNot 都该按这个数说，而不是按它请求的那个数说。
+// status 只有五个值：ok / usage（参数错）/ timeout / missing / crash。上游要照 §8 决定
+// 摘不摘这个能力，就得看得出这五者的区别。
 // 异步是因为超时必须在计时到点那一刻杀树——spawnSync 的超时杀掉 cmd.exe 之后就轮不到
 // 我们动手了，孙子进程会漏网（见 killTree 的注释）。
 // 第三个参数 env 是 design §7 的写法，{env} 是调用方更顺手的写法，两个都收。
@@ -136,7 +172,7 @@ export function capture(part, opts = {}, legacyEnv) {
   const o = opts ?? {}
   const env = o.env ?? legacyEnv ?? process.env
   const args = (Array.isArray(o.args) ? o.args : []).map(String)
-  const timeout = Number.isFinite(o.timeout) && o.timeout > 0 ? o.timeout : PART_TIMEOUT
+  const timeout = deadline(o.timeout)
   const limit = Number.isFinite(o.limit) && o.limit >= 0 ? o.limit : PART_STDOUT_MAX
   const out = sink(limit)
   const err = sink(limit)
@@ -154,13 +190,15 @@ export function capture(part, opts = {}, legacyEnv) {
         out: out.text(),
         err: err.text(),
         truncated: out.over || err.over,
+        timeout,
         ...patch,
       })
     }
 
     try {
       if (!part?.file) return finish({ status: 'missing', why: '没有可执行文件' })
-      if (unsafeArg(args)) return finish({ status: 'missing', why: '不安全的参数' })
+      // 参数不安全也是调用方的错（同 64），不是零件没装：报 usage，别让它进冷却计数。
+      if (unsafeArg(args)) return finish({ status: 'usage', why: '不安全的参数' })
       const { cmd, argv, verbatim } = commandOf(part.file, args, env)
       const child = spawn(cmd, argv, {
         env,
