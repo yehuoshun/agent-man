@@ -2,3 +2,4 @@
 // 读：build（只算、不写盘）；写：run（渲染 + 输出 + seen +1 + 落账），外加记账的两个零件。
 // 复述记账只发生在这里（design §5）：别的层要 seen +1，走 run 或 retell，别自己写 memory.jsonl。
 export { build } from './build.mjs'
+export { retell } from './seen.mjs'
