@@ -1,8 +1,6 @@
 // 预算按"宽度"算而不是按字符数：一个汉字占两列、一个 ASCII 占一列。
 // 混排时按字符数记会高估英文、低估中文，"注入那一屏 1000 cost"就成了假数（design §5）。
-
-const COST_ASCII = 0.28
-const COST_WIDE = 1
+import { COST_ASCII, COST_WIDE } from './const.mjs'
 
 // 宽度 1 的字符区间。用一张表一次判完，比逐段 if 好读；不做字素分段——
 // 预算不需要那么精确，组合符号多算半个也无伤大雅。
