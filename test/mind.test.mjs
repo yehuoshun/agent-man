@@ -20,8 +20,12 @@ const HOUR = 60 * MINUTE
 const at = (day, hours, mins = 0) => new Date(2026, 10, day, hours, mins, 0).getTime()
 const T = at(13, 15, 0)
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function seed(home, id, ts, text = '她关窗', cues = []) {
@@ -518,4 +522,9 @@ test('简报是读命令：算一遍不写盘，也不顺手记账', async () =>
   const before = snapshot(home)
   brief(home, { now: T })
   assert.deepEqual(snapshot(home), before)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

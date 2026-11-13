@@ -18,8 +18,12 @@ const DAY = 24 * 60 * 60 * 1000
 const NOW = new Date(2026, 10, 13, 21, 40, 0).getTime()
 const QUIET = { say: () => {}, warn: () => {} }
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function seedEvent(home, { id, at = NOW, text = '把 recall 的 fit 跑通了' }) {
@@ -362,3 +366,7 @@ test('"还没巩固过"由 audit.trace 回空数组表达：digest 不再自带 
   assert.equal(auditTrace({ home, now: NOW }).items.length, 1, '已经落过账了还说从没落过')
 })
 
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
+})

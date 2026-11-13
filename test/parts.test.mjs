@@ -7,7 +7,12 @@ import path from 'node:path'
 import { scan, describe, capture, passthrough, bump, blocked } from '../src/parts/index.mjs'
 
 const WIN = process.platform === 'win32'
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+const HOMES = []
+const tmp = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
+}
 
 // 造一个零件。Windows 上 PATH 里的零件只有 .exe/.cmd/.bat/无后缀，.exe 造不出来，所以用 .cmd；
 // 其它平台用无后缀 + x 位（有后缀的 scan 不认，没 x 位的它也跳过）。
@@ -290,4 +295,9 @@ test('会话开始清零之后冷却真的解除，两次失败不算冷却', ()
   const two = JSON.parse(JSON.stringify(bump(bump({ fail: 0, until: null }))))
   assert.deepEqual(two, { fail: 2, until: null })
   assert.equal(blocked(two, 1000), false)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

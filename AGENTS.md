@@ -53,7 +53,8 @@
 
 - `node --test`，用例名用中文写**约束**，不写函数名。
 - 时间用例必须传死 `now`，不许依赖当前时钟；构造"本地某天某点"用本地时间构造函数，不写死 `+08:00` 字符串（CI 有纽约时区腿）。
-- 临时目录用 `fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))`。
+- 临时目录用 `fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))`，且每个用例文件用
+  `test.after` 兜底删掉：一次全量会开出两百多个，不删就在系统临时目录里攒成垃圾。
 - CLI 层用 `main(argv, { env, out, now })` + 记录器断言 stdout/stderr，不 spawn 子进程。
 - 断言"不超预算"要真跑 `cost()` 复核，不能只断言布尔。
 

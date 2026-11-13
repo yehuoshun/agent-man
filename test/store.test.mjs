@@ -10,8 +10,12 @@ import {
 } from '../src/store/index.mjs'
 
 // 数据目录一律现开现用：用例之间不共享盘上状态，也就没有"顺序依赖"这回事。
+const HOMES = []
+
 function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 const names = (files) => files.map((f) => path.basename(f))
@@ -268,4 +272,9 @@ test('checkHome 只读：缺目录与缺 schema.json 都说清原因，且不写
 
   fs.writeFileSync(path.join(dir, 'schema.json'), '{oops')
   assert.match(checkHome(dir).why, /schema\.json/)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

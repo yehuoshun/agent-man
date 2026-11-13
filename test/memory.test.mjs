@@ -23,8 +23,12 @@ const DAY = 24 * 60 * 60 * 1000
 // 时间用例一律传死 now（AGENTS 六）；用本地时间构造，CI 的纽约时区腿也成立。
 const NOW = new Date(2026, 10, 13, 21, 40, 0).getTime()
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function ctxOf(home, now = NOW) {
@@ -446,4 +450,9 @@ test('events 跨天合读：[from,to] 两端都含，坏行计数不吞', () => 
 test('缺 ctx.home：明确报错，不往当前工作目录写记忆', async () => {
   await assert.rejects(add({ key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1'] } }), /ctx\.home/)
   assert.throws(() => ls({ all: true }), /ctx\.home/)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

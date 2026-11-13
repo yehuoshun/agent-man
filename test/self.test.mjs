@@ -11,8 +11,12 @@ const DAY = 24 * 60 * 60 * 1000
 // 时间用例一律传死 now（AGENTS 六）：`## 日期` 用的是本地日期，纽约时区腿也成立。
 const NOW = new Date(2026, 10, 13, 21, 40, 0).getTime()
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function selfPath(home) {
@@ -122,4 +126,9 @@ test('写到自我块走原子写：落盘后目录里不留 .tmp', async () => 
 test('缺 home：明确报错，不往当前工作目录写自我块', async () => {
   await assert.rejects(() => setSelf(undefined, '文本', { now: NOW }), /需要一个数据目录/)
   assert.throws(() => readSelf(''), /需要一个数据目录/)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

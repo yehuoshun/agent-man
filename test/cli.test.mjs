@@ -11,8 +11,11 @@ import { appendJsonl, ensure, eventsFile, metaFile, readJsonl, stateFile } from 
 
 // CLI 层的用例只认命令行的进出：main(argv, { env, out, err, now }) + 记录器，
 // 不 spawn 子进程（design §11）。时间传死，PATH 清空——零件直通不在这里碰真系统。
+const HOMES = []
+
 function box() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
   const now = new Date(2026, 10, 14, 10, 0, 0).getTime()
   return { dir, now, env: { AGENT_MAN_HOME: dir, PATH: '' } }
 }
@@ -558,4 +561,9 @@ test('memory add 的 --from 不认日期区间：退 2，并指去 event id', as
     '--from', '2026-11-01..2026-11-03'])
   assert.equal(got.code, 2)
   assert.match(got.err, /证据要写事件 id（--from 区间这一版不支持）/)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

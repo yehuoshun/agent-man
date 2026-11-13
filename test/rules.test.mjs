@@ -11,8 +11,12 @@ const DAY = 24 * 60 * 60 * 1000
 // 时间用例一律传死 now（AGENTS 六）：规矩不衰减，但排序与标题日期都得可复现。
 const NOW = new Date(2026, 10, 13, 21, 40, 0).getTime()
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function rulesPath(home) {
@@ -261,4 +265,9 @@ test('数据里活条超过上限：不删也不抛，把超出的条数交给�
 test('缺 home：明确报错，不往当前工作目录写规矩', async () => {
   await assert.rejects(() => addRule(undefined, { text: '规矩', why: '理由', now: NOW }), /需要一个数据目录/)
   assert.throws(() => listRules(''), /需要一个数据目录/)
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })

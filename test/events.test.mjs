@@ -11,8 +11,12 @@ import { readJsonl, eventsFile } from '../src/store/index.mjs'
 // 时间用例一律传死 now（AGENTS 六）；用本地时间构造，CI 的纽约时区腿也成立。
 const NOW = new Date(2026, 10, 13, 21, 40, 0).getTime()
 
+const HOMES = []
+
 function newHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  return dir
 }
 
 function ctxOf(home, now = NOW) {
@@ -109,4 +113,9 @@ test('写进去的事件能被 events() 按窗口读回来', async () => {
   assert.equal(read.items.length, 1)
   assert.equal(read.items[0].id, one.id)
   assert.equal(read.items[0].text, '她说周五的体检报告该出来了')
+})
+
+// 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
+test.after(() => {
+  for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })
