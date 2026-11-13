@@ -62,3 +62,7 @@ export const PART_TIMEOUT = 5000 // ms
 export const PART_TIMEOUT_MAX = 30000 // ms
 export const PART_STDOUT_MAX = 8192 // 字节
 export const PART_FAIL_LIMIT = 3 // 次
+
+// —— 审计读多少（design §6：audit trace / timeline 的缺省条数）——
+export const AUDIT_LIMIT = 20 // 条：两个读命令共用的缺省上限
+export const TRACE_KEEP_MONTHS = 12 // 月：保留上限，读取不裁——审计要看全，清理是将来 prun 的事

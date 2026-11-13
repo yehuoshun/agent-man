@@ -1,10 +1,10 @@
 // audit trace（design §6）：把 digest 落的摘要账倒着读一遍，最近那次在最前。
 // 只读：账本由 digest 写（design §5 末尾"读命令一律不写盘"），这一层没有 appendJsonl 的入口。
+import { AUDIT_LIMIT } from '../core/index.mjs'
 import { listShards, readJsonl } from '../store/index.mjs'
 
-// --limit 的缺省：design §6 只写了 `audit trace [--limit N]`，20 不在 §10 的常数表里，
-// 所以不替它编一个 core 常数，只在这里写一次（要改口径也只改这一处）。
-const LIMIT_DEFAULT = 20
+// --limit 的缺省收在 core（§10 的 AUDIT_LIMIT）：trace 与 timeline 用同一个数，
+// 不然两个读命令会慢慢长出两套口径。
 
 // now 收下不用：这本账按 at 倒序读，没有窗口、没有衰减，解释时间只会多出一个口径
 // （AGENTS 二·3 只让 core/time 解释时间，这里连解释都不需要）。签名与 timeline/orphan 对齐。
@@ -56,9 +56,9 @@ function isId(value) {
 
 // limit 只认非负整数：--limit 0 是"给我看看总数但不列条目"，-1 和 1.5 是打错了，直接说清楚。
 function capOf(value) {
-  if (value === undefined || value === null) return LIMIT_DEFAULT
+  if (value === undefined || value === null) return AUDIT_LIMIT
   if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`trace 的 limit 只能是非负整数，拿到 ${String(value)}（缺省 ${LIMIT_DEFAULT}）`)
+    throw new Error(`trace 的 limit 只能是非负整数，拿到 ${String(value)}（缺省 ${AUDIT_LIMIT}）`)
   }
   return value
 }

@@ -155,6 +155,9 @@ agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（�
 `show`→`memory show`、`look`→`context show`。
 资源无动作时等价 `ls`。
 
+`audit timeline` 的窗口对五类一起生效（它答的是"最近发生了什么"），`--all` 才全量；
+`audit trace` 不按时期裁剪（保留上限 `TRACE_KEEP` 只给将来的清理用，审计要能看全）。
+
 退出码：`0` 成功/有话要说；`1` 不说（cue 的"不打扰"）；`2` 用法或数据错误。
 每个读命令都支持 `--json`，输出结构化结果；`stdout` 只放结果，`stderr` 只放 `! ` 开头的警告。
 
@@ -171,13 +174,16 @@ src/
   recall/  index rank find budget
   mind/    index situation debt gate
   digest/  index digest trace
+  audit/   index trace timeline orphan doctor
+  soul/    index store card inject
+  affect/  index state decay label stim
   parts/   index discover call
   view/    index screen digest records
   cli/     index main registry
   host/dsh/index inject tools recall
 ```
 
-依赖只能向下：`cli → view → mind / digest / recall → memory / intent / parts → store → core`。
+依赖只能向下：`cli → view / audit → mind / digest / soul → recall / memory / intent / parts / affect → store → core`。
 跨目录只准 import 门面 `<dir>/index.mjs`；同层之间只许调用门面导出的读接口。
 `node:child_process` 只许出现在 `src/parts/call.mjs`；`fetch` 全仓禁止。
 一个目录最多 5 个文件（门面 `index.mjs` 不计）。
@@ -207,12 +213,23 @@ src/
 | mind/gate | `judge({home,now,minGap,quiet,force})` → `{say,why}` |
 | digest/digest | `build({home,now,budget})` → `{text,kept,dropped,header,used}` |
 | digest/trace | `record(home,stats)` `list(home,limit)` `never(home)` |
+| audit/trace | `trace({home,now,limit})` → `{items,total,limit,skipped}` |
+| audit/timeline | `timeline({home,now,limit,all})` → `{items,total,limit,since,all,skipped}` |
+| audit/orphan | `orphan({home})` → memory 的 `{items,skipped}` 原样 |
+| audit/doctor | `doctor({home,ctx})` → `{ok,checks[{name,ok,detail}]}` |
+| soul/store | `read(home)` `use(home,{name,at})` `list(home)` `card(home,name)` |
+| soul/card | `parse(md)` `check(card)` `fromCc(json)` |
+| soul/inject | `block({home,now,budget})` → `{text,used,dropped}` |
+| affect/state | `read(home,now)` `stim(home,one)` `set(home,{axis,value,until,why,at})` `clear(home,at)` |
+| affect/decay | `decay(i0,dt,half)` `merge(a,b)` |
+| affect/label | `mood(v,e)` `transient(stims,now)` `persistent({t,r})` |
+| affect/stim | `KINDS` `weightOf(kind)` |
 | parts/discover | `scan(env)` `describe(part,{timeout})` |
 | parts/call | `passthrough(part,args,env)` `capture(part,{timeout,limit},env)` |
 | view/screen | `render(situation)` |
 | view/digest | `render(digest)` |
 | view/records | `list(items,kind)` `item(rec,kind)` |
-| cli/registry | `TABLE` `resolve(argv)` |
+| cli/registry | `TABLE` `resolve(argv)` `doctor(ctx)` |
 | cli/main | `main(argv,env)` → exit code |
 
 ## 8. 插件契约
@@ -250,7 +267,7 @@ DEBT_SUM_IMP 12  DEBT_UNREFLECTED 40  DEBT_STALE 24h
 CLUSTER_HITS 3  CLUSTER_DAYS 2
 CUE_MIN_GAP 6h  QUIET 23:00–08:00
 NOTE_TTL 7d  RULE_LIMIT 20  SELF_STALE 30d
-JUDGE_KEEP 200  TRACE_KEEP 12 月
+JUDGE_KEEP 200  TRACE_KEEP 12 月  AUDIT_LIMIT 20
 DEFAULT_WINDOW_DAYS 30
 PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
 AFFECT_MOOD_HALF 8h  AFFECT_ENERGY_HALF 3h  AFFECT_TRUST_HALF 60d  AFFECT_RESPECT_HALF 90d
