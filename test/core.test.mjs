@@ -118,8 +118,9 @@ test('各种写法都能一次解释成 epoch ms（本地时间，不写死时�
 
 test('解析不了返回 null 而不抛：调用方要能把它变成"退出码 2 + 怎么改"', () => {
   const nowAt = new Date(2026, 10, 13, 1, 40).getTime()
-  for (const bad of ['昨晚', '明天下午', '', '   ', '2026-02-30', '2026-13-01', '25:00', '3w', null, undefined, 42]) {
-    assert.equal(parseWhen(bad, nowAt), null, `${String(bad)} 不该被解析出时间`)
+  const bad = ['昨晚', '明天下午', '', '   ', '2026-02-30', '2026-13-01', '25:00', '3w', null, undefined, 42]
+  for (const input of bad) {
+    assert.equal(parseWhen(input, nowAt), null, `${String(input)} 不该被解析出时间`)
   }
 })
 
