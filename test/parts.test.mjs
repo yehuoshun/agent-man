@@ -130,6 +130,21 @@ test('超时在 Windows 上连 cmd.exe 的孙子进程一起杀', winOnly('POSIX
   assert.equal(fs.existsSync(marker), false, '孙子进程活到了 1.2 秒：只杀了 cmd.exe')
 })
 
+test('超时杀树不靠 PATH：PATH 清空后照样按时收手', winOnly('POSIX 走 child.kill'), async () => {
+  const dir = tmp()
+  // PATH 里只有空目录：cmd.exe 靠 ComSpec 的绝对路径照旧起得来，PATH 里没有 taskkill。
+  const empty = path.join(dir, 'empty-path')
+  fs.mkdirSync(empty)
+  const file = path.join(dir, 'agent-man-hang.cmd')
+  // 零件自己也得用绝对路径，否则 cmd.exe 也找不到 node。
+  fs.writeFileSync(file, `@${process.execPath} -e "setTimeout(() => {}, 1500)"\r\n`, 'utf8')
+  const env = { ...process.env, PATH: empty, Path: empty, ComSpec: process.env.ComSpec }
+  const t0 = Date.now()
+  const r = await capture({ name: 'hang', file }, { timeout: 300, env })
+  assert.equal(r.status, 'timeout')
+  assert.ok(Date.now() - t0 < 3000, `PATH 里没有 taskkill 就卡住了：等了 ${Date.now() - t0}ms`)
+})
+
 test('capture 的截断落在 UTF-8 边界上，不切出半个汉字', async () => {
   const dir = tmp()
   // 汉 = U+6C49；用码点拼，免得 .cmd 里的汉字被 cmd 的代码页换掉

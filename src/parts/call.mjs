@@ -39,18 +39,36 @@ function commandOf(file, args, env) {
 // 超时要立刻收手，不能等零件自己结束。Windows 上真正的零件是 cmd.exe 的孙子进程：
 // child.kill() 只终止 cmd.exe，零件会活下来接着跑（实测：杀掉之后它照样写文件），
 // "超时"就成了嘴上说说。taskkill /t 才是整棵树，而且必须在 cmd.exe 还活着的时候发。
+// 但 taskkill 是外部程序：它可能根本不在（PATH 被改过、被安全软件挡下），也可能跑起来
+// 却办不成事（权限不足、pid 已经没了）。原来这条路径是 fire-and-forget，spawn 出来的
+// ChildProcess 没人听它的 'error'，ENOENT 一到就是未处理的 'error' 事件，把整个进程
+// 带走——超时保护自己成了崩溃点，还连带丢掉这次调用的结果。两种失败都退回 child.kill()，
+// 少杀一棵子树也强过留一个没人管的进程。
 function killTree(child) {
   if (!child?.pid) return
-  try {
-    if (WIN) {
-      const argv = ['/pid', String(child.pid), '/t', '/f']
-      spawn('taskkill', argv, { stdio: 'ignore', windowsHide: true })
-    } else {
+  const lastResort = () => {
+    try {
       child.kill('SIGKILL')
+    } catch {
+      // 进程已经自己退了：不是错误，结果由 close 决定，这里不抢答。
     }
-  } catch {
-    // 进程已经自己退了：不是错误，结果由 close 决定，这里不抢答。
   }
+  if (!WIN) return lastResort()
+  let killer = null
+  try {
+    killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  } catch {
+    return lastResort()
+  }
+  if (!killer) return lastResort()
+  killer.on('error', lastResort)
+  // 退出码非 0 说明它没办成（进程没了、权限不足）：cmd.exe 至少得死。
+  killer.on('close', (code) => {
+    if (code !== 0) lastResort()
+  })
 }
 
 // 不主动断开管道的话，万一有孙子进程还攥着写端，我们的句柄不关、事件循环不退出。
