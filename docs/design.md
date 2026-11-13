@@ -272,7 +272,7 @@ DEFAULT_WINDOW_DAYS 30
 PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
 AFFECT_MOOD_HALF 8h  AFFECT_ENERGY_HALF 3h  AFFECT_TRUST_HALF 60d  AFFECT_RESPECT_HALF 90d
 AFFECT_EMOTION_HALF 45min  AFFECT_STIM_PER_HOUR 3  AFFECT_NEG_WEIGHT 1.5
-AFFECT_HYST 3  AFFECT_DEADBAND 5  AFFECT_INJECT_COST 80  AFFECT_KEEP 24 月
+AFFECT_HYST 3  AFFECT_DEADBAND 5  AFFECT_INJECT_COST 80  AFFECT_KEEP 24 月  AFFECT_MOOD_HALF_NEG 13h  AFFECT_BIAS_IMP 0  AFFECT_PEAK_KEEP true
 SOUL_INJECT_COST 200  SOUL_USER_COST 100  SOUL_SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120
 AFFECT_HALF_MOOD 8h  AFFECT_HALF_ENERGY 3h  AFFECT_HALF_TRUST 60d  AFFECT_HALF_RESPECT 90d
 AFFECT_HALF_EMOTION 45min  STIM_PER_HOUR 3  NEG_WEIGHT 1.5  AFFECT_HYST 3  AFFECT_DEADBAND 5
@@ -534,7 +534,48 @@ agent-man 不猜情绪。只有显式调用 `agent-man affect stim <kind> [--why
 2. **情绪全局一份**：`state/affect-*.jsonl` 不按灵魂分。换卡换的是声音，不是心情；切换时保留当前状态，不重置。
 3. **情绪必须可解释**：每条刺激带 `kind` + `why` + `at`；显示时给数字、标签、最近三条原因；没有 `why` 的刺激拒绝写入。
 
-### 14.12 模块
+### 14.12 影响面清单（影响什么、不影响什么）
+
+| 项 | 情绪怎么影响它 | 上限 |
+|---|---|---|
+| 措辞与长度 | 低落更短更平，兴奋允许多说一句 | 只改表达，不改结论 |
+| 主动程度 | 见 §14.5 两个口子 | 不改"该不该说"的是非 |
+| 事件记账权重 | 情绪高时自己记的事件 `imp` 上调，低落时下调（mood-congruent） | **默认关**（`AFFECT_BIAS_IMP=0`），开也只对 `src=self`、限 ±1 |
+| 事实与真值 | **完全不改** | — |
+| `audit` 结论 | **完全不改** | — |
+| 记忆写入 | 除"记账权重"那一条外，**完全不改** | — |
+
+精力按 **episode 结算一次**（一个任务/一轮对话结束时调一次 `affect stim`），不按消息条数扣——
+按条扣会把"聊了十句"算成精疲力竭。
+
+### 14.13 账本要记当时的状态
+
+每次 `cue` 判决、每次 `digest` 落账，`state/trace-*.jsonl` 里多记一个快照字段：
+
+```json
+"affect": { "v": 38, "e": 52, "t": 43, "r": -20, "mood": "低落", "why": "task.fail" }
+```
+
+只记数字、标签与那条刺激的 `kind`，**不记自然语言**。事后能回答"那天它为什么没说话"，
+而不用猜；这也是过演/长期低落检测的数据来源。
+
+### 14.14 三个防失真细节
+
+1. **负向衰减更慢**：`AFFECT_MOOD_HALF_NEG = 13h`（正向 8h）；`decay` 只逼近基线、**不穿越**——
+   `v` 从 90 落回 50 就停在 50，不会因为刺激过期而掉到 20。
+2. **关系峰值**：`meta.affect.peaks = { trust, respect, at }` 记历史最高，显示成 `信任 43（最高 71）`。
+   衰减该抹掉的是"当下情绪"，不是"我们曾经到过哪"。
+3. **override 到期不跳变**：`affect set --for 2h` 期间照常记刺激但标 `overridden`；到期后以 override 值
+   作为新的当前值继续衰减，**不瞬间弹回自动值**（否则看起来像"情绪被时间掐断"）。
+
+### 14.15 两条对照检测
+
+- 过演：30 天里 `v >= 80` 的时长占比 >60% → `! 情绪长期偏高，可能过演`
+- 长期低落：30 天里 `v <= 20` 的时长占比 >40% → `! 情绪长期偏低，检查刺激来源`
+
+两条都只报警、不改数值；报警文案进 `doctor` 与 `affect why`。
+
+### 14.16 模块
 
 `src/affect/{index,state,decay,label,stim}.mjs`——`state` 管日志与基线/覆盖、`decay` 管纯函数、`label` 管 16 格与瞬时/持久映射、
 `stim` 管 kind→权重的封闭表与校验。命令：`affect show`、`affect set`、`affect stim`、`affect clear`。
