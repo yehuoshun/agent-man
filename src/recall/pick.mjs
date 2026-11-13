@@ -25,7 +25,8 @@ export function allocate(total, used = null) {
   // 差的这一点补进 events，让"分配"这一步本身不吞预算。
   const base = { memory: shareMemory, events: shareEvents + (cap - shareMemory - shareEvents) }
   if (used === null || used === undefined) {
-    return { total: cap, memory: base.memory, events: base.events, borrowed: 0, spare: 0, short: shortOf(0, 0) }
+    const short = shortOf(0, 0)
+    return { total: cap, memory: base.memory, events: base.events, borrowed: 0, spare: 0, short }
   }
 
   const want = { memory: wantOf(used, 'memory'), events: wantOf(used, 'events') }
@@ -43,7 +44,8 @@ export function allocate(total, used = null) {
     spare -= give
     borrowed += give
   }
-  return { total: cap, memory, events, borrowed, spare, short: shortOf(want.memory - memory, want.events - events) }
+  const short = shortOf(want.memory - memory, want.events - events)
+  return { total: cap, memory, events, borrowed, spare, short }
 }
 
 function shortOf(memory, events) {

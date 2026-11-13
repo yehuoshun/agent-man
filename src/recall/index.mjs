@@ -3,3 +3,4 @@
 export { kindOf, idOf, textOf, atOf, strength, retention } from './strength.mjs'
 export { cue, score, rank, sortByScore } from './rank.mjs'
 export { guarantee, allocate } from './pick.mjs'
+export { costOf, cut, fit } from './budget.mjs'
