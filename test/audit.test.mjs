@@ -79,6 +79,7 @@ function check(report, name) {
   assert.ok(one, `doctor 少了「${name}」这一项`)
   return one
 }
+
 test('trace 按 at 倒序只给最近 20 条，但总数照实说', async () => {
   await inHome(async (home) => {
     for (let i = 0; i < 25; i += 1) seedTrace(home, traceRow(NOW - i * MINUTE))
@@ -93,6 +94,7 @@ test('trace 按 at 倒序只给最近 20 条，但总数照实说', async () => 
     assert.deepEqual(got.items[0].dropped, [{ id: 'e-2', reason: 'budget' }])
   })
 })
+
 test('trace 跨月分片一起读：上个月的账不会因为翻月就不见', async () => {
   await inHome(async (home) => {
     const last = new Date(2026, 9, 5, 9, 0).getTime()
@@ -105,6 +107,7 @@ test('trace 跨月分片一起读：上个月的账不会因为翻月就不见',
     assert.equal(got.total, 2)
   })
 })
+
 test('trace 坏行与形状不全的行跳过并计数，不装作没发生', async () => {
   await inHome(async (home) => {
     seedTrace(home, traceRow(NOW))
@@ -116,6 +119,7 @@ test('trace 坏行与形状不全的行跳过并计数，不装作没发生', as
     assert.deepEqual(got.items.map((one) => one.at), [NOW])
   })
 })
+
 test('trace 的 limit 只认非负整数，打错就拒绝并说清怎么给', async () => {
   await inHome(async (home) => {
     seedTrace(home, traceRow(NOW))
@@ -127,6 +131,7 @@ test('trace 的 limit 只认非负整数，打错就拒绝并说清怎么给', a
     assert.equal(none.total, 1)
   })
 })
+
 test('trace 是读命令：跑完账本一个字节都不变', async () => {
   await inHome(async (home) => {
     seedTrace(home, traceRow(NOW))
@@ -135,12 +140,14 @@ test('trace 是读命令：跑完账本一个字节都不变', async () => {
     assert.deepEqual(snapshot(home), before)
   })
 })
+
 test('trace 在没有数据的地方不抛也不建库', async () => {
   await inHome(async (home) => {
     assert.deepEqual(trace({ home, now: NOW }), { items: [], total: 0, limit: 20, skipped: 0 })
     assert.deepEqual(fs.readdirSync(home), [])
   })
 })
+
 test('timeline 把五类记忆按 at 排成一条线，kind 用记录的单数名', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW - 5 * HOUR, text: '她关了窗' })
@@ -165,6 +172,7 @@ test('timeline 把五类记忆按 at 排成一条线，kind 用记录的单数�
     assert.equal(got.all, false)
   })
 })
+
 test('timeline 默认只给窗口内的，给了 all 才把更早的也放进来', async () => {
   await inHome(async (home) => {
     const old = NOW - (DEFAULT_WINDOW_DAYS + 1) * DAY
@@ -181,6 +189,7 @@ test('timeline 默认只给窗口内的，给了 all 才把更早的也放进来
     assert.equal(full.all, true)
   })
 })
+
 test('timeline 的 limit 只截显示条数，被截掉的用 total 说出来', async () => {
   await inHome(async (home) => {
     for (let i = 1; i <= 3; i += 1) seedEvent(home, { id: `e-${i}`, at: NOW - i * HOUR, text: `第 ${i} 件` })
@@ -193,6 +202,7 @@ test('timeline 的 limit 只截显示条数，被截掉的用 total 说出来', 
     assert.equal(timeline({ home, now: NOW }).limit, null)
   })
 })
+
 test('timeline 把坏行记为 skipped，不装作时间线是干净的', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW - HOUR, text: '她关了窗' })
@@ -205,6 +215,7 @@ test('timeline 把坏行记为 skipped，不装作时间线是干净的', async 
     assert.deepEqual(got.items.map((one) => one.id), ['e-1', 'r-1'])
   })
 })
+
 test('timeline 不落盘：跑完数据目录的文件数与字节都不变', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW - HOUR, text: '她关了窗' })
@@ -215,10 +226,12 @@ test('timeline 不落盘：跑完数据目录的文件数与字节都不变', as
     assert.deepEqual(snapshot(home), before)
   })
 })
+
 test('timeline 没有 home 就报错，不去读进程的当前目录', async () => {
   assert.throws(() => timeline({ now: NOW }), /timeline 需要一个数据目录/)
   assert.throws(() => timeline({ home: '   ', now: NOW }), /timeline 需要一个数据目录/)
 })
+
 test('证据指向不存在的事件：orphan 把结论与缺的 id 一起列出来', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
@@ -233,6 +246,7 @@ test('证据指向不存在的事件：orphan 把结论与缺的 id 一起列出
     assert.equal(got.skipped, 0)
   })
 })
+
 test('orphan 只报不改：跑完 memory.jsonl 与事件分片一个字节都不变', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
@@ -249,9 +263,11 @@ test('orphan 只报不改：跑完 memory.jsonl 与事件分片一个字节都�
     assert.deepEqual(snapshot(home), before)
   })
 })
+
 test('orphan 没有 home 就报错，不猜一个默认目录', async () => {
   assert.throws(() => orphan({}), /orphan 需要一个数据目录/)
 })
+
 test('空数据目录上 doctor 不抛：说缺 schema，别的项照实报', async () => {
   await inHome(async (home) => {
     const got = doctor({ home, ctx: { home } })
@@ -265,6 +281,7 @@ test('空数据目录上 doctor 不抛：说缺 schema，别的项照实报', as
     assert.equal(check(got, 'rules 活条数').ok, true)
   })
 })
+
 test('坏行不吞：doctor 列出坏行所在文件与行号', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
@@ -279,6 +296,7 @@ test('坏行不吞：doctor 列出坏行所在文件与行号', async () => {
     assert.equal(got.ok, false)
   })
 })
+
 test('同 id 同 at 的两行判为收口副本冲突，并说出是哪个 id', async () => {
   await inHome(async (home) => {
     ensure(home)
@@ -301,6 +319,7 @@ test('同 id 同 at 的两行判为收口副本冲突，并说出是哪个 id', 
     assert.match(one.detail, /at=/)
   })
 })
+
 test(`规则超过 ${RULE_LIMIT} 条 doctor 报红，但不删任何一条`, async () => {
   await inHome(async (home) => {
     for (let i = 1; i <= RULE_LIMIT + 1; i += 1) seedRule(home, { id: `r-${i}`, at: NOW - i * MINUTE })
@@ -314,6 +333,7 @@ test(`规则超过 ${RULE_LIMIT} 条 doctor 报红，但不删任何一条`, asy
     assert.equal(before.split('\n').filter(Boolean).length, RULE_LIMIT + 1)
   })
 })
+
 test('被 supersedes 收口的规矩不算活条数：21 行只留 1 条活', async () => {
   await inHome(async (home) => {
     const old = []
@@ -327,6 +347,7 @@ test('被 supersedes 收口的规矩不算活条数：21 行只留 1 条活', as
     assert.match(one.detail, new RegExp(`1 / ${RULE_LIMIT}`))
   })
 })
+
 test('self.md 超过 SELF_MAX doctor 报红，但文件一字不动', async () => {
   await inHome(async (home) => {
     ensure(home)
@@ -340,6 +361,7 @@ test('self.md 超过 SELF_MAX doctor 报红，但文件一字不动', async () =
     assert.equal(fs.readFileSync(path.join(home, 'self.md'), 'utf8'), text)
   })
 })
+
 test('meta.json 的 parts 冷却记录形状不对就报红，并指出哪个插件哪个字段', async () => {
   await inHome(async (home) => {
     ensure(home)
@@ -356,6 +378,7 @@ test('meta.json 的 parts 冷却记录形状不对就报红，并指出哪个插
     assert.equal(check(doctor({ home }), 'meta.json 冷却记录').ok, true)
   })
 })
+
 test('meta.json 坏成不是 JSON：说读不出，不假装没写过', async () => {
   await inHome(async (home) => {
     ensure(home)
@@ -365,6 +388,7 @@ test('meta.json 坏成不是 JSON：说读不出，不假装没写过', async ()
     assert.match(one.detail, /JSON/)
   })
 })
+
 test('schema 版本与代码不一致就报红，并说清这份数据该怎么处理', async () => {
   await inHome(async (home) => {
     ensure(home)
@@ -374,6 +398,7 @@ test('schema 版本与代码不一致就报红，并说清这份数据该怎么�
     assert.match(one.detail, /2/)
   })
 })
+
 test('数据目录不存在时 doctor 不抛，指出缺的是哪个目录', async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
   try {
@@ -389,6 +414,7 @@ test('数据目录不存在时 doctor 不抛，指出缺的是哪个目录', asy
     fs.rmSync(base, { recursive: true, force: true })
   }
 })
+
 test('doctor 是读命令：跑完数据目录的文件清单与字节全同', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
@@ -401,6 +427,7 @@ test('doctor 是读命令：跑完数据目录的文件清单与字节全同', a
     assert.deepEqual(snapshot(home), before)
   })
 })
+
 test('doctor 的七项自检一项不少，每项都带正文', async () => {
   await inHome(async (home) => {
     const got = doctor({ home })
