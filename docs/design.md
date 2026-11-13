@@ -345,6 +345,10 @@ SOUL_SOUL_MAX 200  SOUL_DIALOGUE_MAX 200  SOUL_USER_MAX 400
 | M9 | 配置收口：`core/config.mjs`（SCHEMA/DEFAULTS/validate）+ `config` 四个子命令 + 两条结构用例 | `node --test test/config.test.mjs` |
 | M7 | README / AGENTS / decisions 定稿，1.0.0，推标签跑 CI | CI 全绿 + `npm pack` 清单 |
 
+1.0.0 的状态：M0–M9 全部落地，`node --test` 全绿（含纽约时区腿）。M6 的"D"部分
+（`host/*` 的装配、注入、两个工具）有用例锁着，但**DSH 实机还没验**——它跑在真会话里才能
+证明的事，见 §16 第一条。
+
 ## 13. 灵魂（身份卡）
 
 **灵魂是一张身份卡，不是一段提示词。**它回答"我是谁、怎么说话"，不回答"我知道什么"。
