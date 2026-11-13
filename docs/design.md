@@ -374,6 +374,34 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 模块：`src/soul/{index,store,card,inject}.mjs`（门面 `index`，`store` 管目录与指针，`card` 管解析、校验与蒸馏导入，`inject` 管预算注入）。
 
+### 13.1 推断来的内容要留痕
+
+源文本里没有的（情绪表达、边界、自称、旋钮）只能靠模型推。推出来的必须标明，
+否则过一阵没人分得清哪句是原文、哪句是猜的。
+
+三级 `provenance`：`source`（原文明确有）/ `inferred`（模型推的）/ `manual`（人补的，优先级最高）。
+
+```json
+{
+  "provenance": {
+    "identity": "source",
+    "soul": "inferred",
+    "dialogue": "source",
+    "knobs": "inferred",
+    "sections": { "soul.被夸": "inferred", "soul.不确定": "manual" }
+  },
+  "inferred": [{ "field": "soul.被夸", "text": "被夸时岔开话题", "at": "2026-11-14T00:40:00+08:00" }]
+}
+```
+
+规则：
+
+- md 里推断出来的段落以 `<!-- inferred -->` 结尾。它是 HTML 注释：**注入时整行剥掉、不占预算**，但 `grep -rn inferred` 能立刻找到；
+- `soul check` 报 `~ 3 处推断待确认`；`soul show` 给推断项加 `~` 前缀，人工补过的加 `*`；
+- 人补了同名字段 → 变 `manual`，**旧推断文本不删**，挪进 `card.json.inferred[]` 备查（谁的判断都要留证据）；
+- 注入只用现值，不注入标记本身；
+- 整张卡一条 `source` 都没有时允许存在，但 `soul check` 给强警告：`! 整张卡都是推断的，行为可能不像原文`。
+
 ## 14. 情绪（affect）
 
 **情绪是可观测状态变量，不是台词。**不写"我感到难过"，不声称有感受；只让状态影响说话分寸、开口门槛、记录。
