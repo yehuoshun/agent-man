@@ -5,43 +5,101 @@ import path from 'node:path'
 export const VERSION = 3
 
 const ORIGINS = new Set(['user', 'tool', 'self'])
+const OPS = new Set(['add', 'take', 'done'])
 
-// 一条记录该有哪些字段，随里程碑逐层补齐。现在只锁最容易把下游弄坏的四件事：
-// 正文、时间、来源、来源引用。返回错误而不抛，让调用方用 "! " 说出来（AGENTS 五）。
+// 五类记录的"正文"字段名不一样：结论记的是去情境的 fact，其它都是 text（design §4）。
+// 这张表同时充当"认识的类型"白名单——不在表里的 kind 直接算错，不猜。
+const BODY = new Map([
+  ['events', 'text'],
+  ['memory', 'fact'],
+  ['rules', 'text'],
+  ['notes', 'text'],
+  ['plans', 'text'],
+])
+
+// 校验的全部职责是说清"哪一条不对、怎么改"，不是修数据（AGENTS 五：不猜、不补、
+// 不截断后继续）。所以永远返回 { ok, errors }，永远不抛——抛了调用方就没法把
+// 每条错误变成一行 "! "，只能吐一个栈。
 export function validate(kind, obj) {
-  if (kind !== 'events' && kind !== 'memory') {
-    return { ok: false, errors: [`未知的记录类型：${kind}`] }
+  const field = BODY.get(kind)
+  if (!field) {
+    return { ok: false, errors: [`未知的记录类型：${String(kind)}（只认 ${[...BODY.keys()].join(' / ')}）`] }
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return { ok: false, errors: ['记录必须是对象'] }
   }
 
   const errors = []
-  const field = kind === 'events' ? 'text' : 'fact'
+  if (typeof obj.id !== 'string' || obj.id.trim() === '') {
+    errors.push('id 必须是非空字符串：没有 id 就没法引用、没法去重')
+  }
   const body = obj[field]
-  if (typeof body !== 'string' || body.trim() === '') errors.push(`${field} 必须是非空字符串`)
-
+  if (typeof body !== 'string' || body.trim() === '') {
+    errors.push(`${field} 必须是非空字符串`)
+  }
   // 时间只认 epoch ms 的数字：字符串时间进库后，排序与保留率会在各处再解释一遍（AGENTS 二·3）。
   if (!Number.isFinite(obj.at)) errors.push('at 必须是有限数字（epoch ms）')
 
-  // 情景必带来源；结论行按 design §4 没有 src，出现了照样校验，缺了不算错。
-  const src = obj.src
-  if (src === undefined && kind === 'events') {
+  if (kind === 'memory') {
+    // key 是唯一槽位：新条靠它给旧条写 to/by，空 key 等于没有槽位（design §2 干扰）。
+    if (typeof obj.key !== 'string' || obj.key.trim() === '') {
+      errors.push('key 必须是非空字符串：结论靠它占唯一槽位')
+    }
+    errors.push(...evidenceErrors(obj.evidence))
+  }
+
+  // 情景必带来源；结论与规矩照 design §4 没有 src，带了也照样校验。
+  if (kind === 'events' && obj.src === undefined) {
     errors.push('src 必须存在：用户说的、工具返回的、自己推断的要分开记')
-  } else if (src !== undefined) {
-    if (!src || typeof src !== 'object' || Array.isArray(src)) {
-      errors.push('src 必须是 { origin, ref } 形状的对象')
-    } else {
-      if (!ORIGINS.has(src.origin)) {
-        errors.push(`src.origin 只能是 user / tool / self，拿到的是 ${String(src.origin)}`)
-      }
-      if (src.origin === 'tool' && (typeof src.ref !== 'string' || src.ref.trim() === '')) {
-        errors.push('src.origin 是 tool 时必须带 ref（插件名），否则分不清是谁看见的')
-      }
+  } else if (obj.src !== undefined) {
+    errors.push(...srcErrors(obj.src))
+  }
+
+  if (kind === 'notes' || kind === 'plans') {
+    if (!OPS.has(obj.op)) {
+      errors.push(`op 只能是 ${[...OPS].join(' / ')}，拿到的是 ${String(obj.op)}`)
     }
   }
 
   return { ok: errors.length === 0, errors }
+}
+
+function srcErrors(src) {
+  if (!src || typeof src !== 'object' || Array.isArray(src)) {
+    return ['src 必须是 { origin, ref } 形状的对象']
+  }
+  const errors = []
+  if (!ORIGINS.has(src.origin)) {
+    errors.push(`src.origin 只能是 ${[...ORIGINS].join(' / ')}，拿到的是 ${String(src.origin)}`)
+  }
+  if (src.origin === 'tool' && (typeof src.ref !== 'string' || src.ref.trim() === '')) {
+    errors.push('src.origin 是 tool 时必须带 ref（插件名），否则分不清是谁看见的')
+  }
+  return errors
+}
+
+// 这里只验形状；"ids 能不能解析到真实事件"是 memory 层的事（它要读盘，读盘不归 store）。
+// 但"至少 1 条"照 design §4 写死：一条证据都没有的结论是猜的，不该进库。
+function evidenceErrors(ev) {
+  if (ev === undefined) return ['evidence 必须存在：结论要么有事件撑着，要么就是猜的']
+  if (!ev || typeof ev !== 'object' || Array.isArray(ev)) {
+    return ['evidence 必须是 { ids, from, to } 形状的对象']
+  }
+  const errors = []
+  if (!Array.isArray(ev.ids)) {
+    errors.push('evidence.ids 必须是事件 id 数组')
+  } else if (ev.ids.length === 0) {
+    errors.push('evidence.ids 至少要有 1 条事件：解析不到证据的结论不算结论')
+  } else if (!ev.ids.every((id) => typeof id === 'string' && id.trim() !== '')) {
+    errors.push('evidence.ids 里每一项都必须是非空字符串')
+  }
+  for (const key of ['from', 'to']) {
+    const v = ev[key]
+    if (v !== undefined && v !== null && !Number.isFinite(v)) {
+      errors.push(`evidence.${key} 只能是 null 或有限数字（epoch ms）`)
+    }
+  }
+  return errors
 }
 
 // doctor 的第一件事：这个目录到底是不是我们的、版本对不对。缺目录不算异常，
