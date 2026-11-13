@@ -159,7 +159,7 @@ src/
   digest/  index digest trace
   parts/   index discover call
   view/    index screen digest records
-  cli/     main registry
+  cli/     index main registry
   host/dsh/index inject tools recall
 ```
 

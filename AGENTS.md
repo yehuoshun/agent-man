@@ -32,7 +32,7 @@
 - 跨目录**只准 import 门面**（`../store/index.mjs`），不许深挖 `../store/append.mjs`。
 - 依赖单向：`cli → view → mind / digest / recall → memory / intent / parts → store → core`。反向依赖一律不合格。
 - `node:child_process` 只许出现在 `src/parts/call.mjs`；`fetch(` 全仓禁止。
-- CLI 只有 `src/cli/main.mjs` 与 `src/cli/registry.mjs` 两个文件：命令逻辑住各领域模块，`registry` 只是一张 `"memory add" → handler` 表。
+- CLI 只有 `index.mjs` 门面 + `main.mjs` + `registry.mjs` 三个文件：命令逻辑住各领域模块，`registry` 只是一张 `"memory add" → handler` 表。
 - 薄壳 `bin/agent-man.mjs` 只接退出码，不放逻辑；`dsh/` 只放宿主元数据。
 
 ## 五、存储
