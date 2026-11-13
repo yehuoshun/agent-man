@@ -311,6 +311,20 @@ test('往事装填：常驻的先上，其余按 order 降序', async () => {
   })
 })
 
+test('一条来源都没有时，整张卡都是推断的要说出口（但不拒绝）', async () => {
+  await inHome(async (home) => {
+    writeCard(home, '没来源', {
+      ...BASE,
+      'card.json': '{"name":"没来源","knobs":{"warm":0,"drive":0,"sharp":0}}\n',
+    })
+    const got = check(home, '没来源')
+    assert.equal(got.ok, true, '没有 source 不算校验失败：推断不是罪，装作原文才是')
+    assert.ok(got.warnings.some((text) => text.includes('整张卡都是推断的')))
+    assert.ok(got.warnings.every((text) => text.startsWith('! ')), '警告要能一眼认出')
+    assert.equal(read(home, '没来源').source, null)
+  })
+})
+
 test('{{char}} 展开成这张卡的名字，{{user}} 展开成"你"', async () => {
   await inHome(async (home) => {
     writeCard(home, '小满', { ...BASE, 'soul.md': '{{char}} 说话短，叫对方 {{user}}。\n' })
