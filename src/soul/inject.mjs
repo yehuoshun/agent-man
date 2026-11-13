@@ -51,8 +51,15 @@ export function build(home, opts = {}) {
   const tagged = new Set()
   const dropped = []
   const inferred = []
+  // 额度用尽后不再试示范对话（"丢后面的组"），但没试过的组也要一组一条记进 dropped：
+  // 没装进去就是没装进去，"没试"不能让它在账上消失（AGENTS 二·2 不静默）。
+  let closed = false
 
   for (const unit of plan) {
+    if (closed) {
+      dropped.push({ file: unit.file, section: unit.section, reason: 'budget' })
+      continue
+    }
     // 前缀算在 cost 里（它就是注入的字），所以先定成最终那一行，再判装不装得下。
     const head = tagged.has(unit.col) ? '' : TAG[unit.col]
     const line = head + unit.text
@@ -62,8 +69,8 @@ export function build(home, opts = {}) {
     // 真跑 cost() 复核，不用"估算的累加"：预算是对外承诺，量的必须是最后那份字。
     if (cost(slotLines.join(SEP)) > SLOT[unit.slot] || cost(totalLines.join(SEP)) > budget) {
       dropped.push({ file: unit.file, section: unit.section, reason: 'budget' })
-      // dialogue 是最后一段：一组装不下，说明额度已经用完，后面的组不必再试（"丢后面的组"）。
-      if (unit.slot === 'dialogue') break
+      // dialogue 是最后一段：一组装不下，说明额度已经用完，后面的组不必再试。
+      if (unit.slot === 'dialogue') closed = true
       continue
     }
 
