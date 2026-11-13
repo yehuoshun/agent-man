@@ -111,10 +111,13 @@ function deadline(ms) {
   return Math.min(ms, PART_TIMEOUT_MAX)
 }
 
-// 契约（§8）把 75 定为超时、69 定为依赖缺失：这两个码要穿透成 status，好让上游按
-// "摘掉这个能力/冷却"处理，而不是当成一次普通崩溃。
+// 契约（§8）的四个退出码各自成一个 status：0 成功、64 参数错、69 依赖缺失、75 超时。
+// 64 必须单独站出来——参数错是调用方写错了参数，§8 里"摘掉能力/连续失败冷却"针对的是
+// 崩溃、超时、缺失这三类；把参数错折成 crash 或 missing，等于让人写错三次参数就把一个
+// 好零件白白冷却掉，屏上还会多一行"这个能力不可用"的假降级说明。
 function classify(code) {
   if (code === 0) return 'ok'
+  if (code === 64) return 'usage'
   if (code === 75) return 'timeout'
   if (code === 69) return 'missing'
   return 'crash'
@@ -143,6 +146,8 @@ export function passthrough(part, args = [], env = process.env) {
 
 // 捕获：返回 {status, code, out, err, truncated, timeout}，永不抛。timeout 是实际生效的期限
 // （夹过上限之后的），调用方和 whyNot 都该按这个数说，而不是按它请求的那个数说。
+// status 只有五个值：ok / usage（参数错）/ timeout / missing / crash。上游要照 §8 决定
+// 摘不摘这个能力，就得看得出这五者的区别。
 // 异步是因为超时必须在计时到点那一刻杀树——spawnSync 的超时杀掉 cmd.exe 之后就轮不到
 // 我们动手了，孙子进程会漏网（见 killTree 的注释）。
 // 第三个参数 env 是 design §7 的写法，{env} 是调用方更顺手的写法，两个都收。
@@ -175,7 +180,8 @@ export function capture(part, opts = {}, legacyEnv) {
 
     try {
       if (!part?.file) return finish({ status: 'missing', why: '没有可执行文件' })
-      if (unsafeArg(args)) return finish({ status: 'missing', why: '不安全的参数' })
+      // 参数不安全也是调用方的错（同 64），不是零件没装：报 usage，别让它进冷却计数。
+      if (unsafeArg(args)) return finish({ status: 'usage', why: '不安全的参数' })
       const { cmd, argv, verbatim } = commandOf(part.file, args, env)
       const child = spawn(cmd, argv, {
         env,

@@ -142,10 +142,12 @@ test('capture 的截断落在 UTF-8 边界上，不切出半个汉字', async ()
   assert.equal(r.out, String.fromCharCode(0x6c49).repeat(2730))
 })
 
-test('capture 把 75/69 分别折成 timeout/missing，其它非零码是 crash', async () => {
+test('capture 把 64/75/69 分别折成 usage/timeout/missing，其它非零码才是 crash', async () => {
   const dir = tmp()
   const exits = (code) =>
     capture({ name: `x${code}`, file: makePart(dir, `x${code}`, `process.exit(${code})`) })
+  const u = await exits(64)
+  assert.deepEqual([u.status, u.code], ['usage', 64]) // 参数错不能算"零件崩了"
   const a = await exits(75)
   assert.deepEqual([a.status, a.code], ['timeout', 75])
   const b = await exits(69)
@@ -172,11 +174,11 @@ test('capture 拿到 0 / NaN / 负的超时退回默认 5 秒，不当成"立刻
   }
 })
 
-test('%名字% 形式的参数在 Windows 上被拒，说"不安全的参数"', winOnly('cmd 展开只发生在 Windows'), async () => {
+test('参数里有 %名字% 时拒收，算调用方的参数错(usage)，不算零件缺了', winOnly('cmd 展开只发生在 Windows'), async () => {
   const dir = tmp()
   const file = makePart(dir, 'echoit', 'console.log(process.argv.slice(2).join())')
   const r = await capture({ name: 'echoit', file }, { args: ['%PATH%'] })
-  assert.deepEqual([r.status, r.why], ['missing', '不安全的参数'])
+  assert.deepEqual([r.status, r.why], ['usage', '不安全的参数'])
   assert.throws(() => passthrough({ name: 'echoit', file }, ['%PATH%']), /不安全的展开/)
 })
 
