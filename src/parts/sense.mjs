@@ -20,7 +20,8 @@ function failed(r) {
   return r.status === 'crash' || r.status === 'timeout' || r.status === 'missing'
 }
 
-export async function sense(env = process.env, opts = {}) {
+// 环境变量对象由调用方给：结构用例只许 core/config.mjs 与 cli/main.mjs 自己去摸它。
+export async function sense(env, opts = {}) {
   const o = opts ?? {}
   const budget = Number.isFinite(o.budget) && o.budget >= 0 ? o.budget : 550
   const deps = {
@@ -28,7 +29,7 @@ export async function sense(env = process.env, opts = {}) {
     describe: o.deps?.describe ?? realDescribe,
     capture: o.deps?.capture ?? realCapture,
   }
-  const parts = Array.isArray(o.parts) ? o.parts : deps.scan(env)
+  const parts = Array.isArray(o.parts) ? o.parts : deps.scan(env ?? {})
   const lines = []
   const warnings = []
   const dropped = []
@@ -38,7 +39,7 @@ export async function sense(env = process.env, opts = {}) {
   // 顺序 = scan 的顺序（按名字码位排）。并行在这里没有好处：一次屏幕一份钱，
   // 串行还能让"预算用在哪几个零件上"这件事可复现。
   for (const part of parts) {
-    const seen = await deps.describe(part, { env })
+    const seen = await deps.describe(part, { env: env ?? {} })
     if (!seen.ok) {
       warnings.push(`! ${seen.why}`)
       failures.push({ name: part.name, why: seen.why })
