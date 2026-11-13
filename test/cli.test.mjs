@@ -5,8 +5,9 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { main } from '../src/cli/index.mjs'
+import { plans } from '../src/intent/index.mjs'
 import * as memory from '../src/memory/index.mjs'
-import { appendJsonl, ensure, eventsFile } from '../src/store/index.mjs'
+import { appendJsonl, ensure, eventsFile, metaFile, readJsonl, stateFile } from '../src/store/index.mjs'
 
 // CLI 层的用例只认命令行的进出：main(argv, { env, out, err, now }) + 记录器，
 // 不 spawn 子进程（design §11）。时间传死，PATH 清空——零件直通不在这里碰真系统。
@@ -35,12 +36,15 @@ function seed(boxOne, entries) {
   }
 }
 
-test('不带参数就是处境屏：mind 还没合并时退出码 2，并说清是没接上而不是今天没事', async () => {
+test('不带参数就是处境屏：与 context show 打同一屏，退出码 0', async () => {
   const one = box()
-  const got = await cli(one, [])
-  assert.equal(got.code, 2)
-  assert.equal(got.out, '')
-  assert.match(got.err, /^! 处境还没接上：mind 车道在合并中/)
+  const bare = await cli(one, [])
+  const named = await cli(one, ['context', 'show'])
+  assert.equal(bare.code, 0)
+  assert.equal(bare.err, '')
+  assert.match(bare.out, /^agent-man · 2026-11-14 10:00/)
+  assert.match(bare.out, /上次开口：还没开过口/)
+  assert.equal(bare.out, named.out)
 })
 
 test('既不认识的命令也不是零件：退出码 2，并点出零件该叫什么名字', async () => {
@@ -51,14 +55,34 @@ test('既不认识的命令也不是零件：退出码 2，并点出零件该叫
   assert.match(got.err, /没有这个命令，也没找到 agent-man-weather/)
 })
 
-test('--help 只列已经接上的命令，正文进 stdout，退出码 0', async () => {
+test('--help 列出的每一项都能被命令表解析到（帮里不许有打不通的用法）', async () => {
   const one = box()
   const got = await cli(one, ['--help'])
   assert.equal(got.code, 0)
   assert.match(got.out, /agent-man audit/)
   assert.match(got.out, /退出码/)
-  assert.doesNotMatch(got.out, /rule/)
+  assert.match(got.out, /agent-man rule\s+add/)
+  assert.match(got.out, /agent-man self\s+show/)
+  assert.match(got.out, /agent-man context cue/)
   assert.equal(got.err, '')
+
+  const seen = new Set()
+  for (const line of got.out.split('\n')) {
+    const hit = /^ {2}agent-man\s+(.+)$/.exec(line)
+    if (!hit) continue
+    const words = []
+    for (const word of hit[1].trim().split(/\s+/)) {
+      if (!/^[a-z][a-z0-9-]*$/.test(word)) break
+      words.push(word)
+      if (words.length === 2) break
+    }
+    if (words.length === 0) continue
+    seen.add(words.join(' '))
+    // 参数缺了可以退 2（用法错），但"没有这个命令"或"不认识的用法"说明帮助写错了。
+    const tried = await cli(box(), words)
+    assert.doesNotMatch(tried.err, /没有这个命令|不认识的用法/, `帮助里的 ${words.join(' ')} 打不通`)
+  }
+  assert.ok(seen.size >= 12, `帮助只解析出 ${seen.size} 条命令`)
 })
 
 test('event ls：窗口内的按时间倒序一行一条，窗口外的不出现', async () => {
@@ -330,4 +354,208 @@ test('doctor 的渲染与退出码没被这次接线动过', async () => {
   const got = await cli(one, ['doctor'])
   assert.match(got.out, /^agent-man doctor\n {2}数据目录 {3}/)
   assert.ok(got.code === 0 || got.code === 1)
+})
+
+test('event add 真写进当天的分片，并把欠账记上（写过就要读得回来）', async () => {
+  const one = box()
+  const got = await cli(one, ['event', 'add', '她说明天要早出门', '--imp', '2', '--cue', '她,出门'])
+  assert.equal(got.code, 0)
+  assert.equal(got.err, '')
+  assert.match(got.out, /^已记下 e-\d{8}-\d{2}（imp 2，cue 她、出门）/)
+  const rows = readJsonl(eventsFile(one.dir, one.now)).items
+  const hit = rows.filter((row) => row.text === '她说明天要早出门')
+  assert.equal(hit.length, 1)
+  assert.equal(hit[0].imp, 2)
+  assert.deepEqual(hit[0].cues, ['她', '出门'])
+  const meta = JSON.parse(fs.readFileSync(metaFile(one.dir), 'utf8'))
+  assert.deepEqual(meta.debt, { unconsolidated: 2, unreflected: 1 })
+})
+
+test('event add --json 只回一行，id 以 e- 开头', async () => {
+  const one = box()
+  const got = await cli(one, ['event', 'add', '她说周末想去看展', '--json'])
+  assert.equal(got.code, 0)
+  const rows = got.out.trim().split('\n')
+  assert.equal(rows.length, 1)
+  assert.match(JSON.parse(rows[0]).id, /^e-\d{8}-\d{2}/)
+})
+
+test('event add 的 --src 写错：退出码 2，并列出三种写法', async () => {
+  const one = box()
+  const got = await cli(one, ['event', 'add', '她说要早睡', '--src', 'tool'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! --src 只认 user \/ tool:名字 \/ self/)
+})
+
+test('event add 空文本：退出码 2，给一行写法，且一个字都不落盘', async () => {
+  const one = box()
+  const got = await cli(one, ['event', 'add', '   '])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! 用法：agent-man event add/)
+  assert.equal(fs.existsSync(eventsFile(one.dir, one.now)), false)
+})
+
+test('context show --json 只给一个对象，clock 是钉死的那一刻', async () => {
+  const one = box()
+  const got = await cli(one, ['context', 'show', '--json'])
+  assert.equal(got.code, 0)
+  const rows = got.out.trim().split('\n')
+  assert.equal(rows.length, 1)
+  const scene = JSON.parse(rows[0])
+  assert.equal(scene.clock, '2026-11-14 10:00')
+  assert.equal(scene.quiet, false)
+})
+
+test('别名 look 与裸 agent-man 打的是同一屏（处境屏只有一条路）', async () => {
+  const one = box()
+  const look = await cli(one, ['look'])
+  const bare = await cli(one, [])
+  assert.equal(look.code, 0)
+  assert.equal(look.out, bare.out)
+})
+
+test('context cue 没事由时退出码 1，但"没说出口"也要留在账本里', async () => {
+  const one = box()
+  const got = await cli(one, ['context', 'cue'])
+  assert.equal(got.code, 1)
+  assert.equal(got.out, '')
+  assert.match(got.err, /^! 这会儿不说：没什么新事，也还没到开口的时候/)
+  const ledger = readJsonl(stateFile(one.dir, 'judge', one.now)).items
+  assert.equal(ledger.length, 1)
+  assert.equal(ledger[0].said, false)
+  assert.equal(ledger[0].at, one.now)
+})
+
+test('context cue 有话可说：退出码 0，判决与"上次开口"一起落地', async () => {
+  const one = box()
+  await plans.add(one.dir, { text: '交房租', due: one.now - 24 * 60 * 60 * 1000 })
+  const got = await cli(one, ['context', 'cue'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^可以说：1 条日程过点，还没开过口/)
+  const ledger = readJsonl(stateFile(one.dir, 'judge', one.now)).items
+  assert.equal(ledger[0].said, true)
+  const meta = JSON.parse(fs.readFileSync(metaFile(one.dir), 'utf8'))
+  assert.equal(meta.lastCueAt, one.now)
+})
+
+test('context cue --peek 只看不记：账本里不多一行，水位也不动', async () => {
+  const one = box()
+  await plans.add(one.dir, { text: '交房租', due: one.now - 24 * 60 * 60 * 1000 })
+  const got = await cli(one, ['context', 'cue', '--peek'])
+  assert.equal(got.code, 0)
+  assert.match(got.err, /peek：这次不记账/)
+  assert.equal(fs.existsSync(stateFile(one.dir, 'judge', one.now)), false)
+})
+
+test('context cue --why 是"人要求此刻就说"：静默与间隔都不拦', async () => {
+  const one = box()
+  const got = await cli(one, ['context', 'cue', '--why', '她按了那个键'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^可以说：被叫醒的：静默与间隔都不拦/)
+  assert.match(got.err, /人要求此刻就说（--why「她按了那个键」）/)
+})
+
+test('rule add 缺 --why：退出码 2，说清没有理由的规矩不许立', async () => {
+  const one = box()
+  const got = await cli(one, ['rule', 'add', '晚上十点后不主动找她'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! why 必须是非空字符串/)
+})
+
+test('rule add 之后 rule ls 只有一行一条，带 ! 前缀（规矩排在记录里）', async () => {
+  const one = box()
+  const made = await cli(one, ['rule', 'add', '晚上十点后不主动找她', '--why', '她说过要早睡'])
+  assert.equal(made.code, 0)
+  assert.match(made.out, /^已立规矩 r-\d{8}-\d{2}（现在 1\/20 条在生效）/)
+  const got = await cli(one, ['rule', 'ls'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^r-\d{8}-\d{2} {2}刚刚 {2}! 晚上十点后不主动找她\n$/)
+})
+
+test('rule add --supersedes：旧的当场不再生效，但行还在（--all 看得见）', async () => {
+  const one = box()
+  const first = await cli(one, ['rule', 'add', '晚上十点后不主动找她', '--why', '她说过要早睡'])
+  const id = /r-\d{8}-\d{2}/.exec(first.out)[0]
+  const second = await cli(one, ['rule', 'add', '晚上九点后不主动找她', '--why', '她改口了',
+    '--supersedes', id])
+  assert.equal(second.code, 0)
+  assert.match(second.err, new RegExp(`旧的 ${id} 已被取代`))
+  const live = await cli(one, ['rule', 'ls'])
+  assert.match(live.out, /晚上九点后不主动找她/)
+  assert.doesNotMatch(live.out, /晚上十点后不主动找她/)
+  const all = await cli(one, ['rule', 'ls', '--all'])
+  assert.match(all.out, /晚上十点后不主动找她/)
+  assert.match(all.out, /晚上九点后不主动找她/)
+})
+
+test('rule ls 一条都没有时写「（空）」而不是什么都不说', async () => {
+  const one = box()
+  const got = await cli(one, ['rule'])
+  assert.equal(got.code, 0)
+  assert.equal(got.out, '（空）\n')
+})
+
+test('self append 起今天这一段，self show 原样打出来', async () => {
+  const one = box()
+  const added = await cli(one, ['self', 'append', '今天把线接完了'])
+  assert.equal(added.code, 0)
+  assert.match(added.out, /^已记进自我块（新起 2026-11-14 这一段）/)
+  const got = await cli(one, ['self', 'show'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^## 2026-11-14\n/)
+  assert.match(got.out, /今天把线接完了/)
+})
+
+test('self set 是整份覆盖：原来那段不在了（旧文本不保留）', async () => {
+  const one = box()
+  await cli(one, ['self', 'append', '今天把线接完了'])
+  const got = await cli(one, ['self', 'set', '新的我'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^已覆盖自我块（/)
+  const shown = await cli(one, ['self', 'show'])
+  assert.equal(shown.out.trim(), '新的我')
+})
+
+test('self set 超上限：退出码 2，说清是整份覆盖、别指望截断', async () => {
+  const one = box()
+  const got = await cli(one, ['self', 'set', '字'.repeat(700)])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /自我块上限是 600/)
+  assert.match(got.err, /整份覆盖/)
+})
+
+test('self show 空着也给人一句"怎么开始"，不装作有内容', async () => {
+  const one = box()
+  const got = await cli(one, ['self', 'show'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^（还没写过自我块：agent-man self append/)
+})
+
+test('context digest --due 退 2：门面不收的开关不装作生效', async () => {
+  const one = box()
+  const got = await cli(one, ['context', 'digest', '--due'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! --due 这一版还没接/)
+})
+
+test('affect stim --imp 退 2：刺激的权重由 kind 定，不能让人以为调过了', async () => {
+  const one = box()
+  const got = await cli(one, ['affect', 'stim', '被夸', '--why', '她夸我', '--imp', '2'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! 刺激的权重由 kind 定，--imp 不收/)
+})
+
+test('memory revise --from 退 2：证据跟着记忆走，不重写', async () => {
+  const one = box()
+  const got = await cli(one, ['memory', 'revise', 'm-1', '新的说法', '--from', 'e-1'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! --from 这一版没接/)
+})
+
+test('memory add 的 --from 不认日期区间：退 2，并指去 event id', async () => {
+  const one = box()
+  const got = await cli(one, ['memory', 'add', '她在找工作', '--key', '工作',
+    '--from', '2026-11-01..2026-11-03'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /证据要写事件 id（--from 区间这一版不支持）/)
 })
