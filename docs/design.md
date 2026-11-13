@@ -221,10 +221,10 @@ src/
 | soul/store | `dir(home,name)` `list(home)` `current(home)` `use(home,name,{at,by})`（async，只写 `state/soul.current`） |
 | soul/card | `read(home,name)` `check(home,name)` `importCard(home,file)`（async，收 CCv1/V2 的 json）`stripMarks(text)` |
 | soul/inject | `build(home,{name,budget})` → `{lines,cost,used,dropped,inferred,knobs}` |
-| affect/state | `read(home,now)` `stim(home,one)` `set(home,{axis,value,until,why,at})` `clear(home,at)` |
-| affect/decay | `decay(i0,dt,half)` `merge(a,b)` |
-| affect/label | `mood(v,e)` `transient(stims,now)` `persistent({t,r})` |
-| affect/stim | `KINDS` `weightOf(kind)` |
+| affect/state | `snapshot(home,{now,prev})`（同步只读，别名 `read`）`stim(home,one)` `set(home,{axis,value,for,until,why,at})` `clear(home,at)`（三者 async：峰值要写状态文件） |
+| affect/decay | `decay(i0,dt,half)` `merge(i1,i2)` `clampAxis(axis,v)` `decayOffset(v,dt,half)` `mergeOffset(a,b)` |
+| affect/label | `moodOf(v,e,prev)`（别名 `mood`）`deadband(v,e)` `transient(stims,now)` `persistent({t,r})` `respectBand(r)` |
+| affect/stim | `KINDS` `weightOf(kind)` `record(home,one)` `list(home,{from,to})` `appendOp(home,op)` |
 | parts/discover | `scan(env)` `describe(part,{timeout})` |
 | parts/call | `passthrough(part,args,env)` `capture(part,{timeout,limit},env)` |
 | view/screen | `render(situation)` |
@@ -429,17 +429,25 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 ### 14.2 心境网格（16 格，由 v×e 唯一决定）
 
-| 愉悦 ↓ / 精力 → | 高（76+） | 中（51–75） | 低中（26–50） | 低（≤25） |
+| 愉悦 ↓ / 精力 → | 高（76+） | 中（58–75） | 低中（29–57） | 低（≤28） |
 |---|---|---|---|---|
-| **高（65+）** | 兴奋 | 愉快 | 满足 | 平静 |
-| **中高（51–64）** | 期待 | 轻松 | 平淡 | 慵懒 |
-| **中低（36–50）** | 紧张 | 不安 | 疲倦 | 低落 |
-| **低（≤35）** | 焦躁 | 烦躁 | 沮丧 | 消沉 |
+| **高（68+）** | 兴奋 | 愉快 | 满足 | 平静 |
+| **中高（50–67）** | 期待 | 平淡 | 轻松 | 慵懒 |
+| **中低（33–49）** | 紧张 | 不安 | 疲倦 | 低落 |
+| **低（≤32）** | 焦躁 | 烦躁 | 沮丧 | 消沉 |
+
+分界围着基线 (50, 60) 排：基线那一格（中高 × 中）就是**平淡**——"什么都没发生"必须读作平淡，
+不能读作「不安」。边界归上档（50 属中高、58 属中、33 属中低、29 属低中），否则基线会掉到下一档。
 
 **格子只由两个数决定，不许模型挑词**：(52, 61) 恒为"平淡"，换模型、换灵魂、换语言都不变。
-边界 ±3 滞回，`|v-50|<5` 且 `|e-60|<5` 是死区（落在死区不刷新标签）。
+边界 ±3 滞回，`|v-50|<5` 且 `|e-60|<5` 是死区（落在死区不刷新标签，只影响措辞）。
 
 ### 14.3 瞬时情绪（6 类，T½ 45 分钟）
+
+**这一版不启用**：六类词表留着，但 `transient()` 只报"最近 45 分钟内的刺激"（kind / why / at /
+剩余比例），不给它们起情绪名字。原因：现有的十个刺激 kind 到六类之间没有一张确定的对照表
+（`task.fail` 该算愤怒、委屈还是沮丧，说不清），硬编一张等于把人的判断塞进脚本。
+启用条件写在这里：先有真实对话样本，再定一张 kind → 类的表，且表里每一行都能用事件本身判定。
 
 由事件触发、短时存在、只影响这一次的表达，不进网格、不改长期轴（除非同类一天内重复 ≥3 次，
 才按 `AFFECT_NEG_WEIGHT` 压一次愉悦）。
@@ -455,10 +463,14 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 ### 14.4 持久情绪（由尊重轴推出，不再是条）
 
+尊重分五段（数字是 `respectBand()` 的唯一口径）：`r ≥ 60` 敬重 / `20 ≤ r < 60` 认可 /
+`−20 < r < 20` 中性 / `−60 < r ≤ −20` 不以为然 / `r ≤ −60` 厌恶。
+
 | 条件 | 情绪 | 持续 |
 |---|---|---|
-| r ≤ −40 且 t < 50 | 厌恶 | 数周，随 r 恢复而退 |
-| r ≤ −40 且 t ≥ 50 | 轻蔑 | 同上（认可能力，不认可人品） |
+| r ≤ −60 且 t < 50 | 厌恶 | 数周，随 r 恢复而退 |
+| r ≤ −70 且 t < 50 | 厌弃 | 同上，比厌恶更彻底（连能力也不认） |
+| r ≤ −60 且 t ≥ 50 | 轻蔑 | 同上（认可能力，不认可人品） |
 | t ≤ 30，r 正常 | 失望 | 中等，随兑现恢复 |
 | 单次目标受阻，r 不变 | 愤怒 | 45 分钟（瞬时） |
 
@@ -480,8 +492,10 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 ### 14.6 手动 / 自动 / 显示
 
-`effective = clamp(baseline + Σ decay(stim), 0, 100)`；override 生效时 `effective = override`，标 `by=manual`，
-带 `until`，过期自动失效（`by` 变回 `auto`）。
+`effective = clamp(baseline + agg, 0, 100)`，`agg` 由刺激按"先衰减再 LSE 叠加"滚动算出
+（`agg = mergeOffset(decayOffset(agg, dt, half), weight)`，见 §14.7）；override 生效时
+`effective = override`，标 `by=manual`，带 `until`，过期自动失效（`by` 变回 `auto`），
+**过期那一刻不跳变**：以 override 值作为新起点继续衰减。
 
 `affect show` 只出数字与标签：`v=58 e=61 t=43 r=0 · 平淡 · 3 条刺激`。
 注入块 ≤80 cost，只含数字 + 一句调制规则；渲染层禁止第一人称感受动词（`我` / `感到` / `觉得` / `feel`），有正则用例锁着。
@@ -498,6 +512,10 @@ merge(i1, i2)       = ln(e^i1 + e^i2)      // 同类叠加上限，3 次同级 �
 ```
 
 同类刺激每小时最多计 `AFFECT_STIM_PER_HOUR = 3` 次；负向刺激权重 ×`AFFECT_NEG_WEIGHT = 1.5`。
+
+**叠加用 LSE 而不是直接求和**：纯 Σ 下 100 条 −8 在 24 小时后仍剩 −150，会把愉悦钉死在地板；
+改成"指数衰减 + log-sum-exp 滚动"后，同类叠加有上限（3 次同级 ≈1.1 倍），
+`100×−8` 之后 24h 剩在 ±3 以内。`persistent()` 的 why 里每个数字都保留一位小数（念给人看）。
 权重表在 `src/core/const.mjs`，**调用方只传封闭枚举 `kind`，不许传权重**，非法 `kind` 退出码 2：
 
 | kind | Δv | Δe | Δt | Δr | 备注 |
