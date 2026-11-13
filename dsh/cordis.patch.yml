@@ -1,0 +1,4 @@
+- insert:
+    - id: agent-man
+      name: agent-man
+      config: {}
