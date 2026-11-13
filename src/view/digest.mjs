@@ -38,6 +38,8 @@ function footer(stats) {
 
 export function render({ header, body, stats }) {
   // 正文为空要明说"今天没什么可巩固的"，不能留空段：空段读起来像是渲染坏了。
+  // 抬头让位到 headerKind 'none' 时 header 是空串、正文也为空，这一屏就只剩这句话：
+  // "今天没什么可巩固的"是给人看的结论，不是渲染失败的痕迹。
   const text = body && body.trim() !== '' ? body : '（今天没什么可巩固的）'
   // 抬头为空就不占那一段：空行和空标题一样，只白吃预算（与处境屏同一套省略规矩）。
   const blocks = header ? [header, text, footer(stats)] : [text, footer(stats)]

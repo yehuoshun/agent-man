@@ -179,6 +179,16 @@ test('页脚 cost 最多一位小数：加出来的噪声不上屏', () => {
   assert.equal(whole, ['digest', '', '她怕冷', '', '—— 用了 1087/1200 · 装下 1 条 · 没丢东西'].join('\n'))
 })
 
+test('抬头让位到底（headerKind 为 none）：不留空抬头，仍先说今天没什么可巩固的', () => {
+  const text = renderDigest({
+    header: '',
+    body: '',
+    stats: { used: 0, budget: 1200, kept: [], dropped: [] },
+  })
+  // 第一行就是正文那句话：抬头让位后不能留一个空行，也不能把"没什么可巩固"省掉。
+  assert.equal(text, ['（今天没什么可巩固的）', '', '—— 用了 0/1200 · 装下 0 条 · 没丢东西'].join('\n'))
+})
+
 test('records：memory 行带 [key]、rule 行带 !，便条带「等：触发」，空表写「（空）」', () => {
   assert.equal(
     list([{ id: 'm-20261113-01', when: '2026-11-13 21:32', text: '她关窗是因为冷', key: '她怕冷' }], 'memory'),
