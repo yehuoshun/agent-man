@@ -64,6 +64,10 @@ $AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆�
 {"id":"m-20261113-01","at":1763043120000,"key":"她怕冷","fact":"她关窗是因为冷","imp":2,
  "from":1762956720000,"to":null,"by":null,
  "evidence":{"ids":["e-20261112-01"],"from":null,"to":null},"seen":0}
+// 收口也不改写旧行：追加一条**同 id 的完整副本**，带 `to`（被取代的时刻）与 `by`（谁取代的）。
+// 读的时候按 id 取 `at` 最大的那行（同 at 后写赢）。所以同一 id 在文件里可能有多行——
+// 别的模块不许直接读 memory.jsonl，必须走 `src/memory/index.mjs` 门面。
+// 先写新条、再写旧条的收口副本：中途崩了会留两条活记录，`conflict` 看得见，记忆不丢。
 
 // rules.jsonl
 {"id":"r-20261113-01","at":1763043120000,"text":"夜里十一点后不提工作",
@@ -75,8 +79,12 @@ $AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆�
 {"op":"take","id":"n-20261113-01","at":1763043200000}
 
 // state/plans-<月>.jsonl
-{"op":"add","id":"p-20261113-01","at":1763043120000,"text":"陪她看牙","when":1763123400000}
+{"op":"add","id":"p-20261113-01","at":1763043120000,"text":"陪她看牙","due":1763123400000}
 {"op":"done","id":"p-20261113-01","at":1763130000000}
+// 便条与日程都只有 `add` 一个写入动作，之后靠追加 `take`（递出）/ `drop`（不要了）/
+// `done`（做完了）收口；折叠出"现在还有什么"是读时的事，不原地改行。
+// 日程用 `due`（该做的时刻），便条用 `when`（该提醒的时刻）——两个域不共用一个名字。
+// 渲染前由 mind 映射成 view 要的形状：`{when: clock(due), left: rel(due), late}`。
 
 // state/judge-<月>.jsonl
 {"at":1763043120000,"said":true,"why":"积压 3 条，距上次 7 小时"}
@@ -115,6 +123,8 @@ $AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆�
 
 `seen` 只在 `digest` 把条目选进摘要那一刻 +1（**复述只发生在一处**）。
 读命令一律不写盘——一次性进程不做 write-on-read。
+`DEFAULT_WINDOW_DAYS` 只作用于情景层与结论层（防的是翻旧账）；便条与日程自带 `ttl` / `due`，
+不按窗口截断——"下下个月的体检"不该因为超出 30 天就从 `ls` 里消失。
 
 "会忘"要看得见：`digest` 结尾打印最弱三条的 R 与被裁原因，`audit trace` 留档。
 
