@@ -140,7 +140,7 @@ agent-man memory ls | find | show <id|key> | revise <id> "<新事实>" [--imp 0-
 agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls
 agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>
 agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id>  ·  plan ls
-agent-man self   show | set --id <块名> "<文本>" | append "<文本>"
+agent-man self   show | set "<整份文本>" | append "<文本>"
 agent-man soul   ls | use <名字> | show [--json] | check <名字> | import <卡文件>
 agent-man affect show | set <轴> <数值> [--for 2h] [--why "…"] | clear | why
 agent-man context show | digest [--budget 1200] [--out 文件] | cue [--min-gap 6h] [--peek] [--why …] | sense [--budget 550]
@@ -155,7 +155,16 @@ agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（�
 资源无动作时等价 `ls`。
 
 `audit timeline` 的窗口对五类一起生效（它答的是"最近发生了什么"），`--all` 才全量；
-`audit trace` 不按时期裁剪（保留上限 `TRACE_KEEP` 只给将来的清理用，审计要能看全）。
+`audit trace` 不按时期裁剪（保留上限 `TRACE_KEEP_MONTHS` 只给将来的清理用，审计要能看全）。
+
+三个容易误解的开关，语义在这里定死：
+
+- `self set` 是**整份覆盖**（`setSelf(home,text)`），没有按块替换；`self append` 才是"往后加一段"。
+  自我块不分块（§4），`set --id <块名>` 这一版不存在，给了退 2，不许静默当成整份覆盖。
+- `context cue --peek`：只判不记账——判词不进账本，也不推进"上次开口"；
+  `--why` 是人要求此刻就说，等于 `force`（静默时段与最小间隔都不拦），判词里另记一句"人要求此刻就说"。
+- `--min-gap` 只收**时长**（`6h` / `90m` / `2d`），不收绝对时刻：`parseWhen` 把 `\d+(d|h|m)` 一律算作未来，
+  只适合当间隔用。仍属"接受但不生效"的开关一律退 2，不装作生效（§16）。
 
 未启用的开关在 1.0 一律**退 2 并说明**，不做"接受但只打 `! `"这种半生效：
 `context digest --due`（`digest/build` 还不收到期过滤）、`affect stim --imp`
