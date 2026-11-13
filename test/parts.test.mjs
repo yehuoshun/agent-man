@@ -116,6 +116,24 @@ test('describe 碰上一个起不来的零件也返回 ok:false', async () => {
   assert.equal(d.ok, false)
 })
 
+test('describe 碰上不回话的零件报超时，说的是实际生效的期限', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'silent', 'setTimeout(() => {}, 5000)')
+  const d = await describe({ name: 'silent', file }, { timeout: 300 })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /超时/)
+  assert.match(d.why, /300ms/) // 请求多少就是多少，没被 5 秒默认值盖掉
+})
+
+test('describe 碰上崩掉的零件把退出码和 stderr 首行带出来', async () => {
+  const dir = tmp()
+  const js = `console.error('boom: no args'); process.exit(3)`
+  const d = await describe({ name: 'dud', file: makePart(dir, 'dud', js) })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /退出码 3/)
+  assert.match(d.why, /boom: no args/)
+})
+
 // ---------------------------------------------------------------- capture
 
 test('capture 超过 timeout 就杀掉零件，返回 status:timeout', async () => {
