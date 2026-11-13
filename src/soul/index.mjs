@@ -5,3 +5,4 @@
 // 2. `card.json` 只存档不注入：creator_notes / tags / creator / character_version 是给人看的；
 // 3. 上限是注入槽位，不是文件上限：超槽位只警告，注入装不下才记 dropped（不截半句）。
 export { current, dir, list, use } from './store.mjs'
+export { check, importCard, read, stripMarks } from './card.mjs'
