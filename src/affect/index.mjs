@@ -7,3 +7,4 @@ export {
 } from './decay.mjs'
 export { MOODS, deadband, moodOf, persistent, respectBand, transient } from './label.mjs'
 export { KINDS, list, record, weightOf } from './stim.mjs'
+export { clear, read, set, snapshot, stim } from './state.mjs'
