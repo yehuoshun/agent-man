@@ -5,6 +5,6 @@ export {
   AXES, AXIS_NAMES, EMOTION_HALF, axis, clampAxis, decay, decayOffset,
   merge, mergeOffset, mergeStim,
 } from './decay.mjs'
-export { MOODS, deadband, moodOf, persistent, respectBand, transient } from './label.mjs'
+export { MOODS, deadband, mood, moodOf, persistent, respectBand, transient } from './label.mjs'
 export { KINDS, list, record, weightOf } from './stim.mjs'
 export { clear, read, set, snapshot, stim } from './state.mjs'

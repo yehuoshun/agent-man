@@ -54,6 +54,9 @@ export function moodOf(v, e, prev) {
 }
 
 // 跨档只跨"一条边界"：往低档跨的是本档的下沿，往高档跨的是目标档的下沿。
+// design §7 的表里这个入口叫 mood；简报叫 moodOf。同一个函数，两个名字。
+export const mood = moodOf
+
 function pastEdge(value, edges, from, to) {
   const edge = to > from ? edges[from] : edges[to]
   return Math.abs(value - edge) >= AFFECT_HYST
