@@ -89,7 +89,8 @@ $AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆�
 // state/judge-<月>.jsonl
 {"at":1763043120000,"said":true,"why":"积压 3 条，距上次 7 小时"}
 
-// state/trace-<月>.jsonl
+// state/trace-<月>.jsonl（行里没有 kind/id：类型由分片名与 validate('trace', …) 的参数位认，
+// 不认识的字段一律放过——账本是历史，加字段不该让旧行变坏）
 {"at":1763043120000,"budget":1200,"used":1087,"header":"full",
  "kept":["m-20261113-01","e-20261113-02"],
  "dropped":[{"id":"e-20261112-04","reason":"budget"}]}
@@ -212,7 +213,7 @@ src/
 | mind/debt | `state(home,now)` → `{unconsolidated,unreflected,clusters[],overdue[]}` |
 | mind/gate | `judge({home,now,minGap,quiet,force})` → `{say,why}` |
 | digest/digest | `build({home,now,budget})` → `{text,kept,dropped,header,used}` |
-| digest/trace | `record(home,stats)` `list(home,limit)` `never(home)` |
+| digest/trace | `record(home,stats)`（唯一写入口；读账只走 `audit/trace`） |
 | audit/trace | `trace({home,now,limit})` → `{items,total,limit,skipped}` |
 | audit/timeline | `timeline({home,now,limit,all})` → `{items,total,limit,since,all,skipped}` |
 | audit/orphan | `orphan({home})` → memory 的 `{items,skipped}` 原样 |
