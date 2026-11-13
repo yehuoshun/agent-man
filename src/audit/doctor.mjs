@@ -142,20 +142,43 @@ function checkClosure(dir, scanned) {
       continue
     }
     const seen = top.get(rec.id)
-    if (seen === undefined) top.set(rec.id, { at: rec.at, count: 1 })
-    else if (rec.at > seen.at) top.set(rec.id, { at: rec.at, count: 1 })
-    else if (rec.at === seen.at) seen.count += 1
+    if (seen === undefined) top.set(rec.id, { at: rec.at, rows: [rec] })
+    else if (rec.at > seen.at) top.set(rec.id, { at: rec.at, rows: [rec] })
+    else if (rec.at === seen.at) seen.rows.push(rec)
   }
-  const clash = [...top].filter(([, one]) => one.count > 1)
+  // 同 id 同 at 的多行有两种：一种合法，是 seen 的 +1 副本（只动 seen，按文件顺序严格递增，
+  // 读方"同 at 后写赢"取到的就是最后一版）；一种真冲突，内容不一致，谁赢都说不清。
+  const clash = [...top].filter(([, one]) => one.rows.length > 1 && !isSeenBump(one.rows))
   if (clash.length > 0) {
-    const shown = clash.map(([id, one]) => `${id} 有 ${one.count} 行 at=${one.at}`)
+    const shown = clash.map(([id, one]) => `${id} 有 ${one.rows.length} 行 at=${one.at}`)
     return { ok: false, detail: `收口副本冲突：${shown.join('；')}（读方按 at 最大取，同 at 时后写赢）` }
   }
+  const bumped = [...top].filter(([, one]) => one.rows.length > 1).length
   if (top.size === 0) {
     return { ok: true, detail: partial > 0 ? `没有可读的记忆行（${partial} 行缺 id 或 at）` : '还没写过 memory.jsonl' }
   }
   const rest = partial > 0 ? `；${partial} 行缺 id 或 at 未参与检查` : ''
-  return { ok: true, detail: `${top.size} 条 id 的 at 最大行唯一${rest}` }
+  const copies = bumped > 0 ? `（其中 ${bumped} 条的 at 最大行是同 at 的 seen 副本）` : ''
+  return { ok: true, detail: `${top.size} 条 id 的 at 最大行唯一${copies}${rest}` }
+}
+
+// seen 副本的形状：除 seen 外逐字段相同，seen 按文件顺序严格递增（后写的必须是更大的那个）。
+function isSeenBump(rows) {
+  const first = rows[0]
+  let prev = first.seen
+  if (!Number.isFinite(prev)) prev = 0
+  for (let i = 1; i < rows.length; i += 1) {
+    const one = rows[i]
+    for (const key of Object.keys(first)) {
+      if (key === 'seen') continue
+      if (JSON.stringify(one[key]) !== JSON.stringify(first[key])) return false
+    }
+    if (Object.keys(one).length !== Object.keys(first).length) return false
+    const seen = Number.isFinite(one.seen) ? one.seen : 0
+    if (!(seen > prev)) return false
+    prev = seen
+  }
+  return true
 }
 
 // 冷却记录的形状（design §4）：{ 插件名: { fail: 非负整数, until: 有限数字或 null } }。

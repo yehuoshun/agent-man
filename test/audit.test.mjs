@@ -9,7 +9,7 @@ import test from 'node:test'
 import { doctor, orphan, timeline, trace } from '../src/audit/index.mjs'
 import { DEFAULT_WINDOW_DAYS, RULE_LIMIT, SELF_MAX, cost } from '../src/core/index.mjs'
 import { notes, plans } from '../src/intent/index.mjs'
-import { add as addMemory } from '../src/memory/index.mjs'
+import { add as addMemory, markSeen } from '../src/memory/index.mjs'
 import { appendJsonl, ensure, eventsFile, stateFile } from '../src/store/index.mjs'
 
 const MINUTE = 60 * 1000
@@ -333,6 +333,31 @@ test('同 id 同 at 的两行判为收口副本冲突，并说出是哪个 id', 
     assert.equal(one.ok, false)
     assert.match(one.detail, /m-1/)
     assert.match(one.detail, /at=/)
+  })
+})
+
+test('同一条结论被复述记了 seen 副本：同 at 的两行不算收口副本冲突', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    const made = await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1'] }, at: NOW },
+      { home, now: NOW },
+    )
+    const marked = markSeen(home, { ids: [made.record.id], at: NOW + MINUTE })
+    assert.deepEqual(marked.failed, [])
+    const one = check(doctor({ home }), 'memory 收口副本')
+    assert.equal(one.ok, true)
+    assert.match(one.detail, /seen 副本/)
+    // 副本只加一条，旧行逐字不动（AGENTS 五）：两行 at 相同，读方取后写的那个。
+    const rows = fs
+      .readFileSync(path.join(home, 'memory.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].seen, 0)
+    assert.equal(rows[1].seen, 1)
+    assert.equal(rows[1].at, rows[0].at)
   })
 })
 
