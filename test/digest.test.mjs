@@ -81,6 +81,31 @@ test('抬头让位给条目：满抬头装不下第二条时，头降级而不�
   assert.ok(tight.cost <= budget, `降级后仍然超预算：${tight.cost} > ${budget}`)
 })
 
+test('抬头让位之后：拿 cost() 复核抬头+正文的总 cost，≤ budget 且与报出来的一致', async () => {
+  const home = newHome()
+  seedEvent(home, { id: 'e1' })
+  seedEvent(home, { id: 'e2', at: NOW - 3600 * 1000, text: '记下 digest 要落一行账' })
+  await seedFact(home, { ids: ['e1'] })
+
+  const rich = build({ home, now: NOW })
+  const fullCost = cost(rich.header)
+  const rowCost = rich.kept[rich.kept.length - 1].cost
+  // 从"满抬头加一条就差一点"往下退 20 个刻度：每一档都自己数一遍字，
+  // 不能只信 build 报的布尔——预算这件事的真相只在 cost() 手里（AGENTS 六）。
+  const top = Math.ceil(fullCost + rowCost) - 1
+  let surrendered = 0
+  for (let budget = top; budget > top - 20; budget -= 1) {
+    const got = build({ home, now: NOW, budget })
+    const total = cost([got.header, got.body].filter((part) => part !== '').join('\n\n'))
+    assert.equal(got.cost, total, `预算 ${budget}：报出来的 cost 与抬头+正文对不上`)
+    assert.ok(total <= budget, `预算 ${budget}：抬头让位后仍然超了 ${total} > ${budget}`)
+    if (got.headerKind !== 'full') surrendered += 1
+    // 让位可以丢条目，但不能丢了理由：账本与屏上都靠它（AGENTS 二·2）。
+    for (const entry of got.dropped) assert.ok(entry.reason, `预算 ${budget}：丢了一条却没写原因`)
+  }
+  assert.ok(surrendered > 0, '这 20 档一次抬头都没让，用例没验到"让位"')
+})
+
 test('build 是读命令：连跑两次 memory.jsonl 一字节不动，seen 也不涨', async () => {
   const home = newHome()
   seedEvent(home, { id: 'e1' })
