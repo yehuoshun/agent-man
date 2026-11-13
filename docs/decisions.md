@@ -156,3 +156,49 @@ digest 侧还没接 `watermark`，先做过滤只会给出错的"到期"判断�
 ②想只在欠账够多时才巩固，只能靠 `context cue` 的判决，不能手动强制；
 ③刺激强度只能靠 kind 选对；
 ④换前端（比如以后做 TUI）时，这四处排版要重写一遍。四条都写进 design §6 的"未启用"。
+## 宿主层：装配是纯函数，取数才碰环境
+
+**决定**
+`src/host/inject.mjs` 的 `compose({ blocks, budget })` 只收"已经算好的块"，不读文件、不认识 DSH；
+真正的取数在 `dsh/index.mjs`（拿 `sessionQuery`、问 `soul` 当前指针、调 `mind.situation`）。
+`user` 槽位这一版留空。
+
+**来由**
+DSH 运行时只在实机里，`node --test` 摸不到它。把装配拆成纯函数，预算怎么让位、块怎么排、
+`used` 是否真等于 `cost(text)` 才能被用例钉住；剩下那层薄适配坏掉的概率低，坏了也在会话里看得见。
+`user` 留空是因为称呼已经由灵魂卡的 `[称呼]` 行承担，再写一段画像就是第二份灵魂。
+
+**代价**
+`dsh/index.mjs` 的取数路径（`extractNeedles`、`search` 的形状）没有测试覆盖，只能实机验。
+
+## 写情景就记账，巩固完就结账
+
+**决定**
+`event add`（CLI 与宿主工具两条入口）成功后调 `mind.debt.bump({ at, imp })`；
+`digest.run` 写完账本后调 `mind.debt.settle({ at })`。两处失败都不影响主流程，只用 `! ` 说出来。
+
+**来由**
+`debt.unconsolidated` / `unreflected` 是 `context cue` 判断"该巩固了"的唯一计数器，
+而这两个数住在 `meta.json` 里、只有 `bump` 会加、只有 `settle` 会清。此前**全仓没有任何调用方**——
+门槛永远到不了，于是开口判决只剩下"距上次说话多久"这一条，等于把设计里最要紧的一条判据接空了。
+bump 不放在 `memory/` 里，是因为那会让记忆层反向依赖 mind；放在两个入口各一次，是这份依赖方向的代价。
+
+**代价**
+两个入口各记一次账，将来加第三个写入口时容易漏；漏了不会报错，只会让门槛慢慢失效。
+用例只锁了宿主那一条（`写情景顺手记欠账：记完一条 imp=2 的事，欠账就是 2 imp / 1 条`），
+CLI 那条靠 `event add` 的用例间接盯。
+
+## `host.firstStepRecall` 删掉：同一笔钱不能有两个数
+
+**决定**
+配置里只留 `inject.{soul,user,situation,recall,total}` 五格，`host.firstStepRecall` 与
+`HOST_FIRST_STEP_RECALL` 常数一起删掉。
+
+**来由**
+`host.firstStepRecall = 250` 与 `inject.recall = 150` 说的是同一笔预算（首步那一次回顾），
+两个键同时存在时，读代码的人必须去实现里猜哪个真的生效，改配置的人两个都可能改。
+配置的用处是"一处改、处处生效"，不是"多一个可以互相打架的旋钮"。
+
+**代价**
+旧配置里写过 `host.firstStepRecall` 的用户会发现它不生效（`config` 会把它当未知键报出来）；
+如果有人真的想要"首步回顾比平时多"，现在只能改 `inject.recall` 这一处。
