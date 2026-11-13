@@ -4,3 +4,4 @@
 export { trace } from './trace.mjs'
 export { timeline } from './timeline.mjs'
 export { orphan } from './orphan.mjs'
+export { doctor } from './doctor.mjs'
