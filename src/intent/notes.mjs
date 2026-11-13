@@ -1,5 +1,5 @@
 // 便条 = 前瞻记忆（design §2）：不靠检索靠触发，写下去之后等着"说到那件事"。
-// 记忆体在 state/notes-<月>.jsonl，只追加 add / take，当前有哪些活便条靠折叠现算。
+// 记忆体在 state/notes-<月>.jsonl，只追加 add / take / drop，当前有哪些活便条靠折叠现算。
 import { NOTE_TTL, jaccard, now, tokens } from '../core/index.mjs'
 import { claim } from '../store/index.mjs'
 import { appendOp, fold, readOps } from './ledger.mjs'
@@ -69,9 +69,19 @@ export function match(homeDir, text, { now: nowTs, min = 0 } = {}) {
 // 递出即焚：追加一条 take，ls 立刻不再折出它（旧行一字不改）。
 export function take(homeDir, id, { now: nowTs } = {}) {
   const at = Number.isFinite(nowTs) ? nowTs : now()
-  const rec = openNote(homeDir, id)
+  const rec = openNote(homeDir, id, 'take')
   appendOp(homeDir, KIND, { op: 'take', id: rec.id, at })
   return { ...item(rec), takenAt: at }
+}
+
+// 不要了：与 take 一样只追加一条 op、ls 里立刻消失，区别只在账本上记的词——
+// "递出去过"和"压根没用上"将来回看不是一回事，op 流水账留着这两笔就是为了分得清
+// （design §4）。所以 drop 不写成 take，也不复用 take 的返回值语义。
+export function drop(homeDir, id, { now: nowTs } = {}) {
+  const at = Number.isFinite(nowTs) ? nowTs : now()
+  const rec = openNote(homeDir, id, 'drop')
+  appendOp(homeDir, KIND, { op: 'drop', id: rec.id, at })
+  return { ...item(rec), droppedAt: at }
 }
 
 // trigger 是给人看的触发条件（"下次说到发布时"）：你只存不判，判"这句话算不算说到"
@@ -108,13 +118,14 @@ function isExpired(rec, at) {
 
 // 找不到 / 已经关闭都抛：让 CLI 变成退出码 2 说清楚。静默返回 false 会让
 // "我说了"与"我什么也没说"在调用方看来一模一样（AGENTS 二·2）。
-// 过期但没关闭的便条仍然可以 take：过期管的是"该不该出现在屏幕上"，不是"能不能记账"。
-function openNote(homeDir, id) {
+// 过期但没关闭的便条仍然可以 take / drop：过期管的是"该不该出现在屏幕上"，
+// 不是"能不能记账"。
+function openNote(homeDir, id, verb) {
   const want = typeof id === 'string' ? id.trim() : ''
-  if (want === '') throw new Error('take 要给便条 id：note ls 的第一列就是')
+  if (want === '') throw new Error(`${verb} 要给便条 id：note ls 的第一列就是`)
   const { ops } = readOps(homeDir, KIND)
   const slot = fold(ops, CLOSED).byId.get(want)
   if (!slot) throw new Error(`没有这条便条：${want}（note ls 看现在有哪些）`)
-  if (slot.closedAt !== null) throw new Error(`这条便条已经关闭过：${want}（take 只递出一次）`)
+  if (slot.closedAt !== null) throw new Error(`这条便条已经关闭过：${want}（take 与 drop 都只生效一次）`)
   return slot.rec
 }

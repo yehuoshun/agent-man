@@ -111,6 +111,31 @@ test('take 一条不存在或已关闭的便条要报错：递出过就得说清
   assert.throws(() => notes.take(home, rec.id, { now: T }), /已经关闭过/, '同一条不能递出两次')
 }))
 
+test('drop 之后 ls 不再出现，回来的内容却是它：放弃也得说得出放弃了什么', () => inHome(async (home) => {
+  const rec = await notes.add(home, { text: '问她头痛好点没', trigger: '她提到加班', at: T })
+  const dropped = notes.drop(home, rec.id, { now: T + MINUTE })
+  assert.equal(dropped.text, '问她头痛好点没', 'drop 要把放弃掉的内容交回来')
+  assert.equal(dropped.droppedAt, T + MINUTE)
+  const after = notes.list(home, { now: T + MINUTE })
+  assert.equal(after.items.length, 0, 'drop 过就不该再折出来')
+  assert.equal(after.expired, 0, 'drop 不是过期：不许混进 expired 计数糊弄过去')
+  assert.equal(notes.match(home, '她又在加班', { now: T + MINUTE }).items.length, 0, 'drop 过也不再触发')
+  assert.throws(() => notes.drop(home, rec.id, { now: T }), /已经关闭过/, '同一条不能放弃两次')
+}))
+
+test('流水账里 take 与 drop 都在：谁递出去了、谁不要了，回看时分得清', () => inHome(async (home) => {
+  const said = await notes.add(home, { text: '问她头痛好点没', at: T })
+  const unused = await notes.add(home, { text: '周末去买电池', at: T })
+  notes.take(home, said.id, { now: T + MINUTE })
+  notes.drop(home, unused.id, { now: T + MINUTE })
+  const ops = records(shard(home, 'notes', T))
+  assert.deepEqual(ops.map((one) => one.op), ['add', 'add', 'take', 'drop'], '四条 op 按顺序躺着，一条没改')
+  const closes = ops.filter((one) => one.op !== 'add')
+  assert.deepEqual(closes[0], { op: 'take', id: said.id, at: T + MINUTE }, '关闭记录只带 op / id / at')
+  assert.deepEqual(closes[1], { op: 'drop', id: unused.id, at: T + MINUTE }, 'drop 记的是被放弃的那条')
+  assert.equal(notes.list(home, { now: T + MINUTE }).items.length, 0, '两条都关了：递出去的不再提，放弃的也不提')
+}))
+
 test('超过 ttl 的便条不再出现在 ls，但 expired 计数说出来（不静默消失）', () => inHome(async (home) => {
   await notes.add(home, { text: '问她头痛好点没', at: T })
   assert.equal(notes.list(home, { now: T + NOTE_TTL - 1 }).items.length, 1, '差一毫秒还不算过期')
