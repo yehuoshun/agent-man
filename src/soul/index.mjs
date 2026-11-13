@@ -6,3 +6,4 @@
 // 3. 上限是注入槽位，不是文件上限：超槽位只警告，注入装不下才记 dropped（不截半句）。
 export { current, dir, list, use } from './store.mjs'
 export { check, importCard, read, stripMarks } from './card.mjs'
+export { build } from './inject.mjs'
