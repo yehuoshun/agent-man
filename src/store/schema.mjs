@@ -5,7 +5,8 @@ import path from 'node:path'
 export const VERSION = 3
 
 const ORIGINS = new Set(['user', 'tool', 'self'])
-const OPS = new Set(['add', 'take', 'done'])
+// 流水账只认这四种动作：加、递出（take，便条）、完成（done，日程）、放弃（drop，便条）。
+const OPS = new Set(['add', 'take', 'done', 'drop'])
 
 // 五类记录的"正文"字段名不一样：结论记的是去情境的 fact，其它都是 text（design §4）。
 // 这张表同时充当"认识的类型"白名单——不在表里的 kind 直接算错，不猜。
