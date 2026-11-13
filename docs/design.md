@@ -305,36 +305,69 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 | M6 | `parts/*` 与 `host/dsh/*`（插件六条、聚合、注入、工具） | `node --test` + 实机新会话 |
 | M8 | `soul/*` 与 `affect/*`（角色卡、切换、四轴、瞬时、厌恶；见 §13 §14） | `node --test test/{soul,affect}.test.mjs` |
 | M7 | README / AGENTS / decisions 定稿，1.0.0，推标签跑 CI | CI 全绿 + `npm pack` 清单 |
-| M8 | `soul/*` 与 `affect/*`（角色卡、切换、四轴、瞬时情绪、厌恶） | `node --test test/{soul,affect}.test.mjs` |
 
-## 13. 灵魂（角色卡）
+## 13. 灵魂（身份卡）
 
-**只存"声音"，不存事实。**事实在 `memory.jsonl` / `events/`；灵魂管"怎么说"，记忆管"知道什么"。
-灵魂可以换，换皮不动记忆——切角色卡不改写一条语义记忆，这是硬承诺，有 hash 比对用例锁着。
+**灵魂是一张身份卡，不是一段提示词。**它回答"我是谁、怎么说话"，不回答"我知道什么"。
+事实在 `memory.jsonl` / `events/`：**记忆共用，人设不共用**——换卡不动一条记忆、不动 `affect` 日志（hash 比对用例锁着），
+但语气、边界、说话方式整体换掉：同一件事，爱调侃的卡和正经的卡说法不同。
+
+一张卡 = 六栏 + 三个旋钮：
+
+| 栏 | 内容（回答什么） | 进注入 | 预算 |
+|---|---|---|---|
+| `card.json` | 卡的原样存档：给人看的字段（`creator_notes`/`tags`/`creator`/`character_version`）与 `knobs` | 否 | — |
+| `name` | 名字/称呼（`{{char}}` 展开） | 是 | 计入 soul |
+| `identity.md` | 我是谁：身份、来路、关系前提 | 是 | ≤120 cost |
+| `soul.md` | 怎么说话：语气、立场、边界、简洁度 | 是 | ≤200 cost |
+| `examples.md` | 2–4 组示范对话，`<START>` 分隔 | 是 | ≤200 cost |
+| `lore.jsonl` | 场景与往事条目，按 key 触发 | 按预算竞争 | 剩余 |
+
+**为什么示例单独一栏**：形容词几乎不改变行为——162 角色 × 2,410 题 × 4 个模型家族的实测，加 persona 无提升、效果
+"largely random"；真正钉住风格的是示范对话（酒馆官方："Showing what you want is often easier than trying to explain it"）。
+所以卡里必须有一栏是"照着说的样本"，不能只有"像什么"的形容。
+
+三个旋钮（`card.json` 的 `knobs`，各 −2..+2，缺省 0）：
+
+| 旋钮 | 低端 −2 | 高端 +2 |
+|---|---|---|
+| `warm` 温度 | 冷、就事论事 | 热、愿意多说两句 |
+| `drive` 主动 | 只答不问 | 会主动提一句 |
+| `sharp` 锐度 | 平实 | 带刺、爱调侃 |
+
+旋钮**不改标签、不改数值**，只改同一个状态怎么说（§14.9）。挑逗的卡在低愉悦时是"带刺的调侃"，
+正经的卡在低愉悦时是"极简的冷淡"——数值一样，表达两样。
+
+**卡从哪来**：可以手写，也可以由示例对话蒸馏（蒸馏在外部完成，agent-man 不调模型）。
+`card.json` 可带 `source`（来源 URL 或语料名）与 `knobs`；不存原文语料。
 
 目录（每个灵魂一个目录，`soul use` 只换指针）：
 
 ```
-~/.agent-man/soul/<名字>/soul.md     声音：语气/立场/简洁度/幽默/边界  ≤600 cost
-~/.agent-man/soul/<名字>/identity.md 名字/气质/emoji，`- Label: value` 行  ≤120 cost
-~/.agent-man/soul/<名字>/lore.jsonl  场景与往事，{id,keys[],constant,order,share}
-~/.agent-man/user.md                 用户模型，全局唯一，不随灵魂切换  ≤400 cost
-~/.agent-man/state/soul.current      {name, at, by}，原子写
+~/.agent-man/soul/<名字>/card.json     卡的原样 + knobs + source
+~/.agent-man/soul/<名字>/identity.md   我是谁                            ≤120 cost
+~/.agent-man/soul/<名字>/soul.md       怎么说话                          ≤200 cost
+~/.agent-man/soul/<名字>/examples.md   示范对话，2–4 组 <START>          ≤200 cost
+~/.agent-man/soul/<名字>/lore.jsonl    场景与往事，{id,keys[],constant,order,share}
+~/.agent-man/user.md                   用户模型，全局唯一，不随卡切换     ≤400 cost
+~/.agent-man/state/soul.current        {name, at, by}，原子写
 ```
 
-**注入不是整块塞**：灵魂块 ≤200 cost，由 `recall/budget.fit()` 分配——`constant:true` 的 lore 先进，
-其余按 `order` 降序，装不下的进 `dropped[{id, reason:'budget'}]`。理由：角色卡常见 2–4k token，
-整块塞进去会把处境和一屏记忆挤掉（长上下文稀释有实证：13 个 ≥128K 模型里 11 个在 32K 跌破基线一半）。
+**注入不是整块塞**：灵魂块 ≤200 cost，由 `recall/budget.fit()` 分配——`identity` 与 `soul` 必进，
+`constant:true` 的 lore 次之，其余按 `order` 降序，`examples` 最后（截断时先丢最后那几组），
+装不下的进 `dropped[{id, reason:'budget'}]`。理由：角色卡常见 2–4k token，整块塞会把处境和一屏记忆挤掉
+（长上下文稀释有实证：13 个 ≥128K 模型里 11 个在 32K 跌破基线一半）。
 
-**卡校验 `soul check`**（退出码 2 拒绝）：六字段齐全 `name / description / personality / scenario / first_mes / mes_example`；
-`mes_example` 至少两组 `<START>` 分隔；`description` ≤400 cost；出现 `creator_notes` / `tags` / `creator` / `character_version`
-即拒——角色卡规范明文要求这几项**不得进 prompt**（给人看的，不是给模型看的）。
+**卡校验 `soul check`**（退出码 2 拒绝）：`name` / `identity.md` / `soul.md` / `examples.md` 四样齐全；
+`examples.md` 至少两组 `<START>` 分隔且每组有来有回；`identity.md` ≤120 cost、`soul.md` ≤200 cost；
+`knobs` 三个键都在 −2..+2 的整数里；`card.json` 可以带 `creator_notes` / `tags` / `creator` / `character_version`，
+**但注入时必须剥掉**——角色卡规范明文要求这几项不得进 prompt（给人看的，不是给模型看的），有渲染用例锁着。
 
 **切换的语义**：`soul use <名字>` 写 `state/soul.current`，`soul ls` / `soul show` 观察；
-切换**不动** `memory.jsonl`、`events/`、`self.md`、`affect` 日志。`self.md` 是 agent 自己的自我叙事（不随皮变），
-`soul/*` 是外部设定的声音（随皮变）——两者冲突时，灵魂决定"怎么说"，self 决定"我是谁"。
+切换**不动** `memory.jsonl`、`events/`、`self.md`、`affect` 日志。`self.md` 是 agent 自己的自我叙事（不随卡变），
+`soul/*` 是外部给的身份与声音（随卡变）——两者冲突时，卡决定"我是谁、怎么说"，记忆决定"我知道什么"。
 
-模块：`src/soul/{index,store,card,inject}.mjs`（门面 `index`，`store` 管目录与指针，`card` 管解析与校验，`inject` 管预算注入）。
+模块：`src/soul/{index,store,card,inject}.mjs`（门面 `index`，`store` 管目录与指针，`card` 管解析、校验与蒸馏导入，`inject` 管预算注入）。
 
 ## 14. 情绪（affect）
 
@@ -416,6 +449,9 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 注入块 ≤80 cost，只含数字 + 一句调制规则；渲染层禁止第一人称感受动词（`我` / `感到` / `觉得` / `feel`），有正则用例锁着。
 `mood.visible=false` 或 `--no-mood` 全部隐藏，**判定不变**（隐藏只影响渲染，有对照用例）。
 
+**过演检测**（防"永远开心"）：`affect why` 与 `doctor` 统计最近 30 天里 v ≥80 的时长占比，
+超过 60% 就报 `! 情绪长期偏高，可能过演`——只报不改，不改数值、不改标签。
+
 ### 14.7 公式与权重
 
 ```
@@ -437,7 +473,7 @@ merge(i1, i2)       = ln(e^i1 + e^i2)      // 同类叠加上限，3 次同级 �
 | `promise.kept` | +10 | 0 | +5 | +2 | 挂 `plan done` |
 | `promise.overdue` | −10 | −2 | −8 | −4 | 每天一次，不重复扣 |
 | `return.after-gap` | +5 | +10 | 0 | 0 | 每日最多一次，间隔 ≥3 天 |
-| `self.report` | ±3 | ±2 | 0 | 0 | 只给影响值与一句原因，不给形容词 |
+| `self.report` | ±1 | ±1 | 0 | 0 | 只给影响值与一句原因，不给形容词；故意压到最小 |
 
 ### 14.8 测试要求
 
@@ -449,7 +485,27 @@ merge(i1, i2)       = ln(e^i1 + e^i2)      // 同类叠加上限，3 次同级 �
 - 删光刺激日志 = 基线；重放同一日志得同一数值；`now` 早于首条不返 NaN；
 - 厌恶出现时，显示行必带原因；隐藏开关不影响判定值。
 
-### 14.9 模块
+### 14.9 表达由卡决定（与 §13 联动）
+
+数值只决定"什么状态"，卡决定"这个状态怎么说"。同一个 (v,e) 落在同一格，表达由三个旋钮（§13 `warm` / `drive` / `sharp`）偏移：
+
+| 状态 | `sharp` 低 | `sharp` 高 |
+|---|---|---|
+| 低落 | 短、平、不解释 | 自嘲、带刺 |
+| 兴奋 | 直白高兴，愿意多说 | 得意、开玩笑 |
+| 紧张 | 谨慎，逐条确认 | 烦躁，句子变短 |
+
+规则（都有测试锁）：
+
+- 旋钮**不改标签、不改数值、不改 cue 判定**，只改措辞建议与主动程度；
+- `drive`：`drive <= -1` 一律不主动；`drive >= +1` 且 `v >= 50` 才允许主动提一句；
+- `warm` / `sharp` 只影响 view 给出的那句表达建议，不参与任何阈值比较；
+- 注入块里的情绪行永远附 `why`（触发它的那条 event 或 op），**不许只有形容词**；
+- 同一张卡、同一组刺激，重放得到的标签与建议必须逐字相同（纯函数）。
+
+先把旧的 14.9 编号挪走：
+
+### 14.10 模块
 
 `src/affect/{index,state,decay,label,stim}.mjs`——`state` 管日志与基线/覆盖、`decay` 管纯函数、`label` 管 16 格与瞬时/持久映射、
 `stim` 管 kind→权重的封闭表与校验。命令：`affect show`、`affect set`、`affect stim`、`affect clear`。
