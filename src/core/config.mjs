@@ -260,7 +260,7 @@ export async function resetKey(homeDir, key) {
 
 // 命令面（§15.3）：show / get / set / reset / path。stdout 只放结果，stderr 只放 "! " 警告。
 // 用户错（未知键、值越界、坏文件）一律变成退出码 2 + 一行 "! "，不抛给 Node 变成一屏栈。
-export async function run(ctx = {}, argv = []) {
+export async function run(ctx = {}, argv) {
   const env = ctx.env || {}
   const out = ctx.out || ((s) => process.stdout.write(s))
   const err = ctx.err || ((s) => process.stderr.write(s))
@@ -268,7 +268,9 @@ export async function run(ctx = {}, argv = []) {
   const warn = (msg) => err(`! ${msg}\n`)
   const dir = dirOf(ctx.homeDir, env)
 
-  const args = Array.isArray(argv) ? argv.slice() : []
+  // registry 的 handler 只递一个 ctx（里面有 argv），这里也认第二种接法：run(ctx, argv)。
+  const raw = Array.isArray(argv) ? argv : ctx.argv
+  const args = Array.isArray(raw) ? raw.slice() : []
   // registry 两种接法都认：整串 "config show" 递进来，或只递 "show"。
   if (args[0] === 'config') args.shift()
   const sub = args[0]

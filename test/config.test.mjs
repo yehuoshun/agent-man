@@ -309,6 +309,15 @@ test('config 子命令的用法错误退 2，写清楚怎么改', async (t) => {
   assert.ok(err.some((line) => line.includes('用法')), err.join(''))
 })
 
+test('registry 只递一个 ctx 时（argv 在 ctx 里）也能跑', async (t) => {
+  const dir = home(t)
+  const out = []
+  const env = { AGENT_MAN_HOME: dir }
+  const ctx = { env, out: (s) => out.push(s), err: () => {}, argv: ['config', 'path'] }
+  assert.equal(await config.run(ctx), 0, 'registry 的 handler 形态：run({ ...ctx, argv })')
+  assert.equal(out.join(''), `${path.join(dir, 'config.json')}\n`)
+})
+
 test('文件没写 version 时提醒一句，但不擅自改文件', async (t) => {
   const dir = home(t)
   const before = writeConfig(dir, { inject: { total: 1200 } })
