@@ -4,7 +4,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { S0_EVENT, S0_MEMORY, SCORE_CUE, SCORE_R } from '../src/core/index.mjs'
-import { cue, kindOf, rank, retention, score, sortByScore, strength } from '../src/recall/index.mjs'
+import {
+  allocate,
+  cue,
+  guarantee,
+  kindOf,
+  rank,
+  retention,
+  score,
+  sortByScore,
+  strength,
+} from '../src/recall/index.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 const T0 = 1763043120000
@@ -154,4 +164,68 @@ test('design §7 的 sortByScore 与 rank 给出同一份次序', () => {
   const a = sortByScore(cands, '窗', T0 + DAY)
   const b = rank(cands, { now: T0 + DAY, query: '窗' })
   assert.deepEqual(a.map((r) => r.id), b.map((r) => r.id))
+})
+
+test('两段份额加起来等于总量：除不尽的部分也不许在分配里蒸发', () => {
+  for (const total of [1200, 1201, 77.5, 1, 0]) {
+    const plan = allocate(total)
+    assert.equal(plan.memory + plan.events, total, `${total} 被分成了 ${plan.memory}+${plan.events}`)
+  }
+  const plan = allocate(1200)
+  assert.equal(plan.memory, 720, '0.6 没乘上：design §10 定的是 SHARE_MEMORY 0.6')
+  assert.equal(plan.events, 480)
+  assert.equal(allocate(NaN).memory + allocate(NaN).events, 0, '总量不是数字时该当 0，不是 NaN')
+})
+
+test('结论那段没用完，剩下的额度借给事件那段', () => {
+  const plan = allocate(1000, { memory: 100, events: 900 })
+  assert.equal(plan.memory, 100, `memory 只要 100 却分走了 ${plan.memory}：份额不该硬塞`)
+  assert.equal(plan.events, 900, `events 要 900 只拿到 ${plan.events}：空着的额度没借出去`)
+  assert.equal(plan.borrowed, 500, `借了 ${plan.borrowed}，该是 500（600 份额里空着的 500）`)
+  assert.equal(plan.spare, 0)
+  assert.deepEqual(plan.short, { memory: 0, events: 0 })
+})
+
+test('两段都想超时先按 0.6/0.4 分，缺口写进 short 不许悄悄吞掉', () => {
+  const plan = allocate(1000, { memory: 900, events: 900 })
+  assert.equal(plan.memory, 600, `memory 分到 ${plan.memory}：没有份额就谈不了借还`)
+  assert.equal(plan.events, 400)
+  assert.deepEqual(plan.short, { memory: 300, events: 500 })
+  assert.equal(plan.spare, 0)
+  assert.equal(plan.memory + plan.events, 1000, '分出去的总量超了预算，这是预算不可协商的第一道门')
+})
+
+test('两段都用不完时，剩下的记在 spare，不当成已经花掉', () => {
+  const plan = allocate(1000, { memory: 100, events: 100 })
+  assert.equal(plan.memory, 100)
+  assert.equal(plan.events, 100)
+  assert.equal(plan.borrowed, 0, '谁都没借，borrowed 却是' + plan.borrowed)
+  assert.equal(plan.spare, 800, `剩 ${plan.spare} 该记成 800`)
+})
+
+test('保底先挑最重的那条，再挑最新的那条', () => {
+  // 调用方已按分数排好序：头部就是最重的；at 最大的是最新的。
+  const items = [
+    { id: 'e-1', at: T0, text: '重的' },
+    { id: 'e-2', at: T0 + DAY, text: '中间的' },
+    { id: 'e-3', at: T0 + 2 * DAY, text: '最新的' },
+  ]
+  const order = guarantee({ name: 'events', items })
+  assert.deepEqual(order.map((r) => r.id), ['e-1', 'e-3', 'e-2'])
+})
+
+test('最重的那条正好也是最新的时候，保底不把同一条挑两遍', () => {
+  const items = [
+    { id: 'e-1', at: T0 + 2 * DAY, text: '又重又新' },
+    { id: 'e-2', at: T0, text: '又轻又旧' },
+  ]
+  const order = guarantee({ name: 'events', items })
+  assert.deepEqual(order.map((r) => r.id), ['e-1', 'e-2'])
+  assert.equal(new Set(order).size, order.length, '同一条被挑了两遍：保底等于白占两份预算')
+})
+
+test('空段没有保底可挑，也不报错', () => {
+  assert.deepEqual(guarantee({ name: 'events', items: [] }), [])
+  assert.deepEqual(guarantee({ name: 'events' }), [])
+  assert.deepEqual(guarantee(undefined), [])
 })
