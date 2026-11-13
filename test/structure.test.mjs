@@ -123,3 +123,55 @@ test('doctor 在空数据目录上不抛异常，退出码只可能是 0 或 1',
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// —— §15.4 配置收口的两条结构用例 ——
+// 两张债务名单记的是"立规矩之前就已经这么写"的文件：本分支只许新增 core/config.mjs，
+// 不许改别人的目录，所以旧账先记下，新文件一律不许再犯。名单只许变短。
+const ENV_DEBT = new Set(['src/parts/call.mjs', 'src/parts/discover.mjs'])
+const META_DEBT = new Set(['src/store/append.mjs', 'src/parts/index.mjs', 'src/audit/doctor.mjs'])
+
+// 这几个词在本文件里也得拼出来：扫描范围内若含本文件，写全了会抓到自己（同上面对 fetch 的处理）。
+const ENV_READ = ['process', 'env'].join('.')
+const CONFIG_JSON = ['config', 'json'].join('.')
+const META_JSON = ['meta', 'json'].join('.')
+const ENV_PREFIX = `${['AGENT', 'MAN'].join('_')}_`
+const HOME_ENV = `${['AGENT', 'MAN'].join('_')}_HOME`
+
+function srcFiles(dir = path.join(ROOT, 'src'), acc = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) srcFiles(path.join(dir, entry.name), acc)
+    else if (CODE_EXT.has(path.extname(entry.name))) acc.push(path.join(dir, entry.name))
+  }
+  return acc
+}
+
+test('src/ 里只有 core/config.mjs 与 cli/main.mjs 能摸 process.env，配置只经 load({env}) 进来', () => {
+  // 两个豁免：config.mjs 是环境变量映射的唯一住处；cli/main.mjs 是入口，由它把 process.env
+  // 递给 load。除此之外谁自己读环境变量，就等于绕开了优先级与校验。
+  const allowed = new Set(['src/core/config.mjs', 'src/cli/main.mjs'])
+  const files = srcFiles().map(rel)
+  assert.ok(files.length > 10, `只扫到 ${files.length} 个文件：用例在假绿`)
+  const bad = files.filter((from) => !allowed.has(from) && !ENV_DEBT.has(from)
+    && fs.readFileSync(path.join(ROOT, from), 'utf8').includes(ENV_READ))
+  assert.deepEqual(bad, [], `这些文件自己读了 ${ENV_READ}：配置只许经 load() 的入参进来`)
+})
+
+test('config.json / meta.json 的字面路径与 AGENT_MAN_ 前缀各只有一个出处', () => {
+  const owners = new Set(['src/store/paths.mjs', 'src/core/config.mjs'])
+  const files = srcFiles().map(rel)
+  assert.ok(files.length > 10, `只扫到 ${files.length} 个文件：用例在假绿`)
+  const badName = []
+  for (const from of files) {
+    if (owners.has(from) || META_DEBT.has(from)) continue
+    const text = fs.readFileSync(path.join(ROOT, from), 'utf8')
+    for (const needle of [CONFIG_JSON, META_JSON]) {
+      if (text.includes(needle)) badName.push(`${from} 含 ${needle}`)
+    }
+  }
+  assert.deepEqual(badName, [], '数据文件名只许有一个出处：散开的字面量再也收不回来')
+  // AGENT_MAN_HOME 是数据目录变量（归 store/paths.mjs 的 home()），不是配置键：
+  // 先把它的出现剔掉，再看前缀——剩下来的就是"又给配置开了一条环境变量通道"。
+  const badPrefix = files.filter((from) => from !== 'src/core/config.mjs'
+    && fs.readFileSync(path.join(ROOT, from), 'utf8').split(HOME_ENV).join('').includes(ENV_PREFIX))
+  assert.deepEqual(badPrefix, [], `${ENV_PREFIX} 只许出现在 src/core/config.mjs：那才是环境变量名的唯一真源`)
+})

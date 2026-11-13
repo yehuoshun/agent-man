@@ -4,6 +4,11 @@ export { now, dayKey, monthKey, clock, rel, parseWhen } from './time.mjs'
 export { cost, cut, oneLine } from './cost.mjs'
 export { tokens, jaccard } from './text.mjs'
 
+// 配置也走门面出（AGENTS 四：跨目录只准 import index.mjs）：
+// `import { config } from '../core/index.mjs'` 然后 config.load / config.run。
+// 单独一个命名空间，是因为 load / run / flat / validate 这几个名字太通用，平铺会遮住别人的。
+export * as config from './config.mjs'
+
 // §10 的常数只从这一处出：哪层需要一个数，就从门面拿，别在本地再写一遍。
 export {
   COST_ASCII, COST_WIDE, LINE_OVERHEAD,
