@@ -6,7 +6,7 @@
 import { SECTION_ITEMS_MAX, clock, dayKey, oneLine } from '../core/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
-import { situation } from '../mind/index.mjs'
+import { debt, situation } from '../mind/index.mjs'
 import { renderScreen } from '../view/index.mjs'
 
 // 写：只有这六项。多一项"自由文本入口"就等于绕开结论的证据要求。
@@ -85,7 +85,16 @@ const WRITE_RULES = new Map([
         { ...pick(a, ['text', 'imp', 'cues', 'src']), at: atOf(a, ctx) },
         { home: ctx.home, now: ctx.now },
       )
-      return `已记下事件 ${out.id}`
+      // 欠账是"该巩固了"的唯一计数器（§14.9）：记了情景不记账，门槛就永远到不了。
+      // 记不上也不该让这次写入失败——情景已经落盘了，说清楚就够。
+      let warn = ''
+      try {
+        const bumped = await debt.bump(ctx.home, { at: out.at, imp: out.record?.imp ?? 1 })
+        if (!bumped.saved) warn = `\n! 欠账没记上：${bumped.why}`
+      } catch (e) {
+        warn = `\n! 欠账没记上：${e instanceof Error ? e.message : String(e)}`
+      }
+      return `已记下事件 ${out.id}${warn}`
     },
   }],
   ['memory add', {

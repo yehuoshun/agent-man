@@ -11,6 +11,7 @@ import { cost } from '../src/core/index.mjs'
 import {
   LOOK_ACTIONS, SLOTS, TOOLS, WRITE_ACTIONS, affectLine, callTool, compose, recall,
 } from '../src/host/index.mjs'
+import { debt } from '../src/mind/index.mjs'
 import { use as useSoul } from '../src/soul/index.mjs'
 import { apply } from '../dsh/index.mjs'
 
@@ -333,4 +334,14 @@ test('apply 在坏 ctx 上安静退出，不抛', () => {
 
 test('SLOTS 的次序就是 §9 的总装次序', () => {
   assert.deepEqual([...SLOTS], ['soul', 'user', 'situation', 'recall'])
+})
+
+test('写情景顺手记欠账：记完一条 imp=2 的事，欠账就是 2 imp / 1 条', async () => {
+  await inHome(async (home) => {
+    await callTool('agent_man', { action: 'event add', text: '她说明天要早出门', imp: 2 },
+      { home, now: T })
+    const got = debt.state(home, { now: T })
+    assert.equal(got.unconsolidated, 2)
+    assert.equal(got.unreflected, 1)
+  })
 })

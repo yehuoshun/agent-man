@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { debt } from '../mind/index.mjs'
 import { writeAtomic } from '../store/index.mjs'
 
 import { build, budgetOf, nowOf, requireHome } from './build.mjs'
@@ -39,6 +40,7 @@ export async function run(opts = {}) {
   let written = null
   let seen = null
   let traced = null
+  let settled = null
 
   if (dry) {
     // --dry-run 一次盘都不摸：预览里写了文件、抬高了 seen，那就不叫预览了。
@@ -61,12 +63,15 @@ export async function run(opts = {}) {
       kept: built.kept,
       dropped: built.dropped,
     })
+    // 账本写成了再结账：先结后写，写挂了就会有一笔"巩固过了"而账上看不见。
+    settled = await debt.settle(dir, { at })
+    if (!settled.saved) warnings.push(`! 欠账没结掉：${settled.why}`)
   }
 
   if (target === null) say(`${text}\n`)
   for (const line of warnings) warn(`${line}\n`)
 
-  return { text, built, seen, trace: traced, out: written, wrote: !dry, warnings }
+  return { text, built, seen, trace: traced, settled, out: written, wrote: !dry, warnings }
 }
 
 // out 的目录不替你建：写到哪儿是调用方的决定，猜错地方再建一串目录，
