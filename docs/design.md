@@ -218,9 +218,9 @@ src/
 | audit/timeline | `timeline({home,now,limit,all})` → `{items,total,limit,since,all,skipped}` |
 | audit/orphan | `orphan({home})` → memory 的 `{items,skipped}` 原样 |
 | audit/doctor | `doctor({home,ctx})` → `{ok,checks[{name,ok,detail}]}` |
-| soul/store | `read(home)` `use(home,{name,at})` `list(home)` `card(home,name)` |
-| soul/card | `parse(md)` `check(card)` `fromCc(json)` |
-| soul/inject | `block({home,now,budget})` → `{text,used,dropped}` |
+| soul/store | `dir(home,name)` `list(home)` `current(home)` `use(home,name,{at,by})`（async，只写 `state/soul.current`） |
+| soul/card | `read(home,name)` `check(home,name)` `importCard(home,file)`（async，收 CCv1/V2 的 json）`stripMarks(text)` |
+| soul/inject | `build(home,{name,budget})` → `{lines,cost,used,dropped,inferred,knobs}` |
 | affect/state | `read(home,now)` `stim(home,one)` `set(home,{axis,value,until,why,at})` `clear(home,at)` |
 | affect/decay | `decay(i0,dt,half)` `merge(a,b)` |
 | affect/label | `mood(v,e)` `transient(stims,now)` `persistent({t,r})` |
@@ -360,9 +360,12 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 ~/.agent-man/state/soul.current        {name, at, by}，原子写
 ```
 
-**注入不是整块塞**：灵魂块 ≤200 cost，由 `recall/budget.fit()` 分配——`identity` 与 `soul` 必进，
-`constant:true` 的 lore 次之，其余按 `order` 降序，`dialogue` 最后（截断时先丢最后那几组），
-装不下的进 `dropped[{id, reason:'budget'}]`。理由：角色卡常见 2–4k token，整块塞会把处境和一屏记忆挤掉
+**注入不是整块塞**：灵魂块 ≤200 cost，由 `soul/inject.build()` 自己按"一行一个单位"装填——
+`identity` 与 `soul`（含 `name` 那段称呼）必进，`constant:true` 的 lore 次之，其余按 `order` 降序，
+`dialogue` 最后（整组地丢，不截半句），每步真跑 `cost()` 复核。**不走 `recall/budget.fit()`**：`fit()` 会
+`cut()` 出半句，和"示范对话整组才成立"直接矛盾。装不下的进 `dropped[{file, section, reason:'budget'}]`，
+额度用尽后剩下的组也要逐组记账（"没试"不能在账上消失）。行首标记固定为 `[身份]` `[称呼]` `[说话]`
+`[往事]` `[示范]`，一栏只在第一行带标记。理由：角色卡常见 2–4k token，整块塞会把处境和一屏记忆挤掉
 （长上下文稀释有实证：13 个 ≥128K 模型里 11 个在 32K 跌破基线一半）。
 
 **卡校验 `soul check`**（退出码 2 拒绝）：`name` / `identity.md` / `soul.md` / `dialogue.md` 四样齐全；
