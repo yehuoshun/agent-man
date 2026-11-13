@@ -28,12 +28,15 @@
 
 ## 四、结构（有结构用例锁着）
 
-- 一个目录最多 5 个文件（门面 `index.mjs` 不计）；每个目录必须有 `index.mjs` 门面。
+- 一个目录最多 5 个文件（门面 `index.mjs` 不计）；每个目录必须有 `index.mjs` 门面，`src/` 与 `dsh/` 根除外。
 - 跨目录**只准 import 门面**（`../store/index.mjs`），不许深挖 `../store/append.mjs`。
-- 依赖单向：`cli → view → mind / digest / recall → memory / intent / parts → store → core`。反向依赖一律不合格。
+- 依赖单向：`cli / host → view / audit → mind / digest / soul → recall / memory / intent / parts / affect → store → core`。
+  `cli` 与 `host` 并列——DSH 与命令行是两个门，谁都不许被对方 import。反向依赖一律不合格。
 - `node:child_process` 只许出现在 `src/parts/call.mjs`；`fetch(` 全仓禁止。
-- CLI 只有 `index.mjs` 门面 + `main.mjs` + `registry.mjs` 三个文件：命令逻辑住各领域模块，`registry` 只是一张 `"memory add" → handler` 表。
-- 薄壳 `bin/agent-man.mjs` 只接退出码，不放逻辑；`dsh/` 只放宿主元数据。
+- CLI 只有 `index.mjs` 门面 + `main.mjs` + `registry.mjs` 三个文件：命令逻辑住各领域模块，
+  `registry` 是一张 `"memory add" → handler` 表，外加取参与排屏。它已经一千行左右，别再往里加业务。
+- 薄壳 `bin/agent-man.mjs` 只接退出码，不放逻辑；`dsh/` 只放宿主适配（`index.mjs` 挂生命周期与工具注册、`search.mjs` 取旧会话）与元数据。
+  宿主层的业务判断归 `src/host/`：装配是纯函数（`compose`），取数才碰环境。
 
 ## 五、存储
 
