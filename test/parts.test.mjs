@@ -87,6 +87,15 @@ test('describe 拿到不是 JSON 的输出时返回 ok:false 而不是抛', asyn
   assert.match(d.why, /不是 JSON/)
 })
 
+test('describe 碰上被截断的 --describe 说"截断"，不把责任推给零件的格式', async () => {
+  const dir = tmp()
+  const js = says("{name:'big',desc:'x'.repeat(9000),section:'s',timeout_ms:1000,side_effects:[]}")
+  const d = await describe({ name: 'big', file: makePart(dir, 'big', js) })
+  assert.equal(d.ok, false)
+  assert.match(d.why, /截断/)
+  assert.doesNotMatch(d.why, /不是 JSON/)
+})
+
 test('describe 缺字段时返回 ok:false 并说缺哪个', async () => {
   const dir = tmp()
   const file = makePart(dir, 'half', says("{name:'half',desc:'x',section:'y'}"))

@@ -109,6 +109,11 @@ export async function describe(part, { timeout = PART_TIMEOUT, env = process.env
   const name = part?.name ?? path.basename(String(part?.file ?? ''))
   const r = await capture(part, { args: ['--describe'], timeout, env })
   if (r.status !== 'ok') return { ok: false, why: whyNot(r, name) }
+  // 截断之后剩下的 JSON 一定是坏的。说"不是 JSON"是在怪零件写错了格式，实际是我们的
+  // 8KB 预算把它切掉了——把它做的事说错，就没人想到去看那句 truncated。
+  if (r.truncated) {
+    return { ok: false, why: `${name} 的 --describe 超过 ${PART_STDOUT_MAX} 字节被截断` }
+  }
   let data
   try {
     data = JSON.parse(r.out)
