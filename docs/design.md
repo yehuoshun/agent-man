@@ -134,18 +134,16 @@ $AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆�
 ```
 agent-man                          处境屏（≡ context show，只读）
 agent-man event  add "…" [--imp 0-3] [--cue 她,加班] [--src user|tool:名字|self]
-agent-man event  ls | find [--since …] [--until …] [--all] [--limit N]
-agent-man memory add "<事实>" --key <槽位> --from <事件id|日期..日期> [--imp 0-3]
-agent-man memory ls | find | show <id|key> | revise <id> "<新事实>" [--from …]
-agent-man rule   add "<规矩>" --why "<为什么>"    ·  rule ls
+agent-man event  ls | find <字面> [--since …] [--until …] [--all] [--limit N]
+agent-man memory add "<事实>" --key <槽位> --from <事件id…> [--imp 0-3]
+agent-man memory ls | find | show <id|key> | revise <id> "<新事实>" [--imp 0-3]
+agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls
 agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>
 agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id>  ·  plan ls
-agent-man self   show | set | append
-agent-man soul   ls | use <名字> | show | check | import <卡文件>
-agent-man affect show | set <标签> [--for 2h] [--why "…"] | clear | why
-agent-man soul   ls | use <名字> | show [--json] | check <名字> | import <卡文件或目录>
-agent-man affect show | set <标签|数值> [--for 2h] [--why "…"] | clear | stim <kind> [--imp 0-3]
-agent-man context show | digest [--budget 1200] [--due] [--out 文件] | cue [--min-gap 6h] [--peek] [--why …] | sense
+agent-man self   show | set --id <块名> "<文本>" | append "<文本>"
+agent-man soul   ls | use <名字> | show [--json] | check <名字> | import <卡文件>
+agent-man affect show | set <轴> <数值> [--for 2h] [--why "…"] | clear | why
+agent-man context show | digest [--budget 1200] [--out 文件] | cue [--min-gap 6h] [--peek] [--why …] | sense [--budget 550]
 agent-man audit  trace [--limit N] | timeline [--limit N] [--all] | orphan
 agent-man doctor
 agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（插件直通）
@@ -159,7 +157,17 @@ agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（�
 `audit timeline` 的窗口对五类一起生效（它答的是"最近发生了什么"），`--all` 才全量；
 `audit trace` 不按时期裁剪（保留上限 `TRACE_KEEP` 只给将来的清理用，审计要能看全）。
 
-退出码：`0` 成功/有话要说；`1` 不说（cue 的"不打扰"）；`2` 用法或数据错误。
+未启用的开关在 1.0 一律**退 2 并说明**，不做"接受但只打 `! `"这种半生效：
+`context digest --due`（`digest/build` 还不收到期过滤）、`affect stim --imp`
+（刺激权重由 kind 定，见 §14.7）、`memory add|revise --from 日期..日期`
+（证据区间解析还没做，只认事件 id）。这三条记在 `docs/decisions.md` 的债务里。
+
+`event find` 只按 `text` 子串匹配（不分大小写），`cues` 不参与——
+cues 是给 recall 算分的词，不是给人搜的字。
+`audit timeline` 的 `--limit` 缺省 `AUDIT_LIMIT`，截断时打 `! `。
+
+退出码：`0` 成功/有话要说（含"读出来是空的"）；`1` 不说（cue 的"不打扰"、
+`audit orphan` 查出缺证据的数据、`memory show` 查不到）；`2` 用法或数据错误。
 每个读命令都支持 `--json`，输出结构化结果；`stdout` 只放结果，`stderr` 只放 `! ` 开头的警告。
 
 ## 7. 模块与接口
@@ -184,7 +192,8 @@ src/
   host/    index inject tools recall
 ```
 
-依赖只能向下：`cli → view / audit → mind / digest / soul → recall / memory / intent / parts / affect → store → core`。
+依赖只能向下：`cli / host → view / audit → mind / digest / soul → recall / memory / intent / parts / affect → store → core`。
+（`host` 与 `cli` 并列而不是夹在 `cli` 下面：它自己就是入口，DSH 与命令行是两个门。）
 跨目录只准 import 门面 `<dir>/index.mjs`；同层之间只许调用门面导出的读接口。
 `node:child_process` 只许出现在 `src/parts/call.mjs`；`fetch` 全仓禁止。
 一个目录最多 5 个文件（门面 `index.mjs` 不计）。
