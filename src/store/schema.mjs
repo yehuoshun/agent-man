@@ -18,18 +18,26 @@ const BODY = new Map([
   ['plans', 'text'],
 ])
 
+// 账本是第六种，但它既没有 id、也没有正文（design §4 只记"这一屏说了什么"），
+// 所以不进 BODY：正文表是"一条记忆长什么样"，账本是"一次巩固长什么样"。
+// 白名单必须认它——否则写入方写得进去、读取方按另一套判断，两边各有各的"合法"。
+const TRACE = 'trace'
+const KINDS = [...BODY.keys(), TRACE]
+
 // 校验的全部职责是说清"哪一条不对、怎么改"，不是修数据（AGENTS 五：不猜、不补、
 // 不截断后继续）。所以永远返回 { ok, errors }，永远不抛——抛了调用方就没法把
 // 每条错误变成一行 "! "，只能吐一个栈。
 export function validate(kind, obj) {
-  const field = BODY.get(kind)
-  if (!field) {
-    return { ok: false, errors: [`未知的记录类型：${String(kind)}（只认 ${[...BODY.keys()].join(' / ')}）`] }
+  if (!KINDS.includes(kind)) {
+    return { ok: false, errors: [`未知的记录类型：${String(kind)}（只认 ${KINDS.join(' / ')}）`] }
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     return { ok: false, errors: ['记录必须是对象'] }
   }
+  // 账本自己一套形状：先分出去，别让它掉进下面"必须带 id 和正文"的通用检查里。
+  if (kind === TRACE) return report(traceErrors(obj))
 
+  const field = BODY.get(kind)
   const errors = []
   if (typeof obj.id !== 'string' || obj.id.trim() === '') {
     errors.push('id 必须是非空字符串：没有 id 就没法引用、没法去重')
@@ -62,7 +70,54 @@ export function validate(kind, obj) {
     }
   }
 
+  return report(errors)
+}
+
+function report(errors) {
   return { ok: errors.length === 0, errors }
+}
+
+// 账本的最小形状：at 是唯一的必填（没有时间，倒着读就没法排），其余字段"带了就必须对"。
+// 特意不写死字段清单的完整性——摘要哪天多记一个快照（比如当时的情绪），
+// store 不用跟着改一行；能不能读得出来是 audit 那一层的事（它只管交出六格）。
+function traceErrors(obj) {
+  const errors = []
+  if (!Number.isFinite(obj.at)) errors.push('at 必须是有限数字（epoch ms）')
+  // 预算与用量是账的全部意义：写成字符串或漏掉，这份账就答不出"用了多少"。
+  for (const key of ['budget', 'used']) {
+    if (obj[key] !== undefined && !Number.isFinite(obj[key])) {
+      errors.push(`${key} 必须是有限数字（cost）`)
+    }
+  }
+  if (obj.header !== undefined && typeof obj.header !== 'string') {
+    errors.push('header 必须是字符串：记的是抬头形态（full / compact / …），没有抬头写空串')
+  }
+  if (obj.kept !== undefined && (!Array.isArray(obj.kept) || !obj.kept.every(isId))) {
+    errors.push('kept 必须是记录 id 数组')
+  }
+  if (obj.dropped !== undefined) errors.push(...droppedErrors(obj.dropped))
+  return errors
+}
+
+// 丢掉的每一条都要有理由：账本里出现一个没有理由的 id，等于没记（AGENTS 二·2 不静默）。
+function droppedErrors(list) {
+  if (!Array.isArray(list)) return ['dropped 必须是 { id, reason } 数组']
+  const errors = []
+  list.forEach((one, i) => {
+    if (!one || typeof one !== 'object' || Array.isArray(one)) {
+      errors.push(`dropped[${i}] 必须是 { id, reason } 形状的对象`)
+      return
+    }
+    if (!isId(one.id)) errors.push(`dropped[${i}].id 必须是非空字符串`)
+    if (typeof one.reason !== 'string' || one.reason.trim() === '') {
+      errors.push(`dropped[${i}].reason 必须是非空字符串：丢掉的东西要说清为什么`)
+    }
+  })
+  return errors
+}
+
+function isId(value) {
+  return typeof value === 'string' && value.trim() !== ''
 }
 
 function srcErrors(src) {

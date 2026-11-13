@@ -120,6 +120,22 @@ test('trace 坏行与形状不全的行跳过并计数，不装作没发生', as
   })
 })
 
+test('trace 的形状由 schema 说了算：多写的字段照样读得出，缺格的账跳过', async () => {
+  await inHome(async (home) => {
+    // 账本将来多记一个快照（design §14.13 的情绪）照样能读：形状不锁死在 audit 这一层。
+    seedTrace(home, { ...traceRow(NOW), affect: { mood: 'tired' } })
+    // 少了 header：这行读不出"抬头当时让到哪一档"，跳过并计数，不替它补一个空串。
+    const at = NOW - MINUTE
+    ensure(home)
+    appendJsonl(stateFile(home, 'trace', at), { at, budget: 1200, used: 10, kept: [], dropped: [] })
+    const got = trace({ home, now: NOW })
+    assert.deepEqual(got.items.map((one) => one.at), [NOW])
+    assert.equal(got.skipped, 1)
+    // 判完形状只交六格：多写的字段不往上层流。
+    assert.deepEqual(Object.keys(got.items[0]).sort(), ['at', 'budget', 'dropped', 'header', 'kept', 'used'])
+  })
+})
+
 test('trace 的 limit 只认非负整数，打错就拒绝并说清怎么给', async () => {
   await inHome(async (home) => {
     seedTrace(home, traceRow(NOW))

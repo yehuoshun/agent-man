@@ -1,8 +1,9 @@
 // 落账（design §4）：每跑一次巩固，账本上多一行。
 // 账本是"我当时到底说了什么"的唯一证据——没有它，"你昨天为什么没提那条"
 // 就只能靠模型自己回忆，而那正是这个项目要修的病。
-import { AUDIT_LIMIT } from '../core/index.mjs'
-import { appendJsonl, ensure, listShards, readJsonl, stateFile } from '../store/index.mjs'
+//
+// 这一层只有写：读账归 audit.trace（design §6），一处写一处读，口径不会岔开。
+import { appendJsonl, ensure, stateFile, validate } from '../store/index.mjs'
 
 import { nowOf, requireHome } from './build.mjs'
 
@@ -14,8 +15,8 @@ export function record(opts = {}) {
   const at = nowOf(opts.now)
   const line = {
     at,
-    budget: Number.isFinite(opts.budget) ? opts.budget : null,
-    used: Number.isFinite(opts.used) ? opts.used : null,
+    budget: opts.budget,
+    used: opts.used,
     header: typeof opts.header === 'string' ? opts.header : '',
     kept: idsOf(opts.kept),
     // 每一条丢掉的都带 reason：账本里出现一个没有理由的 id，等于没记。
@@ -24,6 +25,12 @@ export function record(opts = {}) {
       reason: typeof entry?.reason === 'string' && entry.reason !== '' ? entry.reason : 'unknown',
     })),
   }
+  // 写之前过一遍 schema：落下一行读不出来的账，比没写更糟——audit 会静默跳过它，
+  // 而屏幕那边以为"说过了"。不合法就说清哪里不合法，不替调用方补数。
+  const check = validate('trace', line)
+  if (!check.ok) {
+    throw new Error(`账本这一行不合法：${check.errors.join('；')}`)
+  }
   // 第一次写盘才建目录（design §3：写入才初始化）；目录不在时 appendJsonl 会 ENOENT。
   ensure(dir)
   const file = stateFile(dir, 'trace', at)
@@ -31,43 +38,9 @@ export function record(opts = {}) {
   return { ...line, file }
 }
 
-// 账本读回：跨月也要连起来看，否则每月一号"我刚说过什么"就凭空断了。
-// 缺省条数用 core 的 AUDIT_LIMIT：同一个账本两个读命令各定一个数，早晚长出两套口径。
-export function list(opts = {}) {
-  const dir = requireHome(opts.home)
-  const at = nowOf(opts.now)
-  const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : AUDIT_LIMIT
-
-  const items = []
-  let skipped = 0
-  for (const file of listShards(dir, 'trace', { to: at })) {
-    const got = readJsonl(file)
-    skipped += got.bad
-    for (const rec of got.items) {
-      if (typeof rec !== 'object' || rec === null || !Number.isFinite(rec.at)) {
-        skipped += 1
-        continue
-      }
-      if (rec.at > at) continue
-      items.push(rec)
-    }
-  }
-  // 只认 at 的数字差（AGENTS 五）；同一毫秒的两行靠文件内次序，不另编序号。
-  items.sort((a, b) => a.at - b.at)
-  return { items: items.slice(-limit), skipped, limit }
-}
-
-// never({home}) → 这本账从没落过一行吗（design §7 的 never）。
-// 上层要能说"还没巩固过"，而不是把"零条"当成"零条账"——两句话差得很远。
-// 只要盘上有一行（哪怕读不懂）就不说 never：坏账也是账，不装作没发生。
-export function never(opts = {}) {
-  const dir = requireHome(opts.home)
-  for (const file of listShards(dir, 'trace')) {
-    const got = readJsonl(file)
-    if (got.items.length > 0 || got.bad > 0) return false
-  }
-  return true
-}
+// 读账不在这里：audit.trace（design §6）是账本唯一的读者，跨月合读、坏行计数、
+// 缺省条数都由它一份口径说了算。原先这里的 list/never 与它各读一遍，谁改了形状
+// 另一处不知道——所以拆掉了，"还没巩固过"就是 audit.trace 回空 items。
 
 function idsOf(kept) {
   if (!Array.isArray(kept)) return []

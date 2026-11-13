@@ -1,4 +1,5 @@
 import { DEFAULT_WINDOW_DAYS } from '../core/index.mjs'
+import { listShards, readJsonl, validate } from '../store/index.mjs'
 
 import {
   eventIndex,
@@ -68,6 +69,44 @@ export function ls(opts = {}, ctx = {}) {
 // design §7 里这一层叫 list；简报叫 ls。两个名字都给，行为是同一个。
 export function list(opts = {}, ctx = {}) {
   return ls(opts, ctx)
+}
+
+// 情景层按天分片（design §3）：跨天必须合读，否则"昨天那条"会在今天的窗口里凭空不见。
+// events(home, { from, to }) → { items, bad }：窗口是 [from, to] 两端都含，
+// 分片名只做粗筛，精确到毫秒的窗口在这里再判一次；坏行（JSON 坏了或过不了 schema）
+// 跳过并计数，由调用方用 "! " 报出去——一行坏掉不该让整份情景读不出来。
+export function events(home, opts = {}) {
+  const dir = requireHome({ home })
+  const since = boundOf(opts.from, 'from')
+  const until = boundOf(opts.to, 'to')
+  const items = []
+  let bad = 0
+
+  for (const file of listShards(dir, 'events', { from: since, to: until })) {
+    const got = readJsonl(file)
+    bad += got.bad
+    for (const rec of got.items) {
+      if (!validate('events', rec).ok) {
+        bad += 1
+        continue
+      }
+      // 窗口外的行不算坏：它只是不在这次问的区间里。
+      if (since !== null && rec.at < since) continue
+      if (until !== null && rec.at > until) continue
+      items.push(rec)
+    }
+  }
+  // 只认 at 的数字差（AGENTS 五）；同一毫秒保留文件内次序，不另编序号。
+  items.sort((a, b) => a.at - b.at)
+  return { items, bad }
+}
+
+function boundOf(value, what) {
+  if (value === undefined || value === null) return null
+  if (!Number.isFinite(value)) {
+    throw new Error(`events 的 ${what} 只能是有限数字（epoch ms），拿到的是 ${String(value)}`)
+  }
+  return value
 }
 
 // 字面搜索（简报）：不降维、不做语义相似度，只问 fact 里有没有这个子串。

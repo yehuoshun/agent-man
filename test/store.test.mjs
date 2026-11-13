@@ -203,6 +203,44 @@ test('validate 每条拒绝路径都返回 errors 而不抛', () => {
   }
 })
 
+// 账本也要过同一道校验：写入方与读取方各判一次形状，早晚会有一边漏改。
+test('trace 行走 schema：at 是唯一的必填，认得的字段带了就必须对，多写的字段不管', () => {
+  const at = new Date(2026, 10, 13, 21, 40).getTime()
+  // 账本没有 id、也没有正文：除了 at，其它字段随摘要怎么写。
+  assert.deepEqual(validate('trace', { at }), { ok: true, errors: [] })
+  const full = {
+    at,
+    budget: 1200,
+    used: 1087,
+    header: 'full',
+    kept: ['m-1', 'e-2'],
+    dropped: [{ id: 'e-3', reason: 'budget' }],
+  }
+  assert.deepEqual(validate('trace', full), { ok: true, errors: [] })
+  // 将来账本多记一个快照（比如当时情绪）不用改 store：不认识的字段直接放过。
+  assert.deepEqual(validate('trace', { ...full, affect: { mood: 'tired' } }), { ok: true, errors: [] })
+
+  const bad = [
+    [{ at: '2026-11-13' }, /at/],
+    [{ budget: 1200, used: 1087 }, /at/],
+    [{ at, budget: '1200' }, /budget/],
+    [{ at, used: null }, /used/],
+    [{ at, header: 3 }, /header/],
+    [{ at, kept: 'm-1' }, /kept/],
+    [{ at, kept: ['m-1', ''] }, /kept/],
+    [{ at, dropped: {} }, /dropped/],
+    [{ at, dropped: [{ id: 'e-3' }] }, /reason/],
+    [{ at, dropped: [{ reason: 'budget' }] }, /dropped\[0\]\.id/],
+  ]
+  for (const [obj, pattern] of bad) {
+    const result = validate('trace', obj)
+    assert.equal(result.ok, false, `${JSON.stringify(obj)} 必须判不合法`)
+    assert.match(result.errors.join(' / '), pattern)
+  }
+  // 未知 kind 的报错要把 trace 列进去，否则写入方还得猜"账本算不算记录"。
+  assert.match(validate('zzz', { at }).errors.join(' / '), /trace/)
+})
+
 test('checkHome 只读：缺目录与缺 schema.json 都说清原因，且不写盘', () => {
   const dir = tempDir()
   const empty = checkHome(dir)
