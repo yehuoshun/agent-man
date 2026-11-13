@@ -299,18 +299,18 @@ test('峰值只升不降：到过的高度不随衰减抹掉，也不因为后�
   await inHome(async (home) => {
     await stim(home, { kind: 'promise.kept', why: '守了承诺', at: T })
     const high = snapshot(home, { now: T })
-    assert.ok(near(high.peaks.trust.value, high.t))
+    assert.ok(near(high.peaks.trust, high.t))
     const later = snapshot(home, { now: T + 200 * 24 * HOUR })
-    assert.ok(later.t < high.peaks.trust.value)
-    assert.equal(later.peaks.trust.value, high.peaks.trust.value)
-    assert.equal(later.peaks.trust.at, T)
+    assert.ok(later.t < high.peaks.trust)
+    assert.equal(later.peaks.trust, high.peaks.trust)
+    assert.equal(later.peaks.at, T)
     // 高峰值之后来一次小刺激：峰值不动。
     await stim(home, { kind: 'self.report', why: '顺手报一句', at: T + 200 * 24 * HOUR })
     const small = snapshot(home, { now: T + 200 * 24 * HOUR })
-    assert.equal(small.peaks.trust.value, high.peaks.trust.value)
+    assert.equal(small.peaks.trust, high.peaks.trust)
     // 写进 meta.json 的也一直是高的那个数。
     const meta = JSON.parse(fs.readFileSync(path.join(home, 'state', 'meta.json'), 'utf8'))
-    assert.equal(meta.affect.peaks.trust.value, high.peaks.trust.value)
+    assert.equal(meta.affect.peaks.trust, high.peaks.trust)
   })
 })
 
@@ -325,7 +325,7 @@ test('clear 把刺激与 override 一笔勾销回基线，峰值仍然留着', a
     const base = [AFFECT_BASE.v, AFFECT_BASE.e, AFFECT_BASE.t, AFFECT_BASE.r]
     assert.deepEqual([after.v, after.e, after.t, after.r], base)
     assert.equal(after.by, 'auto')
-    assert.equal(after.peaks.respect.value, before.peaks.respect.value)
+    assert.equal(after.peaks.respect, before.peaks.respect)
     // 清完再重放：三条 op 都还在日志里，但 clear 之前的那截不再参与计算。
     assert.equal(list(home, { from: 0, to: T + HOUR }).items.length, 3)
   })

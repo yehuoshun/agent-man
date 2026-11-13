@@ -36,10 +36,7 @@ export function snapshot(homeDir, { now: nowTs = now(), prev } = {}) {
     band: respectBand(values.r),
     persistent: persistent({ t: values.t, r: values.r }),
     transient: transient(got.items.filter((one) => one.op === 'stim'), at),
-    peaks: {
-      trust: raise(stored.peaks.trust, values.t, at),
-      respect: raise(stored.peaks.respect, values.r, at),
-    },
+    peaks: peaksOf(stored.peaks, values, at),
     by: state.manual.length > 0 ? 'manual' : 'auto',
     until: state.until,
     why: explain({ state, values, mood, stored, ignored: state.ignored, skipped: got.skipped }),
@@ -213,11 +210,11 @@ function explain({ state, values, mood, stored, ignored, skipped }) {
   }
   if (!quiet && out.length === 0) out.push(`没变：四轴都贴着基线（${mood}）`)
   const high = []
-  if (stored.peaks.trust.value > AXES.t.base && stored.peaks.trust.value > values.t) {
-    high.push(`${AXIS_TEXT.t}最高到过 ${fmt(stored.peaks.trust.value)}`)
+  if (stored.peaks.trust > AXES.t.base && stored.peaks.trust > values.t) {
+    high.push(`${AXIS_TEXT.t}最高到过 ${fmt(stored.peaks.trust)}`)
   }
-  if (stored.peaks.respect.value > AXES.r.base && stored.peaks.respect.value > values.r) {
-    high.push(`${AXIS_TEXT.r}最高到过 ${fmt(stored.peaks.respect.value)}`)
+  if (stored.peaks.respect > AXES.r.base && stored.peaks.respect > values.r) {
+    high.push(`${AXIS_TEXT.r}最高到过 ${fmt(stored.peaks.respect)}`)
   }
   if (high.length > 0) out.push(`${high.join('、')}：走过的路不随衰减抹掉`)
   if (stored.mood && stored.mood !== mood) {
@@ -250,30 +247,38 @@ function fmt(value) {
 }
 
 // 峰值（design §14.14.2）：只升不降。回落到基线是常态，抹掉曾经到过的高度才是失真。
-function raise(prev, value, at) {
-  const was = prev && Number.isFinite(prev.value) ? prev : null
-  if (!Number.isFinite(value)) return was ?? { value: 0, at: null }
-  if (!was) return { value, at }
-  if (value > was.value) return { value, at }
-  return was
+// 形状照 design §14.14：peaks = { trust, respect, at }——两个数，外加最后一次刷新峰值的时刻。
+function raise(prevValue, prevAt, value, at) {
+  if (!Number.isFinite(value) || value <= prevValue) return { value: prevValue, at: prevAt }
+  return { value, at }
+}
+
+function later(a, b) {
+  if (!Number.isFinite(a)) return Number.isFinite(b) ? b : null
+  if (!Number.isFinite(b)) return a
+  return Math.max(a, b)
 }
 
 // 峰值的下限是基线：信任从 40 起步，所以"最高到过 40"在没刺激的日子也是实话。
 function emptyPeaks() {
-  return {
-    trust: { value: AXES.t.base, at: null },
-    respect: { value: AXES.r.base, at: null },
-  }
+  return { trust: AXES.t.base, respect: AXES.r.base, at: null }
+}
+
+function peaksOf(stored, values, at) {
+  const trust = raise(stored.trust, stored.at, values.t, at)
+  const respect = raise(stored.respect, stored.at, values.r, at)
+  return { trust: trust.value, respect: respect.value, at: later(trust.at, respect.at) }
 }
 
 function pickPeaks(raw) {
   const out = emptyPeaks()
+  if (!raw || typeof raw !== 'object') return out
   for (const key of ['trust', 'respect']) {
-    const one = raw && typeof raw === 'object' ? raw[key] : null
-    if (one && Number.isFinite(one.value)) {
-      out[key] = { value: one.value, at: Number.isFinite(one.at) ? one.at : null }
-    }
+    if (Number.isFinite(raw[key])) out[key] = raw[key]
+    // 老形状（{ value, at }）也认：峰值不该因为改过一次形状就读不懂。
+    else if (raw[key] && Number.isFinite(raw[key].value)) out[key] = raw[key].value
   }
+  if (Number.isFinite(raw.at)) out.at = raw.at
   return out
 }
 
@@ -296,13 +301,10 @@ function loadMeta(homeDir, at) {
 async function syncPeaks(homeDir, snap, { forgetMood = false } = {}) {
   const meta = loadMeta(homeDir, snap.at)
   if (meta.bad) return { saved: false, why: 'meta.json 读不懂，峰值没写（不覆盖别人的文件）' }
-  const peaks = {
-    trust: raise(meta.peaks.trust, snap.t, snap.at),
-    respect: raise(meta.peaks.respect, snap.r, snap.at),
-  }
+  const peaks = peaksOf(meta.peaks, { t: snap.t, r: snap.r }, snap.at)
   const mood = forgetMood ? null : snap.mood
-  const same = peaks.trust.value === meta.peaks.trust.value
-    && peaks.respect.value === meta.peaks.respect.value
+  const same = peaks.trust === meta.peaks.trust
+    && peaks.respect === meta.peaks.respect
     && meta.mood === mood
   if (same) return { saved: false, why: '' }
   const affect = { ...(meta.doc && meta.doc.affect ? meta.doc.affect : {}) }
