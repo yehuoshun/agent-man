@@ -174,7 +174,7 @@ cues 是给 recall 算分的词，不是给人搜的字。
 
 ```
 bin/agent-man.mjs              入口薄壳（import cli/main，转交退出码）
-dsh/                           宿主元数据：index.mjs cordis.patch.yml locale/ icon.svg
+dsh/                           宿主适配与元数据：index.mjs search.mjs cordis.patch.yml locale/ icon.svg
 src/
   core/    index const config cost text time
   store/   index paths append ids schema
@@ -265,6 +265,24 @@ stdout ≤8KB，超了截断并标 `truncated`；
 （这一串数字只在 §15 的 `inject.*` 里有一份，改预算改配置不改代码）。
 工具两个：`agent_man`（写：event/memory/rule/note/plan/self）与 `agent_man_look`（读：context.show/find/memory.show）。
 不注册命令面板、不新增 session event 类型、不建第二份存储、只对 root。
+
+落地的分工（`src/host` 四文件 + `dsh/` 薄适配）：
+
+| 在哪 | 只做什么 | 为什么 |
+|---|---|---|
+| `src/host/inject.mjs` 的 `compose({blocks,budget})` | 把已经算好的块装进预算：次序 soul→user→situation→recall，装不下**整块丢**记 `dropped[{name,reason}]`，`used` 必须等于 `cost(text)` | 这一半是纯函数，才能在 `node --test` 里钉住"预算不可协商" |
+| `src/host/tools.mjs` | 工具 schema、参数校验、把调用翻成领域门面的一次调用 | 参数错回 `{ok:false,error:'怎么改'}`，不抛、不猜、不补默认值 |
+| `src/host/recall.mjs` | 旧会话字面回顾：按预算挑几条 | 拿不到 `sessionQuery` 就明确报"没接上"，不让模型以为旧会话里什么都没有 |
+| `dsh/index.mjs` | 读配置、挂 `agent/created` → `agent/pre-step`（prepend、只 `step === 1`、只 root）、注册两个工具、发 `! ` | DSH 运行时只在实机里；这一层越薄，坏掉时越好查 |
+
+处境块 = `mind.situation()` 交给 `view.renderScreen()` 之后**去掉抬头那一行**，再空一行拼情绪行。
+抬头（`agent-man · 2026-11-13 15:00`）是给人看屏框用的，注入里时刻已经由正文说过一次，再说就是花钱复读。
+`user` 槽位这一版留空：称呼已由灵魂卡的 `[称呼]` 行承担，再写一段画像就是第二份灵魂。
+
+写入口的边界（与 §8 一致）：`agent_man` 只收六个动作，其中 `event add` 是插件唯一能走的写入路径，
+它顺手调 `mind.debt.bump`（§14.9 的计数器只有这里会加）；`digest.run` 写完账本后调 `mind.debt.settle`。
+工具注册用的形状是 `ctx.get('tools')?.register?.({name,description,inputSchema,handler})`——
+DSH 没有公开文档，拿不到只发一条 `! ` 警告、不猜别名；**这一处需要在实机上确认一次**。
 
 ## 10. 常数表
 
