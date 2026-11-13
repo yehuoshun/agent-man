@@ -83,14 +83,20 @@ export function respectBand(r) {
 export function persistent({ t, r } = {}) {
   const trust = Number.isFinite(t) ? t : AFFECT_BASE.t
   const respect = Number.isFinite(r) ? r : AFFECT_BASE.r
+  const show = (x) => String(Math.round(x * 10) / 10)
   if (respect <= -40) {
     if (trust < 50) {
-      if (respect <= -70) return { kind: '厌弃', why: `尊重 ${respect}（≤ −70）且信任 ${trust}（< 50）` }
-      return { kind: '厌恶', why: `尊重 ${respect}（≤ −40）且信任 ${trust}（< 50）` }
+      if (respect <= -70) {
+        return { kind: '厌弃', why: `尊重 ${show(respect)}（≤ −70）且信任 ${show(trust)}（< 50）` }
+      }
+      return { kind: '厌恶', why: `尊重 ${show(respect)}（≤ −40）且信任 ${show(trust)}（< 50）` }
     }
-    return { kind: '轻蔑', why: `尊重 ${respect}（≤ −40）但信任 ${trust}（≥ 50）：认可能力，不认可人品` }
+    const why = `尊重 ${show(respect)}（≤ −40）但信任 ${show(trust)}（≥ 50）：认可能力，不认可人品`
+    return { kind: '轻蔑', why }
   }
-  if (trust <= 30) return { kind: '失望', why: `信任 ${trust}（≤ 30），尊重仍正常：随兑现恢复` }
+  if (trust <= 30) {
+    return { kind: '失望', why: `信任 ${show(trust)}（≤ 30），尊重仍正常：随兑现恢复` }
+  }
   return { kind: null, why: '' }
 }
 
