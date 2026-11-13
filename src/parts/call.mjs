@@ -14,7 +14,11 @@ export const PART_STDOUT_MAX = 8192
 
 // Windows 的 cmd 会把 %名字% 换成环境变量，包在引号里也照换，^% 和 %% 更错（§32 实测四种写法）。
 // 所以命中就拒绝，不猜着转义：悄悄改掉调用方给的字符串，比让它看到一句"不安全的参数"危险得多。
-const ENV_EXPANSION = /%[A-Za-z_][A-Za-z0-9_]*%/
+// 判据不能只认「完整的 %名字%」：子串与替换语法（%PATH:~0,5%、%COMSPEC:cmd=zzz%、
+// %OS:Windows=xyz%）实测一样照换，只是冒号后面换了个样子。所以认「% + 名字开头 + 直到下一个 %」
+// 这一段，冒号、逗号、等号都在里面。单靠 % 不算数：50% off 50%、100%%、% 结尾这些实测都是原样
+// 落地的，拦下来只会让正常参数过不去。
+const ENV_EXPANSION = /%[A-Za-z_][^%]*%/
 
 function unsafeArg(args) {
   if (!WIN) return null
@@ -146,7 +150,7 @@ function classify(code) {
 export function passthrough(part, args = [], env = process.env) {
   const argv = [...args].map(String)
   const bad = unsafeArg(argv)
-  if (bad) throw new Error(`零件参数里有不安全的展开 ${bad}：Windows 上 cmd 会把它换成环境变量`)
+  if (bad) throw new Error(`零件参数里有不安全的展开 ${bad}：Windows 上 cmd 可能把它换成环境变量`)
   const { cmd, argv: line, verbatim } = commandOf(part.file, argv, env)
   const r = spawnSync(cmd, line, {
     stdio: 'inherit',

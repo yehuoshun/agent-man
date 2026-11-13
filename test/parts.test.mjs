@@ -206,6 +206,24 @@ test('参数里有 %名字% 时拒收，算调用方的参数错(usage)，不算
   assert.throws(() => passthrough({ name: 'echoit', file }, ['%PATH%']), /不安全的展开/)
 })
 
+test('子串与替换语法也拦：%PATH:~0,5% 与 %COMSPEC:cmd=zzz% 一样会被 cmd 换掉', winOnly('cmd 展开只发生在 Windows'), async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'echoit2', 'console.log(process.argv.slice(2).join())')
+  for (const arg of ['%PATH:~0,5%', '%COMSPEC:cmd=zzz%', '%OS:Windows=xyz%']) {
+    const r = await capture({ name: 'echoit2', file }, { args: [arg] })
+    assert.deepEqual([r.status, r.why], ['usage', '不安全的参数'], `${arg} 没被拦下`)
+  }
+})
+
+test('单个 % 不算展开：50% off 50% 这类参数不误拦', winOnly('cmd 展开只发生在 Windows'), async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'echoit3', `console.log('ok')`)
+  for (const arg of ['50%', '50% off 50%', '100%%', '%NOPE']) {
+    const r = await capture({ name: 'echoit3', file }, { args: [arg] })
+    assert.equal(r.status, 'ok', `${arg} 被误拦：${r.why ?? ''}`)
+  }
+})
+
 test('capture 碰上一个不存在的文件返回 missing，不抛', async () => {
   const r = await capture({ name: 'ghost', file: path.join(tmp(), 'agent-man-ghost') }, {})
   assert.equal(r.status, 'missing')
