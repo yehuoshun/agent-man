@@ -1,29 +1,18 @@
 {
   "name": "agent-man",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
+  "description": "给 LLM agent 的记忆、处境与克制",
   "type": "module",
-  "description": "给 agent 一个会话之外的生活：记事、定时候、看天气、递话、日程。",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/yehuoshun/agent-man.git"
+  "engines": { "node": ">=20" },
+  "bin": { "agent-man": "./bin/agent-man.mjs" },
+  "main": "./dsh/index.mjs",
+  "exports": {
+    ".": "./dsh/index.mjs",
+    "./cli": "./bin/agent-man.mjs",
+    "./package.json": "./package.json"
   },
-  "bin": {
-    "agent-man": "./bin/agent-man.mjs"
-  },
-  "files": [
-    "bin/",
-    "src/",
-    "README.md",
-    "AGENTS.md",
-    "docs/decisions.md"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
-  "scripts": {
-    "test": "node --test",
-    "pack:check": "npm pack --dry-run",
-    "digest": "node bin/agent-man.mjs digest"
-  }
+  "dsh": { "bundle": { "patch": "./dsh/cordis.patch.yml" } },
+  "files": ["bin/", "src/", "dsh/", "README.md", "AGENTS.md", "docs/"],
+  "scripts": { "test": "node --test" }
 }
