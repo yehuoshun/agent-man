@@ -4,3 +4,4 @@
 // intent.notes.add(...) / intent.plans.add(...)。
 // 约定：参数不合法就抛带"怎么改"的 Error（CLI 把它变成退出码 2），一次写不落盘。
 export * as notes from './notes.mjs'
+export * as plans from './plans.mjs'
