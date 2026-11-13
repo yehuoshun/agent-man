@@ -1,6 +1,7 @@
 import * as affect from '../affect/index.mjs'
 import * as audit from '../audit/index.mjs'
-import { DEFAULT_WINDOW_DAYS, config, dayKey, parseWhen, rel } from '../core/index.mjs'
+import { AFFECT_STIM_PER_HOUR, DEFAULT_WINDOW_DAYS, config, dayKey, parseWhen, rel }
+  from '../core/index.mjs'
 import * as digest from '../digest/index.mjs'
 import * as intent from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
@@ -815,6 +816,7 @@ async function affectSet(ctx) {
   })
   if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
   else ctx.out(`已记下 ${got.item.id}  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  landed(ctx, got)
   return 0
 }
 
@@ -826,6 +828,7 @@ async function affectClear(ctx) {
   else {
     ctx.out(`已撤掉手动覆盖  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
   }
+  landed(ctx, got)
   return 0
 }
 
@@ -865,8 +868,9 @@ async function affectStim(ctx) {
   if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
   else ctx.out(`已记下 ${got.item.id}  ${kind}（权重 ${got.weight}）\n`)
   if (got.ignored > 0) {
-    ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${3} 次：AFFECT_STIM_PER_HOUR）\n`)
+    ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）\n`)
   }
+  landed(ctx, got)
   return 0
 }
 
@@ -965,6 +969,13 @@ async function soulImport(ctx, dir, file) {
   if (result.source) ctx.out(`来源：${result.source}\n`)
   ctx.out(`下一步：agent-man soul check ${result.name}\n`)
   return 0
+}
+
+// 写了却没落盘（磁盘满、权限、坏扇区）：这正是"静默丢弃"要防的事，必须说出口。
+function landed(ctx, got) {
+  if (got && got.saved && got.saved.saved === false) {
+    ctx.err(`! 没落盘：${got.saved.why ?? '写不进去'}\n`)
+  }
 }
 
 function sign(value) {
