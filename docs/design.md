@@ -314,14 +314,18 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 一张卡 = 六栏 + 三个旋钮：
 
-| 栏 | 内容（回答什么） | 进注入 | 预算 |
+| 栏 | 内容（回答什么） | 进注入 | 注入槽位 |
 |---|---|---|---|
 | `card.json` | 卡的原样存档：给人看的字段（`creator_notes`/`tags`/`creator`/`character_version`）与 `knobs` | 否 | — |
 | `name` | 名字/称呼（`{{char}}` 展开） | 是 | 计入 soul |
-| `identity.md` | 我是谁：身份、来路、关系前提 | 是 | ≤120 cost |
-| `soul.md` | 怎么说话：语气、立场、边界、简洁度 | 是 | ≤200 cost |
-| `examples.md` | 2–4 组示范对话，`<START>` 分隔 | 是 | ≤200 cost |
-| `lore.jsonl` | 场景与往事条目，按 key 触发 | 按预算竞争 | 剩余 |
+| `identity.md` | 我是谁：身份、来路、关系前提 | 是 | 120 |
+| `soul.md` | 怎么说话：语气、立场、边界、简洁度 | 是 | 200 |
+| `dialogue.md` | 2–4 组示范对话，`<START>` 分隔 | 是 | 200 |
+| `lore.jsonl` | 场景与往事条目，按 key 触发 | 按预算竞争 | 剩余额度 |
+
+**上限是注入槽位，不是文件上限**：卡文件可以比槽位长——蒸馏时别自我审查，
+`soul check` 超槽位只给 `! ` 警告、不拒绝；注入时按段落顺序装到装不下为止，
+丢掉的段落记 `dropped[{file, section, reason:'budget'}]`。只有"四栏全缺"或"没有一组完整对话"才退 2。
 
 **为什么示例单独一栏**：形容词几乎不改变行为——162 角色 × 2,410 题 × 4 个模型家族的实测，加 persona 无提升、效果
 "largely random"；真正钉住风格的是示范对话（酒馆官方："Showing what you want is often easier than trying to explain it"）。
@@ -347,19 +351,19 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 ~/.agent-man/soul/<名字>/card.json     卡的原样 + knobs + source
 ~/.agent-man/soul/<名字>/identity.md   我是谁                            ≤120 cost
 ~/.agent-man/soul/<名字>/soul.md       怎么说话                          ≤200 cost
-~/.agent-man/soul/<名字>/examples.md   示范对话，2–4 组 <START>          ≤200 cost
+~/.agent-man/soul/<名字>/dialogue.md   示范对话，2–4 组 <START>          ≤200 cost
 ~/.agent-man/soul/<名字>/lore.jsonl    场景与往事，{id,keys[],constant,order,share}
 ~/.agent-man/user.md                   用户模型，全局唯一，不随卡切换     ≤400 cost
 ~/.agent-man/state/soul.current        {name, at, by}，原子写
 ```
 
 **注入不是整块塞**：灵魂块 ≤200 cost，由 `recall/budget.fit()` 分配——`identity` 与 `soul` 必进，
-`constant:true` 的 lore 次之，其余按 `order` 降序，`examples` 最后（截断时先丢最后那几组），
+`constant:true` 的 lore 次之，其余按 `order` 降序，`dialogue` 最后（截断时先丢最后那几组），
 装不下的进 `dropped[{id, reason:'budget'}]`。理由：角色卡常见 2–4k token，整块塞会把处境和一屏记忆挤掉
 （长上下文稀释有实证：13 个 ≥128K 模型里 11 个在 32K 跌破基线一半）。
 
-**卡校验 `soul check`**（退出码 2 拒绝）：`name` / `identity.md` / `soul.md` / `examples.md` 四样齐全；
-`examples.md` 至少两组 `<START>` 分隔且每组有来有回；`identity.md` ≤120 cost、`soul.md` ≤200 cost；
+**卡校验 `soul check`**（退出码 2 拒绝）：`name` / `identity.md` / `soul.md` / `dialogue.md` 四样齐全；
+`dialogue.md` 至少两组 `<START>` 分隔且每组有来有回；`identity.md` / `soul.md` 超槽位只警告、不拒绝；
 `knobs` 三个键都在 −2..+2 的整数里；`card.json` 可以带 `creator_notes` / `tags` / `creator` / `character_version`，
 **但注入时必须剥掉**——角色卡规范明文要求这几项不得进 prompt（给人看的，不是给模型看的），有渲染用例锁着。
 
@@ -505,7 +509,31 @@ merge(i1, i2)       = ln(e^i1 + e^i2)      // 同类叠加上限，3 次同级 �
 
 先把旧的 14.9 编号挪走：
 
-### 14.10 模块
+### 14.10 刺激的产生者（不许猜）
+
+agent-man 不猜情绪。只有显式调用 `agent-man affect stim <kind> [--why "…"]` 才记一条刺激；
+`kind` 是 §14.7 的封闭枚举，非法退出码 2，**没有 `why` 也退 2**（一条说不出来由的刺激没有价值）。
+
+谁调：
+
+| 来源 | 触发时机 | kind |
+|---|---|---|
+| 宿主 / agent | 任务结算、收到纠正、被表扬 | `task.*` / `user.*` |
+| `plan done` | 兑现 | `promise.kept` |
+| `context cue` / 入口 | 日程逾期（每天最多一次） | `promise.overdue` |
+| 入口 | 上次交互 ≥3 天（每次进程启动最多一条） | `return.after-gap` |
+| episode 结束 | agent 自己写一条 | `self.report`（±1） |
+
+**禁止**：从文本做情感分析；让模型自评"我现在很开心"再写刺激；按用户语气词猜心情。
+判断"该不该说"是规则的事，不是情绪的事。
+
+### 14.11 三条不变量
+
+1. **情绪不改事实**：不高兴也要说测试没通过。数值不参与任何真假判断，不影响 `audit`、不影响记忆写入、不影响 `cue` 的是非（只影响措辞与主动程度）。
+2. **情绪全局一份**：`state/affect-*.jsonl` 不按灵魂分。换卡换的是声音，不是心情；切换时保留当前状态，不重置。
+3. **情绪必须可解释**：每条刺激带 `kind` + `why` + `at`；显示时给数字、标签、最近三条原因；没有 `why` 的刺激拒绝写入。
+
+### 14.12 模块
 
 `src/affect/{index,state,decay,label,stim}.mjs`——`state` 管日志与基线/覆盖、`decay` 管纯函数、`label` 管 16 格与瞬时/持久映射、
 `stim` 管 kind→权重的封闭表与校验。命令：`affect show`、`affect set`、`affect stim`、`affect clear`。
