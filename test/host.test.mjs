@@ -11,6 +11,7 @@ import { cost } from '../src/core/index.mjs'
 import {
   LOOK_ACTIONS, SLOTS, TOOLS, WRITE_ACTIONS, affectLine, callTool, compose, recall,
 } from '../src/host/index.mjs'
+import { use as useSoul } from '../src/soul/index.mjs'
 import { apply } from '../dsh/index.mjs'
 
 // 时间一律传死（AGENTS 六）：本地 2026-11-13 15:00。CI 有别的时区腿，所以不用带偏移的字符串。
@@ -248,6 +249,16 @@ test('apply 在假 ctx 上不抛：挂 agent/created、注册两个工具', asyn
 
 test('apply 的 pre-step：只对 root 的第 1 步注入一条，子代理不注入', async () => {
   await inHome(async (home) => {
+    // 放一张最小的卡并切成当前：注入里的自我块得真的从 soul 门面来，不是测试自己拼的。
+    const card = path.join(home, 'soul', '小满')
+    fs.mkdirSync(card, { recursive: true })
+    fs.writeFileSync(path.join(card, 'name.md'), '小满。叫对方"你"。\n')
+    fs.writeFileSync(path.join(card, 'identity.md'), '运维出身，现在替你盯代码和线上。\n')
+    fs.writeFileSync(path.join(card, 'soul.md'), '句子短。\n')
+    fs.writeFileSync(path.join(card, 'dialogue.md'), '<START>\n你: 报错怎么修\n我: 把日志贴全。\n')
+    fs.writeFileSync(path.join(card, 'card.json'), '{"name":"小满","knobs":{"warm":0,"drive":0,"sharp":0}}\n')
+    await useSoul(home, '小满', { at: T, by: 'test' })
+
     const calls = { on: [], register: [] }
     const ctx = {
       on(name, handler) { calls.on.push({ name, handler }) },
@@ -275,10 +286,15 @@ test('apply 的 pre-step：只对 root 的第 1 步注入一条，子代理不�
     const added = out.messages[0]
     assert.equal(added.role, 'user')
     assert.equal(added.source.kind, 'agent-man')
-    assert.equal(cost(added.content[0].text) <= 1000, true)
-    assert.doesNotMatch(added.content[0].text, /我|感到|觉得|feel/u)
-    // 灵魂卡不存在、sessionQuery 也没接上：两种情况都得说出口，而不是安静地少块。
-    assert.ok(warnings.some((line) => line.includes('灵魂卡没读出来')), warnings.join('\n'))
+    const text = added.content[0].text
+    assert.ok(cost(text) <= 1000, `注入 ${cost(text)} cost 超过总预算`)
+    assert.match(text, /\[称呼\] 小满/u)
+    // 情绪行是块里的最后一段：只有数字、标签与那句机械规则，不许出现第一人称感受动词。
+    const blocks = text.split('\n\n')
+    const mood = blocks[blocks.length - 1]
+    assert.match(mood, /^v=50 e=60 t=40 r=0 · /u)
+    assert.doesNotMatch(mood, /我|感到|觉得|feel/u)
+    // 没有 sessionQuery：回顾这一步要明说跳过，而不是让模型以为"旧会话里什么都没有"。
     assert.ok(warnings.some((line) => line.includes('search 没接上')), warnings.join('\n'))
 
     const childHeader = { parentSession: 'p1', origin: 'subagent' }

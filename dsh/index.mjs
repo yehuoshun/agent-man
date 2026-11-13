@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { snapshot as affectSnapshot } from '../src/affect/index.mjs'
 import { config, now as nowTs } from '../src/core/index.mjs'
 import { affectLine, callTool, compose, recall, TOOLS } from '../src/host/index.mjs'
-import { build as buildSoul } from '../src/soul/index.mjs'
+import { build as buildSoul, current as currentSoul } from '../src/soul/index.mjs'
 import { home as homeOf } from '../src/store/index.mjs'
 import { extractNeedles, lastUserText, makeSearch } from './search.mjs'
 
@@ -78,12 +78,17 @@ async function buildInjection(deps, { header, userText, at }) {
   const warnings = []
 
   let soul = ''
-  try {
-    const got = buildSoul(homeDir, { budget: cfg.inject.soul })
-    soul = Array.isArray(got.lines) ? got.lines.join('\n') : ''
-  } catch (e) {
-    // 没有灵魂卡是很正常的状态（刚装上），说一句就够，别把它当错误往上抛。
-    warnings.push(`! 灵魂卡没读出来（${messageOf(e)}）：这次自我块空着`)
+  // 名字必须由调用方给（soul/inject.build 没有"取当前卡"的默认值），所以先问指针。
+  // 指针说"builtin"就是没导入过卡：那是正常状态，注入空着、不报警（空着比编一张假卡诚实）。
+  const cur = currentSoul(homeDir)
+  if (cur && cur.by !== 'builtin' && typeof cur.name === 'string') {
+    try {
+      const got = buildSoul(homeDir, { name: cur.name, budget: cfg.inject.soul })
+      soul = Array.isArray(got.lines) ? got.lines.join('\n') : ''
+    } catch (e) {
+      // 指针指着卡但读不出来才是问题：卡坏了或删了，说一句，别让会话以为灵魂还在。
+      warnings.push(`! 灵魂卡 ${cur.name} 没读出来（${messageOf(e)}）：这次自我块空着`)
+    }
   }
 
   const mood = moodLine(deps, at, warnings)
