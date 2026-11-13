@@ -158,6 +158,27 @@ test('摘要正文为空：写「（今天没什么可巩固的）」，不留�
   )
 })
 
+test('页脚 cost 最多一位小数：加出来的噪声不上屏', () => {
+  const text = renderDigest({
+    header: 'digest',
+    body: '她怕冷：上周关窗那次她没穿外套',
+    stats: { used: 97.0800000000001, budget: 1200.0000000000002, kept: 1, dropped: [] },
+  })
+  assert.equal(
+    text,
+    ['digest', '', '她怕冷：上周关窗那次她没穿外套', '', '—— 用了 97.1/1200 · 装下 1 条 · 没丢东西'].join(
+      '\n',
+    ),
+  )
+  // 整数不补零：1087 就是 1087，不是 1087.0（读数不是小数位表格）。
+  const whole = renderDigest({
+    header: 'digest',
+    body: '她怕冷',
+    stats: { used: 1087, budget: 1200, kept: 1, dropped: [] },
+  })
+  assert.equal(whole, ['digest', '', '她怕冷', '', '—— 用了 1087/1200 · 装下 1 条 · 没丢东西'].join('\n'))
+})
+
 test('records：memory 行带 [key]、rule 行带 !，便条带「等：触发」，空表写「（空）」', () => {
   assert.equal(
     list([{ id: 'm-20261113-01', when: '2026-11-13 21:32', text: '她关窗是因为冷', key: '她怕冷' }], 'memory'),
