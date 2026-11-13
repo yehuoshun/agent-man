@@ -310,7 +310,8 @@ async function syncPeaks(homeDir, snap, { forgetMood = false } = {}) {
   if (mood === null) delete affect.mood
   else affect.mood = mood
   affect.at = snap.at
-  await writeAtomic(metaFile(homeDir, snap.at), `${JSON.stringify({ ...(meta.doc ?? {}), affect }, null, 2)}\n`)
+  const text = JSON.stringify({ ...(meta.doc ?? {}), affect }, null, 2)
+  await writeAtomic(metaFile(homeDir, snap.at), `${text}\n`)
   return { saved: true, why: '' }
 }
 
