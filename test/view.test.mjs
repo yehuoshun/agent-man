@@ -189,6 +189,28 @@ test('抬头让位到底（headerKind 为 none）：不留空抬头，仍先说�
   assert.equal(text, ['（今天没什么可巩固的）', '', '—— 用了 0/1200 · 装下 0 条 · 没丢东西'].join('\n'))
 })
 
+test('摘要屏不搬记录 id：kept 与 dropped 的 id 到了页脚也不出现', () => {
+  const text = renderDigest({
+    header: 'digest',
+    body: '她怕冷：上周关窗那次她没穿外套',
+    stats: {
+      used: 1087,
+      budget: 1200,
+      kept: ['m-20261113-01', 'e-20261113-02'],
+      dropped: [
+        { id: 'e-20261112-04', reason: 'budget' },
+        { id: 'e-20261112-05', reason: 'budget' },
+      ],
+    },
+  })
+  // 整段比对：id 只要漏上屏，这一行就对不上（id 归 --json，屏上只给条数与原因）。
+  assert.equal(
+    text,
+    ['digest', '', '她怕冷：上周关窗那次她没穿外套', '', '—— 用了 1087/1200 · 装下 2 条 · 丢 2 条（budget）']
+      .join('\n'),
+  )
+})
+
 test('records：memory 行带 [key]、rule 行带 !，便条带「等：触发」，空表写「（空）」', () => {
   assert.equal(
     list([{ id: 'm-20261113-01', when: '2026-11-13 21:32', text: '她关窗是因为冷', key: '她怕冷' }], 'memory'),
