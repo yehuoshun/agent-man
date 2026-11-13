@@ -349,6 +349,7 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 
 ```
 ~/.agent-man/soul/<名字>/card.json     卡的原样 + knobs + source
+~/.agent-man/soul/<名字>/name.md       名字与称呼（一两行）
 ~/.agent-man/soul/<名字>/identity.md   我是谁                            ≤120 cost
 ~/.agent-man/soul/<名字>/soul.md       怎么说话                          ≤200 cost
 ~/.agent-man/soul/<名字>/dialogue.md   示范对话，2–4 组 <START>          ≤200 cost
