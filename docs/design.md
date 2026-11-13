@@ -304,6 +304,7 @@ SOUL_MAX 600  SOUL_USER_MAX 400  SOUL_IDENTITY_MAX 120  SOUL_LORE_ITEM_MAX 12  S
 | M5 | `digest/*` 与 `view/*`（摘要、账本、审计、doctor 完整） | `node --test test/{digest,audit,doctor}.test.mjs` |
 | M6 | `parts/*` 与 `host/dsh/*`（插件六条、聚合、注入、工具） | `node --test` + 实机新会话 |
 | M8 | `soul/*` 与 `affect/*`（角色卡、切换、四轴、瞬时、厌恶；见 §13 §14） | `node --test test/{soul,affect}.test.mjs` |
+| M9 | 配置收口：`core/config.mjs`（SCHEMA/DEFAULTS/validate）+ `config` 四个子命令 + 两条结构用例 | `node --test test/config.test.mjs` |
 | M7 | README / AGENTS / decisions 定稿，1.0.0，推标签跑 CI | CI 全绿 + `npm pack` 清单 |
 
 ## 13. 灵魂（身份卡）
@@ -607,3 +608,71 @@ agent-man 不猜情绪。只有显式调用 `agent-man affect stim <kind> [--why
 
 `src/affect/{index,state,decay,label,stim}.mjs`——`state` 管日志与基线/覆盖、`decay` 管纯函数、`label` 管 16 格与瞬时/持久映射、
 `stim` 管 kind→权重的封闭表与校验。命令：`affect show`、`affect set`、`affect stim`、`affect clear`。
+
+## 15. 配置（一处真源，不许散落）
+
+三条规矩，先立后写代码：
+
+1. **只有两个地方能读配置**：`src/core/config.mjs`（唯一读取与校验点）与 CLI 入口（解析 `AGENT_MAN_*` 与参数）。
+   其他模块一律接一个已解析好的 `cfg`，不许自己摸 `process.env`，不许在自己文件里立默认值。
+2. **常数不可配**：公式系数、`S0`、半衰期、权重表定义的是"这是同一个系统"，改了就不是它了。用户偏好可配。
+3. **配置是人的，状态是程序的**：`config.json` 人改，`meta.json` 程序写。状态永不进 config（否则一次备份就把冷却记录带走了）。
+
+### 15.1 优先级（高者胜）
+
+```
+内置默认（core/config.mjs 的 DEFAULTS）
+  ← ~/.agent-man/config.json      人写的，唯一持久配置
+  ← 环境变量 AGENT_MAN_*          临时覆盖（CI、多套数据目录）
+  ← CLI 参数                      单次覆盖
+```
+
+`config.json` 不存在 = 全默认；存在但坏 = **退出码 2**（不猜、不静默降级、不用一半就一半）。
+
+### 15.2 形状（一节管一件事）
+
+```json
+{
+  "version": 1,
+  "clock":   { "dayStart": "04:00", "quiet": ["23:00", "08:00"] },
+  "inject":  { "total": 1000, "soul": 200, "user": 100, "situation": 550, "recall": 150 },
+  "digest":  { "budget": 1200, "dueImp": 12, "dueUnreflected": 40, "dueStaleHours": 24 },
+  "recall":  { "windowDays": 30, "minKeepRatio": 0.4, "minKeepCost": 32 },
+  "cue":     { "minGap": "6h", "respectQuiet": true },
+  "affect":  { "visible": true, "biasImp": 0, "moodHalf": "8h", "energyHalf": "3h",
+               "trustHalf": "60d", "respectHalf": "90d" },
+  "soul":    { "current": "default", "injectOrder": ["identity", "soul", "dialogue", "lore"] },
+  "parts":   { "timeout": 5000, "timeoutMax": 30000, "stdoutMax": 8192, "failLimit": 3 },
+  "host":    { "tools": true, "firstStepRecall": 250 }
+}
+```
+
+- 每一节对应一个领域模块；**节名 = 模块名**，找配置不用翻代码；
+- 所有键都必须在 `core/config.mjs` 的 `SCHEMA` 白名单里，**未知键直接退出码 2 并指出键名**——拼写错的配置比没有配置更坏；
+- 键的值必须来自常数或落在范围里（`minKeepRatio` ∈ [0,1]、`stdoutMax` ∈ [512, 65536]），校验与读取在同一处；
+- 默认值只有一份：`DEFAULTS` 引用 `core/const.mjs`，**不许在 config 里复制一遍数字**。
+
+### 15.3 命令面
+
+```
+agent-man config path                 打印实际生效的文件路径
+agent-man config show [--json]        合并后的最终值；被覆盖的项打 ~，与默认相同的打空
+agent-man config get <a.b>
+agent-man config set <a.b> <值>       只收 SCHEMA 白名单里的键，写回 config.json（原子写）
+agent-man config reset [<a.b>]        删掉覆盖，回落到默认
+```
+
+`doctor` 多一项：`配置` —— 报非默认项数量与坏键；有非默认项时列前三条，方便排查"为什么行为和文档不一样"。
+
+### 15.4 两条结构用例（防散落）
+
+- `process.env` 只准出现在 `src/core/config.mjs` 与 `bin/agent-man.mjs`；出现在别处即红；
+- 字符串 `AGENT_MAN_` 同理；`config.json` / `meta.json` 的字面路径只准出现在 `store/paths.mjs`。
+
+再加一条集成用例：改 `inject.total` 一处，`mind`（处境屏）、`digest`、`host` 三处读到的预算必须同时变——
+证明它们读的是同一份配置，而不是各自记了个数。
+
+### 15.5 迁移
+
+`version` 不匹配时：能自动补的键补上并写回（留一条 `! 已补默认值`），改名的键报 `! deprecated: a.b → c.d` 并继续用新名；
+**删掉的键不静默忽略**，报出来。整个过程不需要用户读文档。
