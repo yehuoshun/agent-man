@@ -1,9 +1,7 @@
 // state 是"此刻是多少"的唯一出口（design §14.6 / §14.11）：不存缓存值，读全量日志现算。
 // 存的是刺激与 override，四轴与标签全是派生物——删掉缓存不丢事实，重放同日志得同一数值。
-import path from 'node:path'
-
 import { AFFECT_HYST, AFFECT_STIM_PER_HOUR, now } from '../core/index.mjs'
-import { readJson, stateFile, writeAtomic } from '../store/index.mjs'
+import { metaFile, readJson, stateFile, writeAtomic } from '../store/index.mjs'
 import { AXES, AXIS_NAMES, EMOTION_HALF, clampAxis, decayOffset, mergeOffset } from './decay.mjs'
 import { deadband, moodOf, persistent, respectBand, transient } from './label.mjs'
 import { appendOp, list, record, weightOf } from './stim.mjs'
@@ -282,9 +280,9 @@ function pickPeaks(raw) {
   return out
 }
 
-// meta.json 里 affect 那一段（水位与冷却记录跟别的模块共用一个文件，只改自己这一格）。
+// 状态文件里 affect 那一段（水位与冷却记录跟别的模块共用一个文件，只改自己这一格）。
 function loadMeta(homeDir, at) {
-  const doc = readJson(metaFile(homeDir, at))
+  const doc = readJson(metaFile(homeDir))
   if (doc === null) return { doc: null, bad: false, peaks: emptyPeaks(), mood: null }
   if (doc.__bad === true) return { doc: null, bad: true, peaks: emptyPeaks(), mood: null }
   const affect = doc && typeof doc.affect === 'object' && doc.affect !== null ? doc.affect : {}
@@ -296,11 +294,11 @@ function loadMeta(homeDir, at) {
   }
 }
 
-// 峰值与上一个标签写回 meta.json：writeAtomic 是 async，所以 set/clear/stim 都是 async。
-// meta.json 读不懂时不写——覆盖掉别人的水位与冷却记录，比丢一个峰值糟得多。
+// 峰值与上一个标签写回状态文件：writeAtomic 是 async，所以 set/clear/stim 都是 async。
+// 状态文件读不懂时不写——覆盖掉别人的水位与冷却记录，比丢一个峰值糟得多。
 async function syncPeaks(homeDir, snap, { forgetMood = false } = {}) {
   const meta = loadMeta(homeDir, snap.at)
-  if (meta.bad) return { saved: false, why: 'meta.json 读不懂，峰值没写（不覆盖别人的文件）' }
+  if (meta.bad) return { saved: false, why: '状态文件读不懂，峰值没写（不覆盖别人的文件）' }
   const peaks = peaksOf(meta.peaks, { t: snap.t, r: snap.r }, snap.at)
   const mood = forgetMood ? null : snap.mood
   const same = peaks.trust === meta.peaks.trust
@@ -313,12 +311,7 @@ async function syncPeaks(homeDir, snap, { forgetMood = false } = {}) {
   else affect.mood = mood
   affect.at = snap.at
   const text = JSON.stringify({ ...(meta.doc ?? {}), affect }, null, 2)
-  await writeAtomic(metaFile(homeDir, snap.at), `${text}\n`)
+  await writeAtomic(metaFile(homeDir), `${text}\n`)
   return { saved: true, why: '' }
 }
 
-// meta.json 的路径从 store 的 stateFile 推出来（同一层目录、同一条分片规则），不自己拼数据目录；
-// 字面名与 audit/doctor.mjs:164 的读法一致（store 门面没有 meta 访问器，也改不得）。
-function metaFile(homeDir, at) {
-  return path.join(path.dirname(stateFile(homeDir, KIND, at)), 'meta.json')
-}

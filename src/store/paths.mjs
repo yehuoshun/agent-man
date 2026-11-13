@@ -43,6 +43,12 @@ export function stateFile(homeDir, kind, ts) {
   return path.join(homeDir, 'state', `${kind}-${monthKey(ts)}.jsonl`)
 }
 
+// meta.json 是全仓唯一一份"状态水位"：水位、债务、峰值、冷却记录都住这一个文件（design §4）。
+// 它不属于任何分片，所以单独给一个访问器——这个字面名只准出现在这里（结构用例锁着）。
+export function metaFile(homeDir) {
+  return path.join(homeDir, 'state', 'meta.json')
+}
+
 // 返回按时间升序的分片绝对路径。这里只做"粗筛"：按分片自然边界与 [from, to] 求交，
 // 一行内容都不读——精确到毫秒的过滤是 recall 的事，两侧都做一遍才叫省事，不是越权。
 export function listShards(homeDir, kind, { from, to } = {}) {
