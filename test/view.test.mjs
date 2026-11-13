@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { renderDigest, renderScreen } from '../src/view/index.mjs'
+import { item, list, renderDigest, renderScreen } from '../src/view/index.mjs'
 
 // 一律断言整段字符串，不做"包含某词"的探针：这一屏是别人读的字面，
 // 多一个空行、少一个缩进都会改掉它读到的东西，includes 锁不住（AGENTS 六）。
@@ -156,4 +156,46 @@ test('摘要正文为空：写「（今天没什么可巩固的）」，不留�
     text,
     ['digest', '', '（今天没什么可巩固的）', '', '—— 用了 0/1200 · 装下 0 条 · 没丢东西'].join('\n'),
   )
+})
+
+test('records：memory 行带 [key]、rule 行带 !，便条带「等：触发」，空表写「（空）」', () => {
+  assert.equal(
+    list([{ id: 'm-20261113-01', when: '2026-11-13 21:32', text: '她关窗是因为冷', key: '她怕冷' }], 'memory'),
+    'm-20261113-01  2026-11-13 21:32  她关窗是因为冷 [她怕冷]',
+  )
+  assert.equal(
+    item({ id: 'r-20261113-01', when: '2026-11-13 21:32', text: '夜里十一点后不提工作' }, 'rule'),
+    'r-20261113-01  2026-11-13 21:32  ! 夜里十一点后不提工作',
+  )
+  assert.equal(
+    list([{ id: 'n-20261113-01', when: '2026-11-13 21:32', text: '问她头痛好点没', trigger: '她提到加班' }], 'note'),
+    'n-20261113-01  2026-11-13 21:32  问她头痛好点没（等：她提到加班）',
+  )
+  // 空表不返回空字符串：那会被当成渲染坏了。
+  assert.equal(list([], 'event'), '（空）')
+})
+
+test('records：多行按入参顺序逐行排；不认识的类别当场报错，不退回成普通行', () => {
+  const text = list(
+    [
+      { id: 'e-20261113-01', when: '2026-11-13 21:32', text: '她关了窗' },
+      { id: 'e-20261113-02', when: '2026-11-13 21:40', text: '她给自己倒了热水' },
+    ],
+    'event',
+  )
+  assert.equal(
+    text,
+    [
+      'e-20261113-01  2026-11-13 21:32  她关了窗',
+      'e-20261113-02  2026-11-13 21:40  她给自己倒了热水',
+    ].join('\n'),
+  )
+
+  // 日程与事件同一套三列，只是正文不带记号：时间写在行首，正文不重复。
+  assert.equal(
+    item({ id: 'p-20261113-01', when: '今天 22:00', text: '陪她看牙' }, 'plan'),
+    'p-20261113-01  今天 22:00  陪她看牙',
+  )
+
+  assert.throws(() => list([{ id: 'x-1', when: '今天', text: '?' }], 'diary'), /不认识的类别/)
 })

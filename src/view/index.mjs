@@ -4,3 +4,4 @@
 export { render as renderScreen } from './screen.mjs'
 // 两个 render 撞名，门面按用途起别名：CLI 侧一眼能看出在渲染哪一屏。
 export { render as renderDigest } from './digest.mjs'
+export { list, item } from './records.mjs'
