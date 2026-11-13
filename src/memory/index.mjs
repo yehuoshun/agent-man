@@ -10,3 +10,4 @@
 export { add, conflict, revise } from './write.mjs'
 export { events, find, list, ls, markSeen, orphan, show } from './query.mjs'
 export { addRule, listRules } from './rules.mjs'
+export { appendSelf, readSelf, setSelf } from './self.mjs'
