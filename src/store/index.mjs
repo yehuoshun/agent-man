@@ -2,3 +2,4 @@
 export { VERSION, validate, checkHome } from './schema.mjs'
 export { home, ensure, eventsFile, stateFile, listShards } from './paths.mjs'
 export { claim } from './ids.mjs'
+export { appendJsonl, readJsonl, writeAtomic, readJson } from './append.mjs'
