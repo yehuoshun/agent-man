@@ -108,8 +108,10 @@ test('格子只由两个数决定：16 个词与表逐字一致，且同一输�
   const first = moodOf(52, 61)
   assert.ok(MOODS.flat().includes(first))
   for (let i = 0; i < 50; i += 1) assert.equal(moodOf(52, 61), first)
-  // 表里「平淡」那一格是 v 中高 × e 低中：design §14.8 的例子把 (52,61) 说成平淡，
-  // 与 §14.2 的表对不上（表里那格是「轻松」），实现按表走，见提交说明。
+  // §14.8 的 (52,61) 恒为「平淡」：按表它该落「轻松」（v 中高 × e 中），表与例子对不上，
+  // 实现让例子赢：贴着基线又没上一格就算「平淡」。16 个字与表的位置都没动。
+  assert.equal(moodOf(52, 61), '平淡')
+  // 表上那格（v 中高 × e 低中）也还是「平淡」，两条路都通。
   assert.equal(moodOf(58, 40), '平淡')
 })
 
@@ -133,7 +135,8 @@ test('死区：两轴都贴着基线就当作没变，标签不刷新', () => {
   assert.equal(deadband(53, 63), true)
   assert.equal(deadband(53, 70), false)
   assert.equal(moodOf(53, 63, '愉快'), '愉快')
-  assert.equal(moodOf(53, 63), MOODS[1][1])
+  // 没有上一格时，死区里给「平淡」（§14.8 的 (52,61) 就是这么钉住的）。
+  assert.equal(moodOf(53, 63), '平淡')
 })
 
 test('五段与持久情绪都用表上的词，而且每一条都带原因', () => {

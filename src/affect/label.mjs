@@ -34,7 +34,9 @@ function bounded(value, fallback) {
   return v
 }
 
-// 16 格之一（design §14.2）：(52,61) 恒为"平淡"——这一条是网格的全部意义。
+// 16 格之一（design §14.2）：格子只由这两个数决定，不许模型挑词。
+// 没有上一格又落在死区时给「平淡」：§14.8 把 (52,61) 钉成"恒为平淡"，而按表它落「轻松」
+// （v 中高 × e 中）——表与例子对不上，这里让例子赢，16 个字本身一个没改。
 // prev 给上一格的词时走滞回：新格子要越过边界 AFFECT_HYST 分才真换（§14.8 抖动 ≤1 次）。
 // 死区（§14.2 末）：两轴都贴着基线就算"没变"，标签不刷新。
 export function moodOf(v, e, prev) {
@@ -43,7 +45,7 @@ export function moodOf(v, e, prev) {
   const row = indexOf(x, V_EDGES)
   const col = indexOf(y, E_EDGES)
   const was = typeof prev === 'string' ? CELL_OF.get(prev) : undefined
-  if (!was) return MOODS[row][col]
+  if (!was) return deadband(x, y) ? '平淡' : MOODS[row][col]
   if (was.row === row && was.col === col) return prev
   if (deadband(x, y)) return prev
   if (was.row !== row && !pastEdge(x, V_EDGES, was.row, row)) return prev
