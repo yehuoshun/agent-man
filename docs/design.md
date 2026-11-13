@@ -1,0 +1,267 @@
+# agent-man 设计（v3）
+
+## 0. 一句话
+
+给 LLM agent 一个**会话之外**的东西：记忆、处境、以及"该不该开口"的克制。
+它自己不是 agent——不常驻、不联网、不调用模型、不替你下判断。
+
+## 1. 边界
+
+做：情景 / 语义 / 程序 / 前瞻 / 自我 五类记忆，处境快照，开口判决，预算摘要，审计账本，插件通道。
+
+不做：任何具体功能（天气、刷 B 站）、常驻进程、网络、向量与图、LLM 调用、自动摘要、
+替模型写反思或定语气、第二份真源、静默丢弃、静默截断。
+
+## 2. 记忆按人类记忆分层
+
+| 人类记忆 | 载体 | 特征 |
+|---|---|---|
+| 工作记忆 ≈4 chunk | 注入的那一屏 | 不落盘；每段最多 4 条、最多 4 段 |
+| 情景记忆 | `events/<日>.jsonl` | 亲历、带线索、衰减最快 |
+| 语义记忆 | `memory.jsonl` | 去情境、带证据、可失效 |
+| 程序性记忆 | `rules.jsonl` | 怎么做、几乎不衰减、有版本链 |
+| 前瞻记忆 | `state/notes*.jsonl` `state/plans*.jsonl` | 靠触发不靠检索 |
+| 自我 / 身份 | `self.md` | ≤600 cost、最高优先级、不吃裁剪 |
+| 巩固 | `digest` 的首段 | 线索累计触发，不是定时器 |
+| 遗忘 | 保留率 R 现算 | 会忘，但忘得可解释 |
+| 再巩固 | `memory revise` | 只追加新版本，旧行不改 |
+| 来源监控 | `src` + `evidence` | 用户说 / 工具返回 / 自己推断，分开记 |
+| 干扰 | `key` 唯一槽位 | 新条给旧条 `to` 与 `by`，读不回旧值 |
+
+诚实放弃：无嵌入 → 这是**线索检索**，不是语义检索，同义改写查不到；
+无后台进程 → 没有睡眠期重放，只能懒巩固，且只巩固这次被读到的。
+
+## 3. 数据目录与分片
+
+```
+$AGENT_MAN_HOME/                 # 默认 ~/.agent-man，AGENT_MAN_HOME 可覆盖
+  schema.json                    # {"version":3}
+  self.md                        # 自我块
+  memory.jsonl                   # 语义，不分片（key 唯一性要全局可见）
+  rules.jsonl                    # 程序，不分片（≤20 条）
+  events/2026-11-13.jsonl        # 情景，按日分片
+  state/
+    meta.json                    # 水位 / 上次开口 / 欠账计数 / 插件冷却
+    notes-2026-11.jsonl          # 前瞻，按月分片
+    plans-2026-11.jsonl
+    judge-2026-11.jsonl          # 开口账
+    trace-2026-11.jsonl          # 摘要账
+    ids/                         # 发号占位（wx 建文件）
+```
+
+分片原则：**按写入频率与自然边界切，不按年月日套娃**。
+情景高频、有天这个边界 → 一天一个文件；语义要全局唯一 → 不分片；账本只增 → 按月。
+跨分片查询靠 glob + 时间排序。不做 `2026/11/13` 三级目录。
+
+## 4. 记录形状
+
+```jsonc
+// events/<日>.jsonl —— 只追加
+{"id":"e-20261113-01","at":1763043120000,"text":"她关了窗","imp":1,
+ "cues":["她","窗"],"src":{"origin":"user","ref":null}}
+
+// memory.jsonl —— 只追加；失效靠 to/by，旧行永不改写
+{"id":"m-20261113-01","at":1763043120000,"key":"她怕冷","fact":"她关窗是因为冷","imp":2,
+ "from":1762956720000,"to":null,"by":null,
+ "evidence":{"ids":["e-20261112-01"],"from":null,"to":null},"seen":0}
+
+// rules.jsonl
+{"id":"r-20261113-01","at":1763043120000,"text":"夜里十一点后不提工作",
+ "why":"昨天 23:40 提加班，她只回了个嗯","supersedes":[],"seen":0}
+
+// state/notes-<月>.jsonl —— 流水账
+{"op":"add","id":"n-20261113-01","at":1763043120000,"text":"问她头痛好点没",
+ "trigger":"她提到加班","ttl":604800000}
+{"op":"take","id":"n-20261113-01","at":1763043200000}
+
+// state/plans-<月>.jsonl
+{"op":"add","id":"p-20261113-01","at":1763043120000,"text":"陪她看牙","when":1763123400000}
+{"op":"done","id":"p-20261113-01","at":1763130000000}
+
+// state/judge-<月>.jsonl
+{"at":1763043120000,"said":true,"why":"积压 3 条，距上次 7 小时"}
+
+// state/trace-<月>.jsonl
+{"at":1763043120000,"budget":1200,"used":1087,"header":"full",
+ "kept":["m-20261113-01","e-20261113-02"],
+ "dropped":[{"id":"e-20261112-04","reason":"budget"}]}
+
+// state/meta.json
+{"watermark":1763043120000,"lastCueAt":1763030000000,
+ "debt":{"unconsolidated":3,"unreflected":5,"lastAt":1763000000000},
+ "parts":{"weather":{"fail":0,"until":null}}}
+```
+
+校验（写入时，不合法就退出码 2，不猜不补）：
+`text` 的 cost 上限 EVENTS 400 / MEMORY 240 / RULE 120 / SELF 600，超了拒绝并说明要拆条。
+`memory add` 必须 `--key` 非空、且 `evidence` 能解析到 ≥1 条真实事件；解析不到就拒绝。
+`rules` 同时生效 ≤20 条，超了要求先 supersede。
+`src.origin` 只能是 `user` | `tool` | `self`；`tool` 必须带 `ref`（插件名）。
+
+## 5. 两个算式
+
+```
+常量  COST_ASCII=0.28  COST_WIDE=1.0  LINE_OVERHEAD=8
+      S0: event 3 天 · memory 30 天 · rule ∞
+      DEFAULT_WINDOW_DAYS=30
+
+保留率  S = S0 · (1 + 2·imp) · (1 + ln(1 + seen))
+        R = exp(-(now - at) / S)                  # rule 恒为 1
+
+线索    cue = Jaccard(tokens(查询), tokens(cues ∪ text))
+
+检索分  score = 0.6·R + 0.4·cue
+```
+
+`seen` 只在 `digest` 把条目选进摘要那一刻 +1（**复述只发生在一处**）。
+读命令一律不写盘——一次性进程不做 write-on-read。
+
+"会忘"要看得见：`digest` 结尾打印最弱三条的 R 与被裁原因，`audit trace` 留档。
+
+## 6. 命令面
+
+```
+agent-man                          处境屏（≡ context show，只读）
+agent-man event  add "…" [--imp 0-3] [--cue 她,加班] [--src user|tool:名字|self]
+agent-man event  ls | find [--since …] [--until …] [--all] [--limit N]
+agent-man memory add "<事实>" --key <槽位> --from <事件id|日期..日期> [--imp 0-3]
+agent-man memory ls | find | show <id|key> | revise <id> "<新事实>" [--from …]
+agent-man rule   add "<规矩>" --why "<为什么>"    ·  rule ls
+agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>
+agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id>  ·  plan ls
+agent-man self   show | set | append
+agent-man context show | digest [--budget 1200] [--due] [--out 文件] | cue [--min-gap 6h] [--peek] [--why …] | sense
+agent-man audit  trace [--limit N] | timeline [--limit N] [--all] | orphan
+agent-man doctor
+agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（插件直通）
+```
+
+别名：`log`→`event add`、`remember`→`memory add`、`leave`→`note add`、
+`digest`→`context digest`、`cue`→`context cue`、`find`→`event find`、
+`show`→`memory show`、`look`→`context show`。
+资源无动作时等价 `ls`。
+
+退出码：`0` 成功/有话要说；`1` 不说（cue 的"不打扰"）；`2` 用法或数据错误。
+每个读命令都支持 `--json`，输出结构化结果；`stdout` 只放结果，`stderr` 只放 `! ` 开头的警告。
+
+## 7. 模块与接口
+
+```
+bin/agent-man.mjs              入口薄壳（import cli/main，转交退出码）
+dsh/                           宿主元数据：index.mjs cordis.patch.yml locale/ icon.svg
+src/
+  core/    index time cost text
+  store/   index paths append ids schema
+  memory/  index events conclusions rules self
+  intent/  index notes plans
+  recall/  index rank find budget
+  mind/    index situation debt gate
+  digest/  index digest trace
+  parts/   index discover call
+  view/    index screen digest records
+  cli/     main registry
+  host/dsh/index inject tools recall
+```
+
+依赖只能向下：`cli → view → mind / digest / recall → memory / intent / parts → store → core`。
+跨目录只准 import 门面 `<dir>/index.mjs`；同层之间只许调用门面导出的读接口。
+`node:child_process` 只许出现在 `src/parts/call.mjs`；`fetch` 全仓禁止。
+一个目录最多 5 个文件（门面 `index.mjs` 不计）。
+
+签名（实现时不得改名改形）：
+
+| 模块 | 导出 |
+|---|---|
+| core/time | `now()` `dayKey(ts,{dayStart})` `monthKey(ts)` `clock(ts)` `rel(ts,now)` `parseWhen(s,now)` |
+| core/cost | `cost(s)` `cut(s,budget)` `oneLine(s,max)` |
+| core/text | `tokens(s)` `jaccard(a,b)` |
+| store/paths | `home(env)` `ensure(home)` `eventsFile(home,ts)` `stateFile(home,kind,ts)` `listShards(home,kind,{from,to})` |
+| store/append | `appendJsonl(file,obj)` `readJsonl(file)` `writeAtomic(file,text)` `readJson(file)` |
+| store/ids | `claim(home,prefix)` → `e-YYYYMMDD-nn` 等 |
+| store/schema | `VERSION` `validate(kind,obj)` `checkHome(home)` |
+| memory/events | `add(home,{text,imp,cues,src,at})` `read(home,{from,to,all})` |
+| memory/conclusions | `add` `revise` `list` `show(home,idOrKey)` `active(home,now)` |
+| memory/rules | `add(home,{text,why,supersedes})` `list(home)` `active(home)` |
+| memory/self | `read(home)` `set(home,text)` `append(home,line)` |
+| intent/notes | `add` `list(home,{now})` `take(home,id)` `match(home,text)` |
+| intent/plans | `add` `done` `list(home,{now,days})` |
+| recall/rank | `retention(rec,now,kind)` `score(rec,q,now,kind)` `sortByScore(items,q,now,kind)` |
+| recall/find | `find(home,{query,kinds,from,to,limit,all})` |
+| recall/budget | `fit(sections,budget)` `costOf(text)` |
+| mind/situation | `build({home,now,parts})` → `{clock,quiet,since,backlog,debts,notes,plans,lastSaid,weakest}` |
+| mind/debt | `state(home,now)` → `{unconsolidated,unreflected,clusters[],overdue[]}` |
+| mind/gate | `judge({home,now,minGap,quiet,force})` → `{say,why}` |
+| digest/digest | `build({home,now,budget})` → `{text,kept,dropped,header,used}` |
+| digest/trace | `record(home,stats)` `list(home,limit)` `never(home)` |
+| parts/discover | `scan(env)` `describe(part,{timeout})` |
+| parts/call | `passthrough(part,args,env)` `capture(part,{timeout,limit},env)` |
+| view/screen | `render(situation)` |
+| view/digest | `render(digest)` |
+| view/records | `list(items,kind)` `item(rec,kind)` |
+| cli/registry | `TABLE` `resolve(argv)` |
+| cli/main | `main(argv,env)` → exit code |
+
+## 8. 插件契约
+
+六条：一调用一进程（参数走 argv，stdout 只放结果，日志走 stderr，无参 = 只读）；
+`--describe` 输出 `{name,desc,section,timeout_ms,side_effects}`；
+退出码 `0/64 参数错/69 依赖缺失/75 超时`；
+骨架强制超时（默认 5s、上限 30s、硬杀）；
+stdout ≤8KB，超了截断并标 `truncated`；
+崩溃/超时/缺失 → 本轮摘掉该能力并注入一行降级说明，连续 3 次失败冷却到下一次会话。
+
+两种模式：直通 `agent-man <名字> …`（stdio inherit，退出码透传）；
+聚合 `agent-man context sense`（捕获 + 超时 + 预算，拼进那一屏，**不落盘**）。
+
+边界：插件只能写情景层（`event add --src tool:<名字>`）；
+**不许写结论、规矩、自我块**——工具的观察不能替 agent 下结论。
+
+## 9. DSH 宿主
+
+一个包两个入口：`bin` 走 CLI，`main` 指向 `dsh/index.mjs`。
+首步注入一条消息，总预算 1000 cost：自我块 200 / 处境 550 / 旧会话字面回顾 250。
+工具两个：`agent_man`（写：event/memory/rule/note/plan/self）与 `agent_man_look`（读：context.show/find/memory.show）。
+不注册命令面板、不新增 session event 类型、不建第二份存储、只对 root。
+
+## 10. 常数表
+
+```
+COST_ASCII 0.28   COST_WIDE 1.0   LINE_OVERHEAD 8
+EVENTS_MAX 400    MEMORY_MAX 240  RULE_MAX 120   SELF_MAX 600
+S0_EVENT 3d  S0_MEMORY 30d  S0_RULE ∞
+SCORE_R 0.6  SCORE_CUE 0.4
+SHARE_MEMORY 0.6  SHARE_EVENTS 0.4
+DIGEST_BUDGET 1200  INJECT_BUDGET 1000
+DEBT_SUM_IMP 12  DEBT_UNREFLECTED 40  DEBT_STALE 24h
+CLUSTER_HITS 3  CLUSTER_DAYS 2
+CUE_MIN_GAP 6h  QUIET 23:00–08:00
+NOTE_TTL 7d  RULE_LIMIT 20  SELF_STALE 30d
+JUDGE_KEEP 200  TRACE_KEEP 12 月
+DEFAULT_WINDOW_DAYS 30
+PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
+```
+
+## 11. 测试要求
+
+`node --test`，用例名用中文写行为。**一条约束一条用例，不写"用例条数"**。
+
+结构用例（`test/structure.test.mjs`）三条：
+目录文件数 ≤5（不含门面）；import 只能向下（解析相对路径判断层级）；
+`node:child_process` 只出现在 `src/parts/call.mjs`，且全仓无 `fetch(`。
+
+行为用例必须覆盖：预算夹逼（装不下的必放项怎么办）、`key` 唯一与失效区间、
+证据解析失败要拒绝、`R` 随时间下降且 `seen` 让 S 变大、`cue` 门在静默时段不说话、
+插件超时降级、插件连续失败冷却、JSONL 追加后读回同一行、分片跨天查询。
+
+## 12. 里程碑
+
+| # | 内容 | verify |
+|---|---|---|
+| M0 | 归档旧仓库 → `git rm` 旧代码 → 新骨架 + `store/schema` + `doctor` 桩 + 结构用例 | `node --test test/structure.test.mjs` |
+| M1 | `core/*` 与 `store/*`（含 fsync 追加、读回、发号、分片路径） | `node --test test/{time,cost,store,ids}.test.mjs` |
+| M2 | `recall/*`（保留率、线索分、`fit` 夹逼） | `node --test test/{rank,budget}.test.mjs` |
+| M3 | `memory/*`（情景、结论、规矩；证据校验、失效区间） | `node --test test/{events,conclusions,rules}.test.mjs` |
+| M4 | `intent/*` 与 `mind/*`（便条、日程、处境、欠账、开口门） | `node --test test/{intent,situation,gate}.test.mjs` |
+| M5 | `digest/*` 与 `view/*`（摘要、账本、审计、doctor 完整） | `node --test test/{digest,audit,doctor}.test.mjs` |
+| M6 | `parts/*` 与 `host/dsh/*`（插件六条、聚合、注入、工具） | `node --test` + 实机新会话 |
+| M7 | README / AGENTS / decisions 定稿，1.0.0，推标签跑 CI | CI 全绿 + `npm pack` 清单 |
