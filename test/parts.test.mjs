@@ -156,6 +156,22 @@ test('capture 把 75/69 分别折成 timeout/missing，其它非零码是 crash'
   assert.deepEqual([d.status, d.code], ['ok', 0])
 })
 
+test('capture 把调用方要的超时夹在 30 秒上限内，不许零件把调用方拴住', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'quick', 'process.exit(0)')
+  const r = await capture({ name: 'quick', file }, { timeout: 10 * 60 * 1000 })
+  assert.deepEqual([r.status, r.timeout], ['ok', 30000])
+})
+
+test('capture 拿到 0 / NaN / 负的超时退回默认 5 秒，不当成"立刻超时"', async () => {
+  const dir = tmp()
+  const file = makePart(dir, 'quick2', 'process.exit(0)')
+  for (const given of [0, NaN, -1, undefined]) {
+    const r = await capture({ name: 'quick2', file }, { timeout: given })
+    assert.equal(r.timeout, 5000, `timeout=${String(given)} 没退回默认值`)
+  }
+})
+
 test('%名字% 形式的参数在 Windows 上被拒，说"不安全的参数"', winOnly('cmd 展开只发生在 Windows'), async () => {
   const dir = tmp()
   const file = makePart(dir, 'echoit', 'console.log(process.argv.slice(2).join())')

@@ -2,17 +2,13 @@
 // 只按名字去找 `agent-man-<名字>`；装的就有，卸的就没了。
 import fs from 'node:fs'
 import path from 'node:path'
-import { capture } from './call.mjs'
+import { PART_STDOUT_MAX, PART_TIMEOUT, PART_TIMEOUT_MAX, capture } from './call.mjs'
 
 const WIN = process.platform === 'win32'
 const PREFIX = 'agent-man-'
 
 // Windows 上按这个次序试，前面的赢；末尾的空串表示"无扩展名"。
 const WIN_PATTERNS = ['.exe', '.cmd', '.bat']
-
-// 与 design.md §10 同值。core 门面还没落地，先在本目录声明；落地后改成 import ../core/index.mjs。
-const PART_TIMEOUT = 5000
-const PART_TIMEOUT_MAX = 30000
 
 // 一个名字在 PATH 上的优先次序：扩展名靠前 > 扩展名靠后 > 无扩展名。
 function rank(ext) {
@@ -96,8 +92,11 @@ function missingField(data) {
   return null
 }
 
-function whyNot(r, name, timeout) {
-  if (r.status === 'timeout') return `${name} 的 --describe 超时（超过 ${timeout}ms 没有回话）`
+// 报"为什么不可用"时用的是实际生效的期限（capture 夹过上限之后的），不是请求的那个数：
+// 说了"超过 60000ms"，实际 30000ms 就收手，那是把自己做的事说错。
+function whyNot(r, name) {
+  const ms = r.timeout ?? PART_TIMEOUT
+  if (r.status === 'timeout') return `${name} 的 --describe 超时（超过 ${ms}ms 没有回话）`
   if (r.status === 'missing') return `${name} 的 --describe 起不来（${r.why ?? `退出码 ${r.code}`}）`
   const tail = (r.err || '').split('\n')[0].trim()
   return `${name} 的 --describe 崩了（退出码 ${r.code}）${tail ? `：${tail}` : ''}`
@@ -109,7 +108,7 @@ function whyNot(r, name, timeout) {
 export async function describe(part, { timeout = PART_TIMEOUT, env = process.env } = {}) {
   const name = part?.name ?? path.basename(String(part?.file ?? ''))
   const r = await capture(part, { args: ['--describe'], timeout, env })
-  if (r.status !== 'ok') return { ok: false, why: whyNot(r, name, timeout) }
+  if (r.status !== 'ok') return { ok: false, why: whyNot(r, name) }
   let data
   try {
     data = JSON.parse(r.out)

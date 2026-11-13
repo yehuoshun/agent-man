@@ -7,8 +7,10 @@ import path from 'node:path'
 const WIN = process.platform === 'win32'
 
 // 与 design.md §10 同值。core 门面还没落地，先在本目录声明；落地后改成 import ../core/index.mjs。
-const PART_TIMEOUT = 5000
-const PART_STDOUT_MAX = 8192
+// 全目录只在这里写一遍数：discover.mjs 从这里 import，免得两处 5000 各自漂移。
+export const PART_TIMEOUT = 5000
+export const PART_TIMEOUT_MAX = 30000
+export const PART_STDOUT_MAX = 8192
 
 // Windows 的 cmd 会把 %名字% 换成环境变量，包在引号里也照换，^% 和 %% 更错（§32 实测四种写法）。
 // 所以命中就拒绝，不猜着转义：悄悄改掉调用方给的字符串，比让它看到一句"不安全的参数"危险得多。
@@ -101,6 +103,14 @@ function sink(cap) {
   }
 }
 
+// 上限要夹在真正计时的地方，不能只夹 --describe 回包里那个数：§8 说的是"骨架强制超时"，
+// 那对零件自己报的数、对调用方随手给的数都得成立。0 / NaN / 负数不当成"立刻超时"，
+// 退回默认值——1ms 的超时是个没人想要的答案。
+function deadline(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return PART_TIMEOUT
+  return Math.min(ms, PART_TIMEOUT_MAX)
+}
+
 // 契约（§8）把 75 定为超时、69 定为依赖缺失：这两个码要穿透成 status，好让上游按
 // "摘掉这个能力/冷却"处理，而不是当成一次普通崩溃。
 function classify(code) {
@@ -131,7 +141,8 @@ export function passthrough(part, args = [], env = process.env) {
   return r.signal ? 128 : (r.status ?? 1)
 }
 
-// 捕获：返回 {status, code, out, err, truncated}，永不抛。
+// 捕获：返回 {status, code, out, err, truncated, timeout}，永不抛。timeout 是实际生效的期限
+// （夹过上限之后的），调用方和 whyNot 都该按这个数说，而不是按它请求的那个数说。
 // 异步是因为超时必须在计时到点那一刻杀树——spawnSync 的超时杀掉 cmd.exe 之后就轮不到
 // 我们动手了，孙子进程会漏网（见 killTree 的注释）。
 // 第三个参数 env 是 design §7 的写法，{env} 是调用方更顺手的写法，两个都收。
@@ -139,7 +150,7 @@ export function capture(part, opts = {}, legacyEnv) {
   const o = opts ?? {}
   const env = o.env ?? legacyEnv ?? process.env
   const args = (Array.isArray(o.args) ? o.args : []).map(String)
-  const timeout = Number.isFinite(o.timeout) && o.timeout > 0 ? o.timeout : PART_TIMEOUT
+  const timeout = deadline(o.timeout)
   const limit = Number.isFinite(o.limit) && o.limit >= 0 ? o.limit : PART_STDOUT_MAX
   const out = sink(limit)
   const err = sink(limit)
@@ -157,6 +168,7 @@ export function capture(part, opts = {}, legacyEnv) {
         out: out.text(),
         err: err.text(),
         truncated: out.over || err.over,
+        timeout,
         ...patch,
       })
     }
