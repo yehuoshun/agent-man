@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { S0_EVENT, S0_MEMORY } from '../src/core/index.mjs'
-import { kindOf, retention, strength } from '../src/recall/index.mjs'
+import { S0_EVENT, S0_MEMORY, SCORE_CUE, SCORE_R } from '../src/core/index.mjs'
+import { cue, kindOf, rank, retention, score, sortByScore, strength } from '../src/recall/index.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 const T0 = 1763043120000
@@ -77,4 +77,81 @@ test('正文在 fact 上的结论也算有正文，不会被当成空条目', ()
   const memory = { id: 'm-1', at: T0, fact: '她关窗是因为冷' }
   assert.equal(kindOf(memory), 'memory')
   assert.equal(strength(memory, T0).S, S0_MEMORY)
+})
+
+test('同样的 R 下，带查询线索的条目排在前面', () => {
+  const hit = { id: 'e-1', at: T0, text: '她关了窗', cues: ['窗'] }
+  const miss = { id: 'e-2', at: T0, text: '今天吃了面' }
+  const rows = rank([miss, hit], { now: T0, query: '窗' })
+  assert.equal(rows[0].id, 'e-1', `排在最前的是 ${rows[0].id}：线索没进排序`)
+  assert.ok(rows[0].cue > 0 && rows[1].cue === 0, `cue 是 ${rows[0].cue}/${rows[1].cue}`)
+  assert.ok(rows[0].score > rows[1].score, '带线索的分数没更高')
+  assert.equal(score(hit, '窗', T0), rows[0].score, 'score() 与 rank() 算的不是同一个数')
+})
+
+test('线索只写在 cues 里也算命中，不必重复写进正文', () => {
+  const rec = { id: 'e-1', at: T0, text: '什么都没说', cues: ['加班'] }
+  assert.ok(cue('加班', rec) > 0, 'cues 被漏掉了：design §5 写的是 cues ∪ text')
+  assert.equal(cue('加班', { id: 'e-2', at: T0, text: '什么都没说' }), 0)
+})
+
+test('空查询不加线索分：分数正好是 0.6·R', () => {
+  const rows = rank([
+    { id: 'e-1', at: T0, text: '她关了窗' },
+    { id: 'e-2', at: T0 + DAY, text: '她关了窗' },
+  ], { now: T0 + DAY, query: '' })
+  for (const row of rows) {
+    assert.equal(row.cue, 0, `${row.id} 在空查询下拿到了线索分 ${row.cue}`)
+    assert.equal(row.score, SCORE_R * row.R, `${row.id} 的分数不是 0.6·R`)
+  }
+  assert.ok(SCORE_CUE > 0, '常数被清零了：0.4 这个权重是 design §10 定的')
+})
+
+test('同分时按时间倒序：新的在前', () => {
+  const rows = rank([
+    { id: 'r-1', at: T0, text: '老规矩' },
+    { id: 'r-2', at: T0 + DAY, text: '新规矩' },
+  ], { now: T0 + DAY })
+  assert.equal(rows[0].score, rows[1].score, '规矩的 R 应当恒为 1，两条分数该一样')
+  assert.equal(rows[0].id, 'r-2', `同分时排前面的是 ${rows[0].id}：不是最新的那条`)
+})
+
+test('同分同时间按 id 码位序，localeCompare 会把这一对排反', () => {
+  const rows = rank([
+    { id: 'r-a', at: T0, text: '规矩甲' },
+    { id: 'r-Z', at: T0, text: '规矩乙' },
+  ], { now: T0 })
+  // 码位：'Z'(90) < 'a'(97)；localeCompare 在 en 下把 'a' 排在 'Z' 前。
+  assert.equal(rows[0].id, 'r-Z', `码位序没用上：排前面的是 ${rows[0].id}`)
+})
+
+test('rank 把结果做成副本，传进来的候选一个都不改', () => {
+  const cands = [{ id: 'e-2', at: T0, text: '乙' }, { id: 'e-1', at: T0, text: '甲' }]
+  const before = JSON.stringify(cands)
+  const rows = rank(cands, { now: T0, query: '甲' })
+  assert.notEqual(rows, cands, 'rank 直接把入参数组还回来了')
+  assert.equal(JSON.stringify(cands), before, 'rank 改动了传进来的候选')
+  assert.notEqual(rows[0], cands[0], '返回的是入参对象本身：下游一改就污染了候选')
+})
+
+test('候选不是数组就报错，不静默返回空表', () => {
+  assert.throws(() => rank(null, { now: T0 }), /候选数组/)
+  assert.throws(() => rank('e-1', { now: T0 }), /候选数组/)
+})
+
+test('结论的正文在 fact 上：检索照样能命中', () => {
+  const memory = { id: 'm-1', at: T0, key: '她怕冷', fact: '她关窗是因为冷' }
+  assert.ok(cue('关窗', memory) > 0, 'fact 没被当正文：结论永远搜不到')
+  assert.equal(memory.score, undefined, 'cue() 往传进来的记录上写了东西')
+})
+
+test('design §7 的 sortByScore 与 rank 给出同一份次序', () => {
+  const cands = [
+    { id: 'e-1', at: T0, text: '她关了窗', cues: ['窗'] },
+    { id: 'e-2', at: T0 + DAY, text: '她关了窗' },
+    { id: 'e-3', at: T0, text: '今天吃了面' },
+  ]
+  const a = sortByScore(cands, '窗', T0 + DAY)
+  const b = rank(cands, { now: T0 + DAY, query: '窗' })
+  assert.deepEqual(a.map((r) => r.id), b.map((r) => r.id))
 })
