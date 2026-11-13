@@ -241,3 +241,17 @@ test('blocked 认时间冷却，也认"下一次会话"哨兵', () => {
   assert.equal(blocked({ fail: 1, until: Infinity }, 5000), true)
   assert.equal(blocked(undefined, 5000), false)
 })
+
+test('冷却到下一次会话的哨兵过一遍 JSON 也不许解除(Infinity 落盘后是 null)', () => {
+  const three = bump(bump(bump({ fail: 0, until: null })))
+  const persisted = JSON.parse(JSON.stringify(three))
+  assert.deepEqual(persisted, { fail: 3, until: null }) // JSON 里没有 Infinity
+  assert.equal(blocked(persisted, 1000), true)
+})
+
+test('会话开始清零之后冷却真的解除，两次失败不算冷却', () => {
+  assert.equal(blocked({ fail: 0, until: null }, 1000), false)
+  const two = JSON.parse(JSON.stringify(bump(bump({ fail: 0, until: null }))))
+  assert.deepEqual(two, { fail: 2, until: null })
+  assert.equal(blocked(two, 1000), false)
+})

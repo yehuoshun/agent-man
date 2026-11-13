@@ -8,8 +8,8 @@ const PART_FAIL_LIMIT = 3
 
 // 连续失败计数。第 3 次失败把 until 设成 Infinity：那是"下一次会话"的哨兵，由调用方在
 // 会话开始时把计数清零（{fail:0, until:null}），这里不认识时钟，也不自己解除。
-// 注意 JSON 里没有 Infinity（写进 meta.json 会变成 null），所以别指望它持久化——哨兵本来就
-// 只活一个会话。
+// 注意 JSON 里没有 Infinity（写进 meta.json 会变成 null），所以别指望它原样持久化——
+// blocked 认得出"null + 计数到上限"就是还没解除的哨兵，见那里。
 export function bump(entry) {
   const prev = entry ?? {}
   const fail = (Number.isFinite(prev.fail) ? prev.fail : 0) + 1
@@ -20,6 +20,11 @@ export function bump(entry) {
 export function blocked(entry, now) {
   const until = entry?.until
   if (until === Infinity) return true
-  if (!Number.isFinite(until)) return false // null / undefined / NaN：没在冷却
+  if (!Number.isFinite(until)) {
+    // 数字之外的 until 有两种来路：真的是 null（没在冷却，调用方刚清零），或者哨兵
+    // Infinity 写进 JSON 又读回来变成了 null。后者要是当成"没在冷却"，连续三次失败攒下的
+    // 冷却就被一次落盘悄悄抹掉了。只认计数：到上限就是还在冷却，清零过的自然回到 0。
+    return (Number.isFinite(entry?.fail) ? entry.fail : 0) >= PART_FAIL_LIMIT
+  }
   return until > now
 }
