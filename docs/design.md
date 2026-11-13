@@ -168,20 +168,20 @@ agent-man <其它名字> …               # PATH 上的 agent-man-<名字>（�
 bin/agent-man.mjs              入口薄壳（import cli/main，转交退出码）
 dsh/                           宿主元数据：index.mjs cordis.patch.yml locale/ icon.svg
 src/
-  core/    index time cost text
+  core/    index const config cost text time
   store/   index paths append ids schema
-  memory/  index events conclusions rules self
-  intent/  index notes plans
-  recall/  index rank find budget
+  memory/  index write query shape rules self
+  intent/  index notes plans ledger shape
+  recall/  index strength rank budget pick
   mind/    index situation debt gate
-  digest/  index digest trace
+  digest/  index build seen trace run
   audit/   index trace timeline orphan doctor
   soul/    index store card inject
   affect/  index state decay label stim
-  parts/   index discover call
+  parts/   index discover call sense
   view/    index screen digest records
   cli/     index main registry
-  host/dsh/index inject tools recall
+  host/    index inject tools recall
 ```
 
 依赖只能向下：`cli → view / audit → mind / digest / soul → recall / memory / intent / parts / affect → store → core`。
@@ -198,12 +198,12 @@ src/
 | core/text | `tokens(s)` `jaccard(a,b)` |
 | store/paths | `home(env)` `ensure(home)` `eventsFile(home,ts)` `stateFile(home,kind,ts)` `listShards(home,kind,{from,to})` |
 | store/append | `appendJsonl(file,obj)` `readJsonl(file)` `writeAtomic(file,text)` `readJson(file)` |
-| store/ids | `claim(home,prefix)` → `e-YYYYMMDD-nn` 等 |
+| store/ids | `claim(home,prefix,at)` → `e-YYYYMMDD-nn` 等（`at` 由调用方给，不自己看时钟） |
 | store/schema | `VERSION` `validate(kind,obj)` `checkHome(home)` |
-| memory/events | `add(home,{text,imp,cues,src,at})` `read(home,{from,to,all})` |
-| memory/conclusions | `add` `revise` `list` `show(home,idOrKey)` `active(home,now)` |
-| memory/rules | `add(home,{text,why,supersedes})` `list(home)` `active(home)` |
-| memory/self | `read(home)` `set(home,text)` `append(home,line)` |
+| memory/events | `eventAdd(home,{text,imp,cues,src,at})`（写，只追加）`events(home,{from,to,all})`（读，跨日合读） |
+| memory/conclusions | `add` `revise` `list`（别名 `ls`）`find` `show(home,idOrKey)` `markSeen(home,{ids,at})` `conflict(key)` `orphan(home)` |
+| memory/rules | `addRule(home,{text,why,supersedes})` `listRules(home,{all})` → `{items,live,total,over,limit,skipped}` |
+| memory/self | `readSelf(home)` `setSelf(home,text)` `appendSelf(home,text,{now})` |
 | intent/notes | `add` `list(home,{now})` `take(home,id)` `match(home,text)` |
 | intent/plans | `add` `done` `list(home,{now,days})` |
 | recall/rank | `retention(rec,now,kind)` `score(rec,q,now,kind)` `sortByScore(items,q,now,kind)` |
@@ -227,6 +227,7 @@ src/
 | affect/stim | `KINDS` `weightOf(kind)` `record(home,one)` `list(home,{from,to})` `appendOp(home,op)` |
 | parts/discover | `scan(env)` `describe(part,{timeout})` |
 | parts/call | `passthrough(part,args,env)` `capture(part,{timeout,limit},env)` |
+| parts/sense | `sense(env,{budget,parts,deps})` → `{lines,used,budget,warnings,dropped,failures}` |
 | view/screen | `render(situation)` |
 | view/digest | `render(digest)` |
 | view/records | `list(items,kind)` `item(rec,kind)` |
@@ -251,7 +252,8 @@ stdout ≤8KB，超了截断并标 `truncated`；
 ## 9. DSH 宿主
 
 一个包两个入口：`bin` 走 CLI，`main` 指向 `dsh/index.mjs`。
-首步注入一条消息，总预算 1000 cost：自我块 200 / 处境 550 / 旧会话字面回顾 250。
+首步注入一条消息，总预算 1000 cost：灵魂 200 / 用户模型 100 / 处境 550 / 旧会话字面回顾 150
+（这一串数字只在 §15 的 `inject.*` 里有一份，改预算改配置不改代码）。
 工具两个：`agent_man`（写：event/memory/rule/note/plan/self）与 `agent_man_look`（读：context.show/find/memory.show）。
 不注册命令面板、不新增 session event 类型、不建第二份存储、只对 root。
 

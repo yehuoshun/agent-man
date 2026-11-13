@@ -39,6 +39,9 @@ export const INJECT_BUDGET = 1000
 export const DEFAULT_WINDOW_DAYS = 30 // 天
 export const NOTE_TTL = 7 * DAY // ms：便条默认活 7 天
 export const CUE_MIN_GAP = 6 * HOUR // ms：两次开口的最小间隔
+// §14.5 的调制口子：min-gap × (1 + (AFFECT_BASE.v − v) / 200)。200 是"低多少分算翻倍"，
+// 不是随手写的分母——它让 v=0 时门槛正好翻一倍半，v=100 时缩四分之一。
+export const CUE_MOOD_DIV = 200
 export const DEBT_STALE = 24 * HOUR // ms：欠账多久算放旧了
 // 静默时段用小时数而不是时间戳：它每天循环，落到 ms 反而要在别处再拆一次年月日。
 export const QUIET = Object.freeze({ from: 23, to: 8 }) // 本地小时，23 点到次日 8 点
@@ -56,6 +59,9 @@ export const SECTION_ITEMS_MAX = 4 // 条：每段最多几条
 export const SECTION_MAX = 4 // 段：一屏最多几段
 export const MIN_KEEP_RATIO = 0.4 // 超长条目切完至少留原文的多少
 export const MIN_KEEP_COST = 32 // cost：切完不足这个数就不切了，整条丢
+// §5 的"最弱三条"是三条，不是段上限（那是 SECTION_ITEMS_MAX 的四条）：两件事撞一起，
+// 屏上就会出现"最弱的四条"这种没人下过结论的东西。
+export const WEAKEST_MAX = 3 // 条：处境屏里"最弱的三条"
 
 // —— 插件（design §8）——
 export const PART_TIMEOUT = 5000 // ms

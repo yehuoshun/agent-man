@@ -2,16 +2,13 @@
 // 这一层只把数据摆成渲染层要的形状（design §4）：日程的 due → {when, left, late} 只在这里
 // 映射一次，view 那头一个 Date 都不碰；预算也只在这里砍，砍掉的都留着为什么。
 import {
-  INJECT_BUDGET, SECTION_ITEMS_MAX, clock, config, dayKey, now, rel,
+  INJECT_BUDGET, SECTION_ITEMS_MAX, WEAKEST_MAX, clock, config, dayKey, now, rel,
 } from '../core/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
 import { events, ls } from '../memory/index.mjs'
 import { atOf, costOf, idOf, retention, textOf } from '../recall/index.mjs'
 import { lastSaid, state as debtState } from './debt.mjs'
 import { quietAt } from './gate.mjs'
-
-// design §5 的"最弱三条"是三条，不是 §10 的段上限（那是第四条）。
-const WEAKEST = 3
 
 export function situation(homeDir, options = {}) {
   const call = typeof homeDir === 'string' ? { ...options, home: homeDir } : { ...homeDir }
@@ -41,16 +38,27 @@ export function situation(homeDir, options = {}) {
   const backlog = { unconsolidated: debts.unconsolidated, overdue: debts.overdue.length }
   const head = headOf({ stamp, since, backlog, quiet })
 
-  const planRows = openPlans.items.map((one) => ({
-    id: one.id,
-    at: one.at,
-    due: one.due,
-    text: one.text,
-    when: one.due === null ? '' : clock(one.due),
-    // 过点的日程不再说"还有多久"：view 那头只看 late，别给自相矛盾的两个数。
-    left: one.due === null || one.late ? '' : rel(one.due, at),
-    late: one.late === true,
-  }))
+  const planRows = openPlans.items.map((one) => {
+    // due 的解释只在这里做一次（§4）。分工是：**今天的事由 when 报时分，别的事由 left 报日子**——
+    // 两个都报就会印成 `2026-11-14 19:40 陪她看牙（明天 19:40）`，同一个时间说两遍。
+    // 过点是例外：那时 left 是空的（见下），日子只能由 when 自己带。
+    const sameDay = one.due !== null && dayKey(one.due) === dayKey(at)
+    let when = ''
+    if (one.due !== null && sameDay) when = clock(one.due)
+    // 过点的日程 left 是空的（说"晚了 26 小时"没意义），日期只能落在 when 上。
+    else if (one.due !== null && one.late === true) when = `${dayKey(one.due)} ${clock(one.due)}`
+    const leftText = one.due === null || one.late ? '' : rel(one.due, at)
+    return {
+      id: one.id,
+      at: one.at,
+      due: one.due,
+      text: one.text,
+      when,
+      // 当天还没到点时 rel() 与 clock() 说的是同一件事（都是 "22:00"）：只留一个。
+      left: leftText === when ? '' : leftText,
+      late: one.late === true,
+    }
+  })
   const noteRows = openNotes.items.map((one) => ({
     id: one.id,
     at: one.at,
@@ -96,7 +104,7 @@ export function situation(homeDir, options = {}) {
   }
   const planLines = fill('日程', planRows, SECTION_ITEMS_MAX)
   const noteLines = fill('便条', noteRows, SECTION_ITEMS_MAX)
-  const weakLines = fill('最弱的三条', weakRows, WEAKEST)
+  const weakLines = fill('最弱的三条', weakRows, WEAKEST_MAX)
 
   // 插件建议还没接（§14.5 的第二口子等 M6）：递进来也摆不上屏，说出来而不是悄悄扔掉。
   if (Array.isArray(call.parts) && call.parts.length > 0) {

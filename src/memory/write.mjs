@@ -1,4 +1,5 @@
-import { appendJsonl, claim, ensure } from '../store/index.mjs'
+import { EVENTS_MAX, cost } from '../core/index.mjs'
+import { appendJsonl, claim, ensure, eventsFile, validate } from '../store/index.mjs'
 
 import {
   PATCHABLE,
@@ -66,7 +67,7 @@ export async function add(entry, ctx = {}) {
   const from = inherited ?? wantedFrom ?? evidence.from ?? at
 
   ensure(home)
-  const id = await claim(home, 'm')
+  const id = await claim(home, 'm', at)
   const record = assertRecord(makeRecord({ id, at, key, fact, imp, from, evidence, seen: 0 }))
 
   // 先落新条再收口：中途崩了会留下两条活记录（conflict 看得见），
@@ -111,7 +112,7 @@ export async function revise(id, patch, ctx = {}) {
 
   const at = nextAt(state.records, current.key, base)
   ensure(home)
-  const nextId = await claim(home, 'm')
+  const nextId = await claim(home, 'm', at)
   const record = assertRecord({
     id: nextId,
     at,
@@ -166,4 +167,70 @@ export function conflict(key, ctx = {}) {
     })
   }
   return { items: conflicts, skipped: state.skipped }
+}
+
+// —— 情景（design §4/§6）——
+// 事件是原文：只追加、不改写、不修订。这是唯一一条"不经结论"的写入路径，插件也只能走它
+// （§8：零件的观察先落成情景，成不成结论由人/agent 后面再说）。它住在 write.mjs，
+// 是因为 memory/ 的五个槽位已被 write/query/shape/rules/self 占满，而"写"本来就该在一处。
+const ORIGINS = new Set(['user', 'tool', 'self'])
+
+// src 写成一行字符串给人用（`tool:天气`），落到盘上仍是 §4 的 {origin, ref} 形状。
+function eventSrc(value) {
+  if (value === undefined || value === null || value === '') return { origin: 'user' }
+  if (typeof value === 'object' && !Array.isArray(value)) return value
+  const raw = String(value).trim()
+  const [head, ...rest] = raw.split(':')
+  if (!ORIGINS.has(head)) throw new Error(`src 只能是 user / tool:<名字> / self，拿到的是 ${raw}`)
+  if (head !== 'tool') {
+    // user / self 只有一个来源，带名字等于把来路说错了：不猜，直接报。
+    if (rest.join(':').trim() !== '') throw new Error(`src 是 ${head} 时不带名字，拿到的是 ${raw}`)
+    return { origin: head }
+  }
+  const ref = rest.join(':').trim()
+  if (ref === '') throw new Error(`src 是 tool 时要带名字：tool:<名字>，拿到的是 ${raw}`)
+  return { origin: 'tool', ref }
+}
+
+// 线索用来算 Jaccard（§5），所以只留非空、去重、保持给的次序：顺序是人的次序。
+function eventCues(value) {
+  const list = Array.isArray(value) ? value : String(value ?? '').split(',')
+  const out = []
+  for (const one of list) {
+    const token = String(one ?? '').trim()
+    if (token !== '' && !out.includes(token)) out.push(token)
+  }
+  return out
+}
+
+export async function eventAdd(input, ctx = {}) {
+  const home = requireHome(ctx)
+  const base = nowOf(ctx)
+  const given = input && typeof input === 'object' && !Array.isArray(input) ? input : {}
+  const text = typeof given.text === 'string' ? given.text.trim() : ''
+  if (text === '') throw new Error('事件得有内容：event add "发生了什么"')
+
+  // 单条上限是预算，不是建议（AGENTS 二·1）：超了让用户拆条，不切半句。
+  const price = cost(text)
+  if (price > EVENTS_MAX) {
+    throw new Error(`这一条 ${price.toFixed(1)} cost，超过单条上限 ${EVENTS_MAX}：拆成几条再记`)
+  }
+
+  const at = timeOf(given.at, base, 'at') ?? base
+  ensure(home)
+  const id = await claim(home, 'e', at)
+  const record = {
+    id,
+    at,
+    text,
+    imp: checkImp(given.imp),
+    cues: eventCues(given.cues),
+    src: eventSrc(given.src),
+  }
+  // 形状最后过一遍 store 的老规矩：这里已经是"写盘前最后一次说不"。
+  const { ok, errors } = validate('events', record)
+  if (!ok) throw new Error(errors.join('；'))
+
+  appendJsonl(eventsFile(home, at), record)
+  return { id, at, cost: price, record }
 }

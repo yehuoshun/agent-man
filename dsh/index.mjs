@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto'
 import { snapshot as affectSnapshot } from '../src/affect/index.mjs'
 import { config, now as nowTs } from '../src/core/index.mjs'
 import { affectLine, callTool, compose, recall, TOOLS } from '../src/host/index.mjs'
+import { situation } from '../src/mind/index.mjs'
+import { renderScreen } from '../src/view/index.mjs'
 import { build as buildSoul, current as currentSoul } from '../src/soul/index.mjs'
 import { home as homeOf } from '../src/store/index.mjs'
 import { extractNeedles, lastUserText, makeSearch } from './search.mjs'
@@ -91,10 +93,10 @@ async function buildInjection(deps, { header, userText, at }) {
     }
   }
 
-  const mood = moodLine(deps, at, warnings)
-  // TODO(mind): 等 mind 车道合并后接 situation（situation.build({ home, now, parts })）。
-  // 那一天把处境正文拼在情绪行后面；现在这块只有情绪行，别的什么都不编。
-  const situation = mood === '' ? '' : mood
+  // 处境块 = 处境正文 + 情绪行（§13）。正文交给 mind 与 view，宿主只负责拼：
+  // 抬头那一行是给人看的屏框（"agent-man · 2026-11-13 15:00"），注入里用不上——
+  // 时刻已经在正文里说过一次，再说一遍就是花模型的钱复读。
+  const situation = situationBlock(deps, at, warnings)
 
   let recalled = ''
   try {
@@ -117,6 +119,26 @@ async function buildInjection(deps, { header, userText, at }) {
   const out = compose({ blocks, budget: cfg.inject.total })
   for (const line of out.warnings) warnings.push(line)
   return { text: out.text, warnings }
+}
+
+function situationBlock(deps, at, warnings) {
+  const { cfg, homeDir } = deps
+  const parts = []
+  try {
+    const scene = situation(homeDir, { now: at, cfg })
+    const body = renderScreen(scene)
+      .split('\n')
+      .filter((line, i) => !(i === 0 && line.startsWith('agent-man')))
+      .join('\n')
+      .trim()
+    if (body !== '') parts.push(body)
+  } catch (e) {
+    // 处境读不出来不该让整个注入消失：灵魂与回顾照发，只少了这一块，并说清为什么。
+    warnings.push(`! 处境没算出来（${messageOf(e)}）：这次不带处境`)
+  }
+  const mood = moodLine(deps, at, warnings)
+  if (mood !== '') parts.push(mood)
+  return parts.join('\n\n')
 }
 
 // 情绪行：数字只从 affect 的快照里取，宿主这一层连加法都不做（§14.6 的口径）。

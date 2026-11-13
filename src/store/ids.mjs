@@ -12,14 +12,14 @@ const CLAIM_TRIES = 64
 // 建成了才算数。按"现有几条 +1"算号在并发下必然重号，而重号会静默覆盖一条记忆——
 // 那是本仓库唯一不能出错的地方（AGENTS 五）。
 // 用异步：抢号的价值全在真并发上，await 让同进程的 20 个 claim() 真的会交错。
-export async function claim(homeDir, prefix) {
+export async function claim(homeDir, prefix, at = now()) {
   if (!PREFIXES.has(prefix)) {
     throw new Error(`发号前缀只能是 ${[...PREFIXES].join(' / ')}，拿到的是 ${String(prefix)}`)
   }
   const dir = path.join(homeDir, 'state', 'ids')
   // 只保证自己的目录在，不替整个数据目录做初始化：schema.json 是 ensure 的事。
   fs.mkdirSync(dir, { recursive: true })
-  const head = `${prefix}-${dayKey(now()).replace(/-/g, '')}-`
+  const head = `${prefix}-${dayKey(at).replace(/-/g, '')}-`
   let seq = (await maxSeq(dir, head)) + 1
 
   for (let tries = 0; tries < CLAIM_TRIES; tries += 1) {

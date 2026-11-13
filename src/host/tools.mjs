@@ -6,6 +6,8 @@
 import { SECTION_ITEMS_MAX, clock, dayKey, oneLine } from '../core/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
+import { situation } from '../mind/index.mjs'
+import { renderScreen } from '../view/index.mjs'
 
 // 写：只有这六项。多一项"自由文本入口"就等于绕开结论的证据要求。
 export const WRITE_ACTIONS = Object.freeze([
@@ -77,11 +79,13 @@ const WRITE_RULES = new Map([
   ['event add', {
     need: ['text'],
     hint: 'event add 要 text：一句"发生了什么"，不写评价',
-    run: (a, ctx) => {
-      const add = fnOf(memory, ['events', 'add'])
-      if (add === null) return notWired('memory events add', '记忆车道')
-      return add(ctx.home, { ...pick(a, ['text', 'imp', 'cues', 'src']), at: atOf(a, ctx) })
-        .then((rec) => `已记下事件 ${labelOf(rec)}`)
+    // 情景是唯一一条不经结论的写入路径，插件也只能走它（§8）：这里直接用记忆门面。
+    run: async (a, ctx) => {
+      const out = await memory.eventAdd(
+        { ...pick(a, ['text', 'imp', 'cues', 'src']), at: atOf(a, ctx) },
+        { home: ctx.home, now: ctx.now },
+      )
+      return `已记下事件 ${out.id}`
     },
   }],
   ['memory add', {
@@ -109,11 +113,16 @@ const WRITE_RULES = new Map([
   ['rule add', {
     need: ['text', 'why'],
     hint: 'rule add 要 text（什么规矩）与 why（为什么立它）：没有理由的规矩立不住',
-    run: (a, ctx) => {
-      const add = fnOf(memory, ['rules', 'add'])
-      if (add === null) return notWired('memory rules add', '记忆车道')
-      return add(ctx.home, { text: a.text, why: a.why, at: atOf(a, ctx), now: ctx.now })
-        .then((rec) => `已立下规矩 ${labelOf(rec)}`)
+    run: async (a, ctx) => {
+      const out = await memory.addRule(ctx.home, {
+        text: a.text,
+        why: a.why,
+        supersedes: a.supersedes,
+        at: atOf(a, ctx),
+        now: ctx.now,
+      })
+      const replaced = out.superseded.length > 0 ? `，替代了 ${out.superseded.join('、')}` : ''
+      return `已立下规矩 ${out.id}${replaced}`
     },
   }],
   ['note add', {
@@ -140,11 +149,9 @@ const WRITE_RULES = new Map([
   ['self append', {
     need: ['line'],
     hint: 'self append 要 line：往自我块追加一行（一行一个单位，别写成段落）',
-    run: (a, ctx) => {
-      const append = fnOf(memory, ['self', 'append'])
-      if (append === null) return notWired('memory self append', '记忆车道')
-      return append(ctx.home, oneLine(a.line).trim())
-        .then(() => '已追加到自我块')
+    run: async (a, ctx) => {
+      await memory.appendSelf(ctx.home, oneLine(a.line).trim(), { now: ctx.now })
+      return '已追加到自我块'
     },
   }],
 ])
@@ -153,9 +160,9 @@ const LOOK_RULES = new Map([
   ['context show', {
     need: [],
     hint: '',
-    // 处境屏要的是 mind 算好的快照 + view 的排版，两条车道都还没合并：
-    // 在这里自己拼一屏，就等于把 mind 的业务抄进宿主层。
-    run: () => notWired('context show', 'mind 车道（situation.build + view.screen.render）'),
+    // 处境屏 = mind 的快照 + view 的排版。这里只接线，一个数字都不算——
+    // 算在这层，屏上错了没人查得到。
+    run: (a, ctx) => renderScreen(situation(ctx.home, { now: ctx.now })),
   }],
   ['event find', {
     need: ['query'],
@@ -231,10 +238,6 @@ export async function callTool(name, args, ctx = {}) {
     // 领域自己抛的话里已经写了怎么改，原样交回，不在这一层改写措辞。
     return fail(messageOf(e))
   }
-}
-
-function notWired(what, lane) {
-  return fail(`${what} 还没接上：要等${lane}合并后有门面函数；现在写下去等于凭空造记录`)
 }
 
 function fail(error) {

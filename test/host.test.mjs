@@ -192,16 +192,38 @@ test('工具没有 home 就不动笔：返回错误而不是落到不知道哪�
   assert.match(out.error, /没有数据目录/)
 })
 
-test('memory 门面还没有的写入口一律说"还没接上"，不硬凑', async () => {
-  const out = await callTool('agent_man', { action: 'event add', text: '今天把宿主层写完了' },
-    { home: '/nowhere', now: T })
-  assert.equal(out.ok, false)
-  assert.match(out.error, /memory events add 还没接上/)
-  assert.match(out.error, /记忆车道/)
+test('工具背后是领域门面：三个写入口真写盘，读回来就是那条记录', async () => {
+  await inHome(async (home) => {
+    const ev = await callTool('agent_man', { action: 'event add', text: '今天把宿主层写完了' },
+      { home, now: T })
+    assert.equal(typeof ev, 'string')
+    assert.match(ev, /^已记下事件 e-\d{8}-\d{2}$/)
 
-  const ctxShow = await callTool('agent_man_look', { action: 'context show' }, { home: '/nowhere', now: T })
-  assert.equal(ctxShow.ok, false)
-  assert.match(ctxShow.error, /mind 车道/)
+    const rule = await callTool('agent_man', {
+      action: 'rule add', text: '注入超预算就整块丢', why: '半句比没有更误导',
+    }, { home, now: T })
+    assert.match(rule, /^已立下规矩 r-\d{8}-\d{2}$/)
+
+    const self = await callTool('agent_man', { action: 'self append', line: '说话先给结论' },
+      { home, now: T })
+    assert.equal(self, '已追加到自我块')
+
+    // 读回来：情景能查到刚记的那条，自我块里有刚追加的那一行。
+    const found = await callTool('agent_man_look', { action: 'event find', query: '宿主层' },
+      { home, now: T })
+    assert.match(found, /找到 1 条/)
+    assert.match(found, /今天把宿主层写完了/)
+  })
+})
+
+test('context show 出处境屏：读的是 mind 的快照，不是宿主自己拼的一堆字', async () => {
+  await inHome(async (home) => {
+    const out = await callTool('agent_man_look', { action: 'context show' }, { home, now: T })
+    assert.equal(typeof out, 'string')
+    // 空数据目录上也要有屏：抬头带时刻，正文说清"什么都没发生"，不是空白也不是报错。
+    assert.match(out, /^agent-man · 2026-11-13 15:00/)
+    assert.ok(out.trim().length > 20)
+  })
 })
 
 test('event find 在空数据目录上给"没有"，不是报错', async () => {

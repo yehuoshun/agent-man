@@ -107,7 +107,7 @@ export async function addRule(home, opts = {}) {
   }
 
   ensure(dir)
-  const id = await claim(dir, 'r')
+  const id = await claim(dir, 'r', at)
   const record = assertRule({ id, at, text, why, supersedes: wanted, seen: 0 })
   // 写入还是那条唯一的路（open → write → fsync → 读回自己那行）：规矩也不能例外。
   appendJsonl(rulesFile(dir), record)

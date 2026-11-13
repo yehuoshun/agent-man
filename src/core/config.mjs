@@ -30,7 +30,6 @@ const DATA_HOME_ENV = `${PREFIX}HOME`
 const DAY_START = '04:00'
 const INJECT_SITUATION = 550
 const INJECT_RECALL = 150
-const HOST_FIRST_STEP_RECALL = 250
 
 // §13 的四个注入槽位；injectOrder 决定"装不下时谁先丢"，所以它就是卡的四栏本身。
 const SOUL_SLOTS = Object.freeze(['identity', 'soul', 'dialogue', 'lore'])
@@ -83,7 +82,6 @@ export const SCHEMA = {
   'parts.failLimit': { type: 'int', min: 1, max: 100, default: PART_FAIL_LIMIT },
 
   'host.tools': { type: 'bool', default: true },
-  'host.firstStepRecall': { type: 'int', min: 0, max: 10000, default: HOST_FIRST_STEP_RECALL },
 }
 
 const KEYS = Object.keys(SCHEMA)

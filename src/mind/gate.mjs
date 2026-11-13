@@ -1,6 +1,6 @@
 // 开口门：此刻要不要说话。只判不说——不调模型、不生成台词；
 // 该说什么由宿主决定，这里只回一个判决与一句给人看的理由（design §7 的 gate 只有 judge）。
-import { AFFECT_BASE, CUE_MIN_GAP, QUIET, clock, config, now } from '../core/index.mjs'
+import { AFFECT_BASE, CUE_MIN_GAP, CUE_MOOD_DIV, QUIET, clock, config, now } from '../core/index.mjs'
 import { snapshot } from '../affect/index.mjs'
 import { appendJsonl, ensure, stateFile } from '../store/index.mjs'
 import { lastSaid, markSaid, state as debtState } from './debt.mjs'
@@ -9,10 +9,7 @@ import { lastSaid, markSaid, state as debtState } from './debt.mjs'
 const MINUTE = 60 * 1000
 const MINUTES_PER_HOUR = 60
 
-// §14.5 的调制口子写的是 min-gap × (1 + (50 − v)/200)。
-// 50 就是 AFFECT_BASE.v，但 200 在 §10 的常数表里没有落处——这里按公式留唯一一份，
-// 等它进了 core 再换成 import（已写进"待我定夺"）。
-const CUE_LOW_MOOD_DIV = 200
+// §14.5 的调制口子：低情绪拉开间隔，高情绪收紧间隔。分母是 core 里的 CUE_MOOD_DIV。
 
 // 判决。`now` 是数字，一个解释都不许在这里做第二次。
 // 顺序是 force ＞ 静默 ＞ 最小间隔 ＞ 到底有没有事由。
@@ -30,7 +27,7 @@ export function judge(homeDir, options = {}) {
   // §7 表里 judge 还认 minGap 与 quiet 两个口子（命令行 --min-gap / --peek 落在这儿）：
   // 给了就按给的算，没给才落回配置与钟点。门槛照样乘情绪系数。
   const base = Number.isFinite(call.minGap) && call.minGap >= 0 ? call.minGap : spanOf(cfg)
-  const factor = 1 + (AFFECT_BASE.v - mood.v) / CUE_LOW_MOOD_DIV
+  const factor = 1 + (AFFECT_BASE.v - mood.v) / CUE_MOOD_DIV
   const minGap = Math.round(base * factor)
   const said = lastSaid(home)
   const idle = said.at === null ? null : at - said.at
