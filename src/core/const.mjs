@@ -66,3 +66,45 @@ export const PART_FAIL_LIMIT = 3 // 次
 // —— 审计读多少（design §6：audit trace / timeline 的缺省条数）——
 export const AUDIT_LIMIT = 20 // 条：两个读命令共用的缺省上限
 export const TRACE_KEEP_MONTHS = 12 // 月：保留上限，读取不裁——审计要看全，清理是将来 prun 的事
+
+// —— 情绪（design §14）——
+// 半衰期分正负：坏心情走得慢（AFFECT_MOOD_HALF_NEG），高兴回来得快。人就是这样。
+export const AFFECT_MOOD_HALF = 8 * HOUR
+export const AFFECT_MOOD_HALF_NEG = 13 * HOUR
+export const AFFECT_ENERGY_HALF = 3 * HOUR
+export const AFFECT_TRUST_HALF = 60 * DAY // 信任是关系，不是心情：两个月不联系才回到陌生人
+export const AFFECT_RESPECT_HALF = 90 * DAY // 尊重更慢：人品判断不该因为一周没说话就变
+export const AFFECT_EMOTION_HALF = 45 * MINUTE // 瞬时情绪
+export const AFFECT_STIM_PER_HOUR = 3 // 条：同类刺激每小时最多计几次，防刷
+export const AFFECT_NEG_WEIGHT = 1.5 // 负向刺激加权（negativity bias）
+export const AFFECT_HYST = 3 // 分：标签切换的滞回，防抖动
+export const AFFECT_DEADBAND = 5 // 分：与基线差小于它就算"没变"
+export const AFFECT_INJECT_COST = 80 // cost：情绪行在注入里的上限
+export const AFFECT_KEEP_MONTHS = 24 // 月：刺激日志按月分片保留
+export const AFFECT_BIAS_IMP = 0 // 记账权重修正：0=关（design §14.12）
+
+// 四轴基线。r 是 −100..100 的"尊重"，其余 0..100。
+export const AFFECT_BASE = Object.freeze({ v: 50, e: 60, t: 40, r: 0 })
+
+// 刺激权重表（design §14.7）。调用方只传 kind，不许传权重。
+// 每个 kind：{v, e, t, r} 的增量；负向 kind 由 AFFECT_NEG_WEIGHT 统一加权，不在这里预先乘。
+export const AFFECT_WEIGHTS = Object.freeze({
+  'task.done': { v: 6, e: -4, t: 1, r: 0 },
+  'task.rework': { v: -5, e: -4, t: 0, r: 0 },
+  'task.fail': { v: -8, e: -6, t: 0, r: 0 },
+  'user.praise': { v: 8, e: 2, t: 3, r: 1 },
+  'user.correct': { v: -6, e: 0, t: -3, r: 0 },
+  'user.impatient': { v: -7, e: -3, t: -2, r: 0 },
+  'promise.kept': { v: 10, e: 0, t: 5, r: 2 },
+  'promise.overdue': { v: -10, e: -2, t: -8, r: -4 },
+  'return.after-gap': { v: 5, e: 10, t: 0, r: 0 },
+  'self.report': { v: 1, e: 1, t: 0, r: 0 }, // ±1：agent 自报最容易表演，权重压到最小
+})
+
+// —— 灵魂（design §13）——
+export const SOUL_INJECT_COST = 200 // cost：灵魂块在首步注入里的上限
+export const SOUL_USER_COST = 100 // cost：用户模型那一块
+export const SOUL_IDENTITY_MAX = 120 // cost：注入槽位（不是文件上限）
+export const SOUL_SOUL_MAX = 200
+export const SOUL_DIALOGUE_MAX = 200
+export const SOUL_USER_MAX = 400 // cost：user.md 文件的存储上限
