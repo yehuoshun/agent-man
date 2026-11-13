@@ -1,4 +1,4 @@
-// 开口门：此刻要不要说话。只判不说——不调模型、不生成台词；
+﻿// 开口门：此刻要不要说话。只判不说——不调模型、不生成台词；
 // 该说什么由宿主决定，这里只回一个判决与一句给人看的理由（design §7 的 gate 只有 judge）。
 import { AFFECT_BASE, CUE_MIN_GAP, CUE_MOOD_DIV, QUIET, clock, config, now } from '../core/index.mjs'
 import { snapshot } from '../affect/index.mjs'
@@ -69,7 +69,7 @@ export function judge(homeDir, options = {}) {
 
   if (call.force === true) {
     verdict.say = true
-    verdict.why = '被叫醒的：静默与间隔都不拦'
+    verdict.why = '人要求此刻就说（静默与间隔都不拦）'
     return verdict
   }
   if (quiet) {

@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -454,7 +454,7 @@ test('context cue --why 是"人要求此刻就说"：静默与间隔都不拦', 
   const one = box()
   const got = await cli(one, ['context', 'cue', '--why', '她按了那个键'])
   assert.equal(got.code, 0)
-  assert.match(got.out, /^可以说：被叫醒的：静默与间隔都不拦/)
+  assert.match(got.out, /^可以说：人要求此刻就说（静默与间隔都不拦）/)
   assert.match(got.err, /人要求此刻就说（--why「她按了那个键」）/)
 })
 

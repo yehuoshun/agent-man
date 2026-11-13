@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -251,12 +251,12 @@ test('没什么新事就不打扰：静默与间隔都过了也不硬找话说',
   assert.deepEqual(verdict.reasons, [])
 })
 
-test('被叫醒就照办：静默与间隔都不拦，理由里说明是被叫醒的', async () => {
+test('force 就照办：静默与间隔都不拦，理由里说明是人要求的', async () => {
   const home = newHome()
   await debt.markSaid(home, at(13, 23, 20))
   const verdict = gate.judge(home, { now: at(13, 23, 30), force: true })
   assert.equal(verdict.say, true)
-  assert.match(verdict.why, /叫醒/)
+  assert.match(verdict.why, /人要求此刻就说/)
 })
 
 test('开口判决是只读的：判完一个字都不落盘，写账是另一件事', () => {
