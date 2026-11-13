@@ -6,7 +6,8 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { SECTION_ITEMS_MAX, cost } from '../src/core/index.mjs'
-import { build, never, run, trace } from '../src/digest/index.mjs'
+import { trace as auditTrace } from '../src/audit/index.mjs'
+import { build, run } from '../src/digest/index.mjs'
 import { add, show } from '../src/memory/index.mjs'
 import { appendJsonl, ensure, eventsFile, readJsonl, stateFile } from '../src/store/index.mjs'
 import { renderDigest } from '../src/view/index.mjs'
@@ -310,33 +311,29 @@ test('入口只解释一次时间与预算：字符串时间、NaN 预算一律�
   assert.throws(() => build({ home: '  ', now: NOW }), /home/)
 })
 
-test('账本跨月也能连起来读：trace 只回最近的几行，坏行照样计数', async () => {
+test('账本只有一个读入口：digest 只写，跨月的账要读就走 audit.trace', async () => {
   const home = newHome()
   seedEvent(home, { id: 'e1' })
   const lastMonth = new Date(2026, 9, 31, 23, 0, 0).getTime()
 
   await run({ home, now: lastMonth, render: renderDigest, ...QUIET })
   await run({ home, now: NOW, render: renderDigest, ...QUIET })
-  const kept = trace({ home, now: NOW })
+  // 门面只剩写入口：读账是 audit 的事（design §6 的 audit/trace），两边各读一遍就会各错一遍。
+  const facade = await import('../src/digest/index.mjs')
+  assert.deepEqual(Object.keys(facade).sort(), ['build', 'record', 'retell', 'run'])
 
-  assert.equal(kept.items.length, 2, '跨月只读到一半的账')
-  assert.ok(kept.items[0].at < kept.items[1].at, '账本没按时间排')
-  assert.equal(kept.skipped, 0)
-  // 未来的账不进"读到哪儿"：不然回看会看见还没发生的事。
-  assert.equal(trace({ home, now: lastMonth + 1 }).items.length, 1)
+  const got = auditTrace({ home, now: NOW })
+  assert.equal(got.items.length, 2, '跨月只读到一半的账')
+  assert.ok(got.items[0].at > got.items[1].at, '账本没按时间倒着排')
+  assert.equal(got.skipped, 0)
 })
 
-test('从没落过账才算 never：写过一行就不是，连坏行也算写过', async () => {
+test('"还没巩固过"由 audit.trace 回空数组表达：digest 不再自带 never 开关', async () => {
   const home = newHome()
-  assert.equal(never({ home }), true, '盘上什么都没有却说巩固过')
+  assert.deepEqual(auditTrace({ home, now: NOW }).items, [], '盘上什么都没有却说巩固过')
 
   seedEvent(home, { id: 'e1' })
   await run({ home, now: NOW, render: renderDigest, ...QUIET })
-  assert.equal(never({ home }), false, '已经落过账了还说从没落过')
-
-  // 坏账也是账：读不懂不等于没写过，不然"从没说过话"会盖住一次失败。
-  const broken = newHome()
-  ensure(broken)
-  fs.appendFileSync(stateFile(broken, 'trace', NOW), '{"at":\n', 'utf8')
-  assert.equal(never({ home: broken }), false, '坏行被当成没写过')
+  assert.equal(auditTrace({ home, now: NOW }).items.length, 1, '已经落过账了还说从没落过')
 })
+
