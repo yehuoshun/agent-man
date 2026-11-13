@@ -1,14 +1,10 @@
 name: ci
 
 # 零依赖，所以这里没有 npm install：拉下来直接跑用例，几秒钟。
-# Windows 一定要进矩阵——CRLF、BOM、反斜杠这几类事故全都出在 Windows 上。
-
-# 只改 Markdown 的提交不跑用例：连推「代码 + 补文档」两个提交时，后一个不会
-# 把前一个的 windows 腿掐掉（cancel-in-progress 的代价）。代价：以后若给 main 开
-# 必过检查，纯文档 PR 会一直等一个永远不会出现的 run——届时要么去掉这条，要么改用 paths。
+# Windows 一定要进矩阵——CRLF、BOM、反斜杠这几类事故全都在 Windows 上才出得来。
 on:
   push:
-    branches: [main]
+    branches: [v1, main]
     paths-ignore: ['**/*.md']
   pull_request:
     paths-ignore: ['**/*.md']
@@ -27,9 +23,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # 七个组合一条条写出来，不用 os × node 两个维度：matrix 的 include 会
-      # **合并**到已匹配的组合上（第一次踩：给 ubuntu/node24 加 tz 之后那条腿没了，
-      # pack 和 artifact 一起消失），写成显式列表才不会悄悄少一条腿。
+      # 七个组合一条条写出来，不用 os × node 两个维度：matrix 的 include 会**合并**到已匹配的组合上，
+      # 写成显式列表才不会悄悄少一条腿。
       matrix:
         include:
           - os: ubuntu-latest
@@ -44,8 +39,7 @@ jobs:
             node: '22'
           - os: windows-latest
             node: '24'
-          # 第 7 条腿：西半球时区。用例里凡是要"本地某天"的，只有离开东八区
-          # 才看得出它有没有把 +08:00 写死（§27）。
+          # 第 7 条腿：西半球时区。用例里凡是"本地某天某点"的，只有离开东八区才看得出有没有把 +08:00 写死。
           - os: ubuntu-latest
             node: '24'
             tz: America/New_York
@@ -62,8 +56,7 @@ jobs:
           set -o pipefail
           node --test 2>&1 | tee node-test.log
 
-      # 红了之后才跑：把最后一段输出贴成注解。公开仓库里没登录也能看见红在哪，
-      # 因为日志本身要鉴权（/actions/runs/{id}/logs 是 403）。
+      # 红了才跑：把最后一段输出贴成注解。公开仓库里没登录也能看见红在哪，因为日志本身要鉴权。
       - name: 失败时把输出贴成注解
         if: failure()
         shell: bash
@@ -75,7 +68,7 @@ jobs:
           console.log('::error::' + s)
           "
 
-      # 每次 main 上都留一个能装的 tarball，不用等发版
+      # 每次推上都留一个能装的 tarball，不用等发版
       - name: npm pack
         if: matrix.os == 'ubuntu-latest' && matrix.node == '24' && !matrix.tz
         run: |
