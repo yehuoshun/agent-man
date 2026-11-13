@@ -5,10 +5,11 @@ import { AFFECT_STIM_PER_HOUR, DEFAULT_WINDOW_DAYS, config, dayKey, parseWhen, r
 import * as digest from '../digest/index.mjs'
 import * as intent from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
+import * as mind from '../mind/index.mjs'
 import * as parts from '../parts/index.mjs'
 import * as soulCards from '../soul/index.mjs'
 import { home } from '../store/index.mjs'
-import { item as record, list as records, renderDigest } from '../view/index.mjs'
+import { item as record, list as records, renderDigest, renderScreen } from '../view/index.mjs'
 
 // 天→毫秒只是单位换算，不是 §10 的常数：30 天窗口的 30 来自 core。
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -47,8 +48,17 @@ export const TABLE = new Map([
   ['plan done', guard(planDone)],
   ['plan ls', guard(planLs)],
 
-  // 处境与摘要。cue、rule、self 要等 mind 与 rules 两条车道合并，先只留一条诚实的出口：
-  // 说不出口"还没接上"，比打一句看着像真的的空屏好。
+  // 规矩与自我块也住语义层（design §7）：规矩只追加，替代靠新条点名 supersedes；
+  // 自我块是一份纯文本，写就是整份覆盖——所以 set 收整份，没有按块替换。
+  ['rule', guard(ruleLs)],
+  ['rule add', guard(ruleAdd)],
+  ['rule ls', guard(ruleLs)],
+  ['self', guard(selfShow)],
+  ['self show', guard(selfShow)],
+  ['self set', guard(selfSet)],
+  ['self append', guard(selfAppend)],
+
+  // 处境与摘要。处境屏 = mind 的快照 + view 的排版；cue 只判不说，判决与账本在 mind 里。
   ['context', guard(contextShow)],
   ['context show', guard(contextShow)],
   ['context digest', guard(contextDigest)],
@@ -119,7 +129,7 @@ export async function plugin(name, args, ctx) {
 // doctor 分两半：七项只读自检住 src/audit/doctor.mjs（它绝不写盘），渲染与退出码在这里。
 // 不合格是"这份数据还不能用"，不是"命令打错了"——所以退 1，不退 2（design §6）。
 export function doctor(ctx) {
-  const dir = home(ctx.env)
+  const dir = homeOf(ctx)
   const result = audit.doctor({ home: dir, ctx })
 
   ctx.out('agent-man doctor\n')
@@ -226,6 +236,17 @@ function bound(ctx, text, what) {
   return SPAN.test(String(text)) ? ctx.now - (ms - ctx.now) : ms
 }
 
+// `--min-gap 6h` 要的是一段时长，不是某一刻：parseWhen 的 span 从 0 起算正好是毫秒数。
+// 只认 6h / 90m / 2d 这种写法——日期混进来会变成一个几十年的间隔，那种"门槛"没人想表达。
+function gapOf(text) {
+  if (text === undefined) return undefined
+  const raw = String(text).trim()
+  if (!SPAN.test(raw)) throw new Error(`--min-gap 要给一段时长：「${text}」（可用 6h / 90m / 2d）`)
+  const ms = parseWhen(raw, 0)
+  if (!Number.isFinite(ms) || ms < 0) throw new Error(`--min-gap 认不出时长：「${text}」`)
+  return ms
+}
+
 function impOf(text) {
   if (text === undefined) return 0
   const n = Number(text)
@@ -236,6 +257,12 @@ function impOf(text) {
 function cuesOf(text) {
   if (text === undefined) return []
   return String(text).split(',').map((one) => one.trim()).filter(Boolean)
+}
+
+// 一串 id（`--supersedes r-1,r-2`）：逗号或空格都认，空串等于没给。
+function idsOf(text) {
+  if (text === undefined) return []
+  return String(text).split(/[\s,]+/).map((one) => one.trim()).filter(Boolean)
 }
 
 function srcOf(text) {
@@ -270,6 +297,16 @@ function cutBy(items, limit) {
   return { items: items.slice(0, limit), cut: items.length - limit }
 }
 
+// 家目录只有一个来源（AGENT_MAN_HOME → ~/.agent-man）：每个 handler 都重写一遍只会分叉。
+function homeOf(ctx) {
+  return home(ctx.env)
+}
+
+// --json 的出口也只有一个：一行、不缩进、别的什么都不许混进 stdout（design §6）。
+function jsonOut(ctx, value) {
+  ctx.out(`${JSON.stringify(value)}\n`)
+}
+
 // 坏行不删、也不装作没发生：数出来，用 "! " 说一句（design §3）。
 function noisy(ctx, count, what = '记录') {
   if (count > 0) ctx.err(`! 跳过 ${count} 行读不懂的${what}（坏行没删，只是没算进来）\n`)
@@ -278,7 +315,7 @@ function noisy(ctx, count, what = '记录') {
 // 配置只从 core/config 的 load() 拿，且只在真要用的命令里读：坏配置当场退 2，
 // 不悄悄退回默认值继续跑（design §15）。
 function cfgOf(ctx) {
-  const dir = home(ctx.env)
+  const dir = homeOf(ctx)
   return config.load({ env: ctx.env, homeDir: dir, now: ctx.now, warn: (one) => ctx.err(`! ${one}\n`) })
 }
 
@@ -298,6 +335,7 @@ async function eventAdd(ctx) {
     throw new Error('用法：agent-man event add "<发生了什么>" [--imp 0-3] [--cue 她,加班] ' +
       '[--src user|tool:名字|self]')
   }
+  const dir = homeOf(ctx)
   const entry = {
     text,
     imp: impOf(arg(flags, 'imp')),
@@ -305,18 +343,30 @@ async function eventAdd(ctx) {
     src: srcOf(arg(flags, 'src')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   }
-  const add = memory.eventAdd
-  if (typeof add !== 'function') {
-    throw new Error('event add 还没接上：memory 门面的 eventAdd 在规则车道合并时才会到位')
-  }
-  const got = await add(home(ctx.env), { ...entry, now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = await memory.eventAdd(entry, { home: dir, now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const cues = entry.cues.length > 0 ? `，cue ${entry.cues.join('、')}` : ''
     ctx.out(`已记下 ${got.id}（imp ${entry.imp}${cues}）\n`)
   }
-  noisy(ctx, got.skipped ?? 0)
+  // 欠账是"该巩固了"的唯一计数器（§14.9）：情景已经落盘，这一笔没记上也不许让写入失败，
+  // 但也不能悄悄丢掉——门槛到不了，cue 就只会按空闲时间说话。
+  const owed = await bumpDebt(dir, got, entry)
+  if (owed) ctx.err(`! 欠账没记上：${owed}\n`)
   return 0
+}
+
+// 记账：imp 累进 unconsolidated，件数累进 unreflected。失败只回一句 why，不抛。
+async function bumpDebt(dir, got, entry) {
+  try {
+    const bumped = await mind.debt.bump(dir, {
+      at: Number.isFinite(got.at) ? got.at : entry.at,
+      imp: Number.isFinite(got.record?.imp) ? got.record.imp : entry.imp,
+    })
+    return bumped.saved ? null : bumped.why
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e)
+  }
 }
 
 // 事件只按窗口读（design §6）：默认 30 天，--all 才连更早的一起看。
@@ -324,7 +374,7 @@ function eventsOf(ctx, flags, query) {
   const all = on(flags, 'all')
   const since = bound(ctx, arg(flags, 'since'), 'since')
   const from = since ?? (all ? undefined : ctx.now - DEFAULT_WINDOW_DAYS * DAY_MS)
-  const got = memory.events(home(ctx.env), { from, to: bound(ctx, arg(flags, 'until'), 'until') })
+  const got = memory.events(homeOf(ctx), { from, to: bound(ctx, arg(flags, 'until'), 'until') })
   // 新的事先说；同一毫秒保留文件里的先后（不另编序号）。
   let items = got.items.slice().reverse()
   if (query) {
@@ -357,7 +407,7 @@ function eventFind(ctx) {
 }
 
 function sayEvents(ctx, flags, got) {
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got.items)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got.items)
   else ctx.out(`${rowsOf(ctx, got.items, 'event', (one, c) => ({
     id: one.id,
     when: rel(one.at, c.now),
@@ -389,9 +439,9 @@ async function memoryAdd(ctx) {
     imp: impOf(arg(flags, 'imp')),
     evidence: evidenceOf(arg(flags, 'from')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
-  }, { home: home(ctx.env), now: ctx.now })
+  }, { home: homeOf(ctx), now: ctx.now })
 
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else if (got.status === 'same') ctx.out(`没变：${got.id} 已经是这条（同槽位同 imp）\n`)
   else {
     const replaced = got.replaced && got.replaced.length > 0 ? `（取代 ${got.replaced.join('、')}）` : ''
@@ -409,8 +459,7 @@ function evidenceOf(text) {
   }
   const raw = String(text).trim()
   if (raw.includes('..')) {
-    throw new Error('--from 还只认事件 id 列表：日期区间（2026-11-01..2026-11-03）要等 memory ' +
-      '门面支持，先用 id')
+    throw new Error('证据要写事件 id（--from 区间这一版不支持）：先 event ls 找 id')
   }
   const ids = raw.split(/[\s,]+/).filter(Boolean)
   if (ids.length === 0) throw new Error('--from 是空的：证据至少要有一条事件 id')
@@ -429,7 +478,7 @@ function memoryLs(ctx) {
     since: bound(ctx, arg(flags, 'since'), 'since'),
     until: bound(ctx, arg(flags, 'until'), 'until'),
     key: arg(flags, 'key'),
-  }, { home: home(ctx.env), now: ctx.now })
+  }, { home: homeOf(ctx), now: ctx.now })
   return sayMemory(ctx, flags, got)
 }
 
@@ -446,12 +495,12 @@ function memoryFind(ctx) {
     since: bound(ctx, arg(flags, 'since'), 'since'),
     until: bound(ctx, arg(flags, 'until'), 'until'),
     key: arg(flags, 'key'),
-  }, { home: home(ctx.env), now: ctx.now })
+  }, { home: homeOf(ctx), now: ctx.now })
   return sayMemory(ctx, flags, got)
 }
 
 function sayMemory(ctx, flags, got) {
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     ctx.out(`${rowsOf(ctx, got.items, 'memory', (one, c) => ({
       id: one.id,
@@ -469,7 +518,7 @@ function memoryShow(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const wanted = words.join(' ').trim()
   if (!wanted) throw new Error('用法：agent-man memory show <id|槽位>')
-  const got = memory.show(wanted, { home: home(ctx.env), now: ctx.now })
+  const got = memory.show(wanted, { home: homeOf(ctx), now: ctx.now })
   if (on(flags, 'json')) {
     ctx.out(`${JSON.stringify(got)}\n`)
     noisy(ctx, got.skipped)
@@ -494,16 +543,19 @@ function memoryShow(ctx) {
 }
 
 async function memoryRevise(ctx) {
-  const { words, flags } = split(ctx.rest, { names: ['imp'], bools: ['json'] })
+  const { words, flags } = split(ctx.rest, { names: ['imp', 'from'], bools: ['json'] })
   const [id, ...rest] = words
   const fact = rest.join(' ').trim()
+  if (arg(flags, 'from') !== undefined) {
+    throw new Error('--from 这一版没接：memory revise 只认新说法与 --imp（证据跟着记忆走，不重写）')
+  }
   if (!id || !fact) {
-    throw new Error('用法：agent-man memory revise <id> "<新事实>" [--imp 0-3]（--from 还没接）')
+    throw new Error('用法：agent-man memory revise <id> "<新事实>" [--imp 0-3]')
   }
   const patch = { fact }
   if (arg(flags, 'imp') !== undefined) patch.imp = impOf(arg(flags, 'imp'))
-  const got = await memory.revise(id, patch, { home: home(ctx.env), now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = await memory.revise(id, patch, { home: homeOf(ctx), now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else ctx.out(`已改：${got.id} 换成新的说法（旧版本 ${got.from} 留着，没被抹掉）\n`)
   noisy(ctx, got.skipped ?? 0)
   return 0
@@ -520,13 +572,13 @@ async function noteAdd(ctx) {
   if (!text) {
     throw new Error('用法：agent-man note add "<要留的话>" --trigger "<什么时候>" [--ttl 7d]')
   }
-  const one = await intent.notes.add(home(ctx.env), {
+  const one = await intent.notes.add(homeOf(ctx), {
     text,
     trigger: arg(flags, 'trigger'),
     ttl: arg(flags, 'ttl'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(one)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已留下 ${one.id}（${one.trigger ? `等：${one.trigger}` : '没有触发条件'}）\n`)
   return 0
 }
@@ -534,8 +586,8 @@ async function noteAdd(ctx) {
 function noteLs(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man note ls')
-  const got = intent.notes.list(home(ctx.env), { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = intent.notes.list(homeOf(ctx), { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     ctx.out(`${rowsOf(ctx, got.items, 'note', (one, c) => ({
       id: one.id,
@@ -555,8 +607,8 @@ function noteTake(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const id = words.join(' ').trim()
   if (!id) throw new Error('用法：agent-man note take <id>')
-  const one = intent.notes.take(home(ctx.env), id, { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(one)}\n`)
+  const one = intent.notes.take(homeOf(ctx), id, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, one)
   else {
     ctx.out(`已递出 ${record({ id: one.id, when: rel(one.at, ctx.now), text: one.text,
       trigger: one.trigger }, 'note')}\n`)
@@ -570,8 +622,8 @@ async function planAdd(ctx) {
   if (!text) throw new Error('用法：agent-man plan add "<要做的事>" --at "<什么时候>"')
   const due = instant(ctx, arg(flags, 'at'), 'at')
   if (due === undefined) throw new Error('plan add 要给 --at：什么时候到期（plan add "体检" --at 明天 9:00）')
-  const one = await intent.plans.add(home(ctx.env), { text, due, at: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(one)}\n`)
+  const one = await intent.plans.add(homeOf(ctx), { text, due, at: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已记下 ${one.id}（${rel(one.due, ctx.now)}到期）\n`)
   return 0
 }
@@ -579,8 +631,8 @@ async function planAdd(ctx) {
 function planLs(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man plan ls')
-  const got = intent.plans.list(home(ctx.env), { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = intent.plans.list(homeOf(ctx), { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     ctx.out(`${rowsOf(ctx, got.items, 'plan', (one, c) => ({
       id: one.id,
@@ -599,24 +651,158 @@ function planDone(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const id = words.join(' ').trim()
   if (!id) throw new Error('用法：agent-man plan done <id>')
-  const one = intent.plans.done(home(ctx.env), id, { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(one)}\n`)
+  const one = intent.plans.done(homeOf(ctx), id, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已打勾 ${record({ id: one.id, when: rel(one.due, ctx.now), text: one.text }, 'plan')}\n`)
+  return 0
+}
+
+// ── 规矩与自我块（design §4/§6） ───────────────────────────────────────────
+
+// 规矩：正文与理由都必填；要替代谁就点名 supersedes，旧行逐字不动、只是不再生效。
+async function ruleAdd(ctx) {
+  const { words, flags } = split(ctx.rest, {
+    names: ['why', 'supersedes'],
+    bools: ['json'],
+  })
+  const text = words.join(' ').trim()
+  if (!text) {
+    throw new Error('用法：agent-man rule add "<规矩>" --why "<为什么>" [--supersedes r-…]')
+  }
+  const got = await memory.addRule(homeOf(ctx), {
+    text,
+    why: arg(flags, 'why'),
+    supersedes: idsOf(arg(flags, 'supersedes')),
+    at: ctx.now,
+  })
+  if (on(flags, 'json')) jsonOut(ctx, got)
+  else {
+    ctx.out(`已立规矩 ${got.id}（现在 ${got.live}/${got.limit} 条在生效）\n`)
+    if (got.superseded.length > 0) {
+      ctx.err(`! 旧的 ${got.superseded.join('、')} 已被取代（旧行没删，只是不再生效）\n`)
+    }
+  }
+  noisy(ctx, got.skipped ?? 0)
+  return 0
+}
+
+function ruleLs(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['all', 'json'] })
+  noWords(words, 'agent-man rule ls [--all] [--json]')
+  const got = memory.listRules(homeOf(ctx), { all: on(flags, 'all'), now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
+  else {
+    ctx.out(`${rowsOf(ctx, got.items, 'rule', (one, c) => ({
+      id: one.id,
+      when: rel(one.at, c.now),
+      text: one.text,
+    }))}\n`)
+  }
+  if (got.over > 0) {
+    ctx.err(`! 同时生效 ${got.live} 条，超过上限 ${got.limit}：先点名替代一条\n`)
+  }
+  noisy(ctx, got.skipped)
+  return 0
+}
+
+// 自我块：一份纯文本，不分块也不做版本（design §4），所以 set 收的是整份文本。
+function selfShow(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  noWords(words, 'agent-man self show [--json]（裸 self 等同此命令）')
+  const got = memory.readSelf(homeOf(ctx))
+  if (on(flags, 'json')) jsonOut(ctx, got)
+  else if (got.text.trim() === '') {
+    ctx.out('（还没写过自我块：agent-man self append "<一句话>" 记下此刻，self set "<整份>" 整份覆盖）\n')
+  } else ctx.out(got.text.endsWith('\n') ? got.text : `${got.text}\n`)
+  if (got.over) ctx.err(`! 自我块 ${tenth(got.cost)}/${got.limit}，超预算了：注入时放不下（design §10）\n`)
+  return 0
+}
+
+async function selfSet(ctx) {
+  const { words, flags } = split(ctx.rest, { names: ['id'], bools: ['json'] })
+  if (arg(flags, 'id') !== undefined) {
+    throw new Error('--id 这一版没接：自我块是整份覆盖（setSelf），没有按块替换（design §4：不分块）')
+  }
+  const text = words.join(' ').trim()
+  if (!text) throw new Error('用法：agent-man self set "<整份文本>"（整份覆盖，旧文本不保留）')
+  const got = await memory.setSelf(homeOf(ctx), text, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
+  else ctx.out(`已覆盖自我块（${tenth(got.cost)}/${got.limit} cost，原来 ${tenth(got.was)}）\n`)
+  return 0
+}
+
+async function selfAppend(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const text = words.join(' ').trim()
+  if (!text) throw new Error('用法：agent-man self append "<一段话>"（段首自动补今天的日期）')
+  const got = await memory.appendSelf(homeOf(ctx), text, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
+  else {
+    const head = got.header ? `（新起 ${got.header.replace(/^## /, '')} 这一段）` : '（接在今天这段后面）'
+    ctx.out(`已记进自我块${head}：${tenth(got.cost)}/${got.limit} cost\n`)
+  }
   return 0
 }
 
 // ── 处境与摘要 ─────────────────────────────────────────────────────────────
 
-// 处境屏要的是 mind/situation 的产物，那条车道还没合并。这里不留占位假屏：
-// 说清楚"还没接上"，退出码 2，别让人以为今天真的什么都没发生。
+// 处境屏（design §6：裸 `agent-man` 就是它）。mind 算"此刻站在哪一段日子里"，view 排成一屏，
+// 这里只接线——不在这里挑哪条上屏，也不在这里算分数。
 function contextShow(ctx) {
-  ctx.err('! 处境还没接上：mind 车道在合并中\n')
-  return 2
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  noWords(words, 'agent-man context show [--json]（裸 agent-man 等同此命令）')
+  const scene = mind.situation(homeOf(ctx), { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, scene)
+  else ctx.out(`${renderScreen(scene)}\n`)
+  screenNotes(ctx, scene)
+  return 0
 }
 
-function contextCue(ctx) {
-  ctx.err('! cue 还没接上：mind 车道的开口判决在合并中\n')
-  return 2
+// 屏外的话：坏行、装不下、配置不对——凡是不在正文里的，一律走 stderr 的 "! "（design §6）。
+function screenNotes(ctx, scene) {
+  for (const one of scene.warnings ?? []) {
+    ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
+  }
+  for (const one of scene.dropped ?? []) ctx.err(`! ${one.section} ${one.why}\n`)
+  if (scene.over) ctx.err(`! 一屏放不下：用了 ${tenth(scene.used)}/${scene.budget}\n`)
+  const bad = scene.bad ?? {}
+  noisy(ctx, Object.values(bad).reduce((sum, n) => sum + (Number(n) || 0), 0))
+}
+
+// 开口门（design §6/§14.5）：只判不说，台词由宿主决定。
+// 说与不说都留账（§14.13）——但 `--peek` 是纯预览：不记账、也不推进"上次开口"，
+// 否则看一眼就把唯一一次机会用掉了。`--why` 是"人明确要求此刻就说"，不是替判决编理由。
+async function contextCue(ctx) {
+  const { words, flags } = split(ctx.rest, {
+    names: ['min-gap', 'why'],
+    bools: ['json', 'peek'],
+  })
+  noWords(words, 'agent-man context cue [--min-gap 6h] [--peek] [--why "<理由>"] [--json]')
+  const dir = homeOf(ctx)
+  const said = arg(flags, 'why')
+  const verdict = mind.gate.judge(dir, {
+    now: ctx.now,
+    minGap: gapOf(arg(flags, 'min-gap')),
+    force: said !== undefined,
+  })
+  if (on(flags, 'json')) {
+    ctx.out(`${JSON.stringify(verdict)}\n`)
+  } else if (verdict.say) {
+    ctx.out(`可以说：${verdict.why}\n`)
+  } else {
+    ctx.err(`! 这会儿不说：${verdict.why}\n`)
+  }
+  if (said !== undefined) {
+    ctx.err(`! 人要求此刻就说（--why「${said}」）：静默与最小间隔都没拦\n`)
+  }
+  const bad = verdict.bad ?? {}
+  noisy(ctx, Object.values(bad).reduce((sum, n) => sum + (Number(n) || 0), 0))
+  if (on(flags, 'peek')) {
+    ctx.err('! peek：这次不记账，也没推进"上次开口"\n')
+  } else {
+    await mind.gate.commit(dir, verdict)
+  }
+  return verdict.say ? 0 : 1
 }
 
 async function contextDigest(ctx) {
@@ -627,11 +813,11 @@ async function contextDigest(ctx) {
   noWords(words, 'agent-man context digest [--budget 1200] [--due] [--out 文件] [--json] [--dry-run]')
   const dry = on(flags, 'dry-run')
   if (on(flags, 'due')) {
-    // design §6 有这个开关，digest.build 还不收"只算到期项"的参数：接受，但把话说清楚。
-    ctx.err('! --due 还没接：digest.build 现在每次都算全部候选，这一个开关暂时不改结果\n')
+    // design §6 有这个开关，digest.build 还不收"只算到期项"：收下却不生效比报错更害人。
+    throw new Error('--due 这一版还没接：digest.build 现在每次都算全部候选，不收到期过滤')
   }
   const got = await digest.run({
-    home: home(ctx.env),
+    home: homeOf(ctx),
     now: ctx.now,
     budget: arg(flags, 'budget') === undefined ? undefined : numberOr(arg(flags, 'budget'), 'budget'),
     out: arg(flags, 'out'),
@@ -685,8 +871,8 @@ async function contextSense(ctx) {
 function auditTrace(ctx) {
   const { words, flags } = split(ctx.rest, { names: ['limit'], bools: ['json'] })
   noWords(words, 'agent-man audit trace [--limit N]')
-  const got = audit.trace({ home: home(ctx.env), now: ctx.now, limit: limitOf(flags) })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = audit.trace({ home: homeOf(ctx), now: ctx.now, limit: limitOf(flags) })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     for (const one of got.items) {
       const reasons = one.dropped.map((two) => two.reason).filter(Boolean)
@@ -714,12 +900,12 @@ function auditTimeline(ctx) {
   })
   noWords(words, 'agent-man audit timeline [--limit N] [--all]')
   const got = audit.timeline({
-    home: home(ctx.env),
+    home: homeOf(ctx),
     now: ctx.now,
     limit: limitOf(flags),
     all: on(flags, 'all'),
   })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else if (got.items.length === 0) {
     ctx.out(`（${got.all ? '' : `最近 ${DEFAULT_WINDOW_DAYS} 天`}什么都没发生；--all 看全部）\n`)
   } else {
@@ -738,8 +924,8 @@ function auditTimeline(ctx) {
 function auditOrphan(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man audit orphan')
-  const got = audit.orphan({ home: home(ctx.env) })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = audit.orphan({ home: homeOf(ctx) })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else if (got.items.length === 0) ctx.out('ok 没有孤立结论：每条结论的证据都还在\n')
   else {
     ctx.out(`${rowsOf(ctx, got.items, 'memory', (one, c) => ({
@@ -791,8 +977,8 @@ function affectLine(snapshot, visible) {
 function affectShow(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json', 'no-mood'] })
   noWords(words, 'agent-man affect show [--json] [--no-mood]')
-  const snapshot = affect.snapshot(home(ctx.env), { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(snapshot)}\n`)
+  const snapshot = affect.snapshot(homeOf(ctx), { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, snapshot)
   else ctx.out(`${affectLine(snapshot, moodVisible(ctx, flags))}\n`)
   noisy(ctx, snapshot.skipped, '情绪日志')
   return 0
@@ -807,14 +993,14 @@ async function affectSet(ctx) {
   if (label === undefined || value === undefined || words.length > 2) {
     throw new Error('用法：agent-man affect set <愉悦|精力|信任|尊重> <数值> --why "<为什么>" [--for 2h]')
   }
-  const got = await affect.set(home(ctx.env), {
+  const got = await affect.set(homeOf(ctx), {
     axis: axisOf(label),
     value: Number(value),
     why: arg(flags, 'why'),
     until: instant(ctx, arg(flags, 'until') ?? arg(flags, 'for'), 'for'),
     at: ctx.now,
   })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else ctx.out(`已记下 ${got.item.id}  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
   landed(ctx, got)
   return 0
@@ -823,8 +1009,8 @@ async function affectSet(ctx) {
 async function affectClear(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man affect clear')
-  const got = await affect.clear(home(ctx.env), { at: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  const got = await affect.clear(homeOf(ctx), { at: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     ctx.out(`已撤掉手动覆盖  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
   }
@@ -836,8 +1022,8 @@ async function affectClear(ctx) {
 function affectWhy(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json', 'no-mood'] })
   noWords(words, 'agent-man affect why [--json] [--no-mood]')
-  const snapshot = affect.snapshot(home(ctx.env), { now: ctx.now })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(snapshot)}\n`)
+  const snapshot = affect.snapshot(homeOf(ctx), { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, snapshot)
   else {
     ctx.out(`${affectLine(snapshot, moodVisible(ctx, flags))}\n`)
     for (const one of snapshot.why) ctx.out(`  ${one}\n`)
@@ -858,14 +1044,15 @@ async function affectStim(ctx) {
   if (!kind) throw new Error(`用法：agent-man affect stim <kind> --why "…"（kind 只认 ${affect.KINDS.join(' / ')}）`)
   if (rest.length > 0) throw new Error(`不认识的用法：「${rest.join(' ')}」（stim 只收一个 kind）`)
   if (arg(flags, 'imp') !== undefined) {
-    ctx.err('! --imp 对刺激不起作用：权重由 kind 决定（design §14.7），这里只认 --why\n')
+    // 权重由 kind 定（§14.7）：收下 --imp 却不改权重，等于让人以为调过了。
+    throw new Error('刺激的权重由 kind 定，--imp 不收（见 design §14.7）')
   }
-  const got = await affect.stim(home(ctx.env), {
+  const got = await affect.stim(homeOf(ctx), {
     kind,
     why: arg(flags, 'why'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   })
-  if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+  if (on(flags, 'json')) jsonOut(ctx, got)
   else ctx.out(`已记下 ${got.item.id}  ${kind}（权重 ${got.weight}）\n`)
   if (got.ignored > 0) {
     ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）\n`)
@@ -882,7 +1069,7 @@ async function soul(ctx) {
   const args = ctx.argv.slice(1)
   const sub = args[0]
   const argOne = args[1]
-  const dir = home(ctx.env)
+  const dir = homeOf(ctx)
   try {
     if (sub === 'ls') return soulLs(ctx, dir)
     if (sub === 'use') return await soulUse(ctx, dir, argOne)

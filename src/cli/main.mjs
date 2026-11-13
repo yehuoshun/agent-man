@@ -3,7 +3,7 @@
 import { plugin, resolve } from './registry.mjs'
 
 // 帮助只列**已经接上**的命令：写了却打不通的用法，比不写更误导人。
-// rule / self / context cue 要等 mind、rules 两条车道合并，接上那天再往这里加一行。
+// 用例 `--help 列出的每一项都能被 registry 解析到` 锁着这一点。
 const USAGE = [
   'agent-man —— 会话之外的那一层：记忆、处境、该不该开口',
   '',
@@ -12,10 +12,13 @@ const USAGE = [
   '  agent-man event  ls | find [--since …] [--until …] [--all] [--limit N]',
   '  agent-man memory add "<事实>" --key <槽位> --from <事件id,…> [--imp 0-3]',
   '  agent-man memory ls | find | show <id|槽位> | revise <id> "<新事实>"',
+  '  agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls',
   '  agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>',
   '  agent-man plan   add "<事>" --at "<什么时候>"  ·  plan done <id>  ·  plan ls',
+  '  agent-man self   show | set "<整份文本>" | append "<一段话>"',
   '  agent-man affect show | set <标签|数值> [--for 2h] [--why "…"] | clear | why | stim <kind>',
-  '  agent-man context show | digest [--budget 1200] [--due] [--out 文件] | sense',
+  '  agent-man context show | digest [--budget 1200] [--out 文件] | sense',
+  '  agent-man context cue [--min-gap 6h] [--peek] [--why "…"]   此刻要不要开口（不说退 1）',
   '  agent-man audit  trace [--limit N] | timeline [--limit N] [--all] | orphan',
   '  agent-man soul   ls | use <名字> | show | check | import <卡文件>',
   '  agent-man config  path | show | get <a.b> | set <a.b> <值> | reset [<a.b>]',
@@ -23,6 +26,7 @@ const USAGE = [
   '  agent-man <其它名字> …            PATH 上的 agent-man-<名字>（插件直通）',
   '',
   '读命令都支持 --json；stdout 只放结果，stderr 只放 "! " 开头的警告。',
+  '还没接的开关：context digest --due、affect stim --imp——给了会退 2，不装作生效。',
   '退出码：0 有话/成功 · 1 不说或数据不合格 · 2 用法或数据错。',
 ]
 
