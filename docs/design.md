@@ -716,7 +716,7 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 
 ### 15.4 两条结构用例（防散落）
 
-- `process.env` 只准出现在 `src/core/config.mjs` 与 `bin/agent-man.mjs`；出现在别处即红；
+- `process.env` 只准出现在 `src/core/config.mjs` 与 `src/cli/main.mjs`；出现在别处即红（连注释里的字面量也算——那条用例是纯文本扫描）；
 - 字符串 `AGENT_MAN_` 同理；`config.json` / `meta.json` 的字面路径只准出现在 `store/paths.mjs`。
 
 再加一条集成用例：改 `inject.total` 一处，`mind`（处境屏）、`digest`、`host` 三处读到的预算必须同时变——
@@ -724,5 +724,23 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 
 ### 15.5 迁移
 
-`version` 不匹配时：能自动补的键补上并写回（留一条 `! 已补默认值`），改名的键报 `! deprecated: a.b → c.d` 并继续用新名；
-**删掉的键不静默忽略**，报出来。整个过程不需要用户读文档。
+`version` 不匹配时：**只回落默认，不自动写回**——读命令不许有副作用（否则 `config get` 都会改盘上的文件，
+而改盘这事没人授权过）。缺的键按默认值参与计算，并在输出里报一条 `! 配置缺 a.b，按默认值…`；
+认不出的键**不静默忽略**，原样留着并报出来（可能是新版本写的，也可能是拼错了）。整个过程不需要用户读文档。
+
+## 16. 1.0 的已知限制
+
+这些不是"以后再说"，是**现在已经知道、并且选择现在不做**的（理由见 `docs/decisions.md`）：
+
+| 限制 | 现状 | 什么时候需要动 |
+|---|---|---|
+| DSH 工具注册的 API 形状 | 按 `ctx.get('tools')?.register?.(…)` 写，拿不到只发一条 `! ` | 第一次在 DSH 实机上跑宿主层时确认 |
+| 宿主层只做过结构用例 | `apply` 在假 ctx 上跑过；真会话里的首步注入没验 | 同上 |
+| 证据区间 `--from 日期..日期` | 明确退 2，只认事件 id | 有人真的按区间给证据时，让记忆层自己解析 |
+| `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
+| 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
+| `appendSelf` 的日界 | 用默认 00:00，没接 `clock.dayStart`；00:00–04:00 之间写会归到前一天 | 有人凌晨写自我块时 |
+| `audit/doctor` 的部分读路径 | `timeline` 直接读 `rules.jsonl`、`checkSelf` 直接读 `self.md`，绕过了门面 | 改规矩或自我块格式时 |
+| 测试残留 | 各用例 `mkdtemp` 后不清理，`os.tmpdir` 里会攒 `agent-man-*` 目录 | 嫌吵时加一个统一的清理钩子 |
+| 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |
+
