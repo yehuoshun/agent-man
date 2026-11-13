@@ -7,6 +7,7 @@ const USAGE = [
   '用法：',
   '  agent-man doctor     数据目录、schema 与运行环境能不能用',
   '  agent-man config     配置在哪、现在是什么、怎么改（path|show|get|set|reset）',
+  '  agent-man soul       灵魂卡：ls | use <名字> | show [名字] | check [名字] | import <卡文件>',
   '  agent-man --help     这一屏',
   '',
   '还没接上（M1–M5）：event / memory / rule / note / plan / self / context / audit',
