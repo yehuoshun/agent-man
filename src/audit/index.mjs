@@ -3,3 +3,4 @@
 // 这里没有任何写入口（AGENTS 二·2）。
 export { trace } from './trace.mjs'
 export { timeline } from './timeline.mjs'
+export { orphan } from './orphan.mjs'

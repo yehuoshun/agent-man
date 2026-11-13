@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { timeline, trace } from '../src/audit/index.mjs'
+import { orphan, timeline, trace } from '../src/audit/index.mjs'
 import { DEFAULT_WINDOW_DAYS, RULE_LIMIT, SELF_MAX, cost } from '../src/core/index.mjs'
 import { notes, plans } from '../src/intent/index.mjs'
 import { add as addMemory } from '../src/memory/index.mjs'
@@ -218,4 +218,37 @@ test('timeline 不落盘：跑完数据目录的文件数与字节都不变', as
 test('timeline 没有 home 就报错，不去读进程的当前目录', async () => {
   assert.throws(() => timeline({ now: NOW }), /timeline 需要一个数据目录/)
   assert.throws(() => timeline({ home: '   ', now: NOW }), /timeline 需要一个数据目录/)
+})
+test('证据指向不存在的事件：orphan 把结论与缺的 id 一起列出来', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1', 'e-ghost'] } },
+      { home, now: NOW },
+    )
+    const got = orphan({ home })
+    assert.equal(got.items.length, 1)
+    assert.equal(got.items[0].key, '她怕冷')
+    assert.deepEqual(got.items[0].missing, ['e-ghost'])
+    assert.equal(got.skipped, 0)
+  })
+})
+test('orphan 只报不改：跑完 memory.jsonl 与事件分片一个字节都不变', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    // 造一条坏证据的结论：事件那边没了一半（分片丢了 / 只写了一半），结论还指着它。
+    // 不能靠 add 造——证据一条都解析不到时 add 会拒写（design §4 的闸），所以先用真事件
+    // 写一条合法的，再追加同 id 的新版本把证据换掉（只追加、后写赢，正是收口那一套）。
+    const made = await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1'] } },
+      { home, now: NOW },
+    )
+    appendJsonl(path.join(home, 'memory.jsonl'), { ...made.record, evidence: { ids: ['e-1', 'e-ghost'] } })
+    const before = snapshot(home)
+    assert.equal(orphan({ home }).items.length, 1)
+    assert.deepEqual(snapshot(home), before)
+  })
+})
+test('orphan 没有 home 就报错，不猜一个默认目录', async () => {
+  assert.throws(() => orphan({}), /orphan 需要一个数据目录/)
 })
