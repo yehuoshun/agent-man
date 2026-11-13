@@ -6,3 +6,4 @@ export {
   merge, mergeOffset, mergeStim,
 } from './decay.mjs'
 export { MOODS, deadband, moodOf, persistent, respectBand, transient } from './label.mjs'
+export { KINDS, list, record, weightOf } from './stim.mjs'
