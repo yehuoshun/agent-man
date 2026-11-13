@@ -6,9 +6,8 @@ import {
   DEFAULT_WINDOW_DAYS, DIGEST_BUDGET, SECTION_ITEMS_MAX, clock, cost, dayKey,
   now as coreNow, rel,
 } from '../core/index.mjs'
-import { ls as memoryLs } from '../memory/index.mjs'
+import { events, ls as memoryLs } from '../memory/index.mjs'
 import { atOf, fit, idOf, rank, textOf } from '../recall/index.mjs'
-import { listShards, readJsonl, validate } from '../store/index.mjs'
 
 // 天→毫秒只是单位换算，不是 §10 的常数：30 天这个数来自 core（design §5）。
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -219,25 +218,11 @@ function warnOf(sceneBad, factBad) {
     + '一行坏掉不该让整份记忆读不出来，修好它之前这几条的账是缺的']
 }
 
-// 情景按日分片（design §3）：窗口内一天一个文件。分片名只做粗筛，
-// 精确到毫秒的窗口在这里再判一次——两边都做一遍才叫省事，不是越权。
+// 情景与结论都只走 memory 门面：它替我们处理"按日分片跨天合读"、"同 id 多行取最新"、
+// "失效版本不出现"与坏行计数。digest 自己 listShards 一遍，等于把分片规则抄第二份。
 function readEvents(dir, at, from) {
-  const items = []
-  let skipped = 0
-  for (const file of listShards(dir, 'events', { from, to: at })) {
-    const got = readJsonl(file)
-    skipped += got.bad
-    for (const rec of got.items) {
-      if (!validate('events', rec).ok) {
-        skipped += 1
-        continue
-      }
-      // 未来的情景不进"最近"：还没发生的事不是情景记忆。
-      if (rec.at < from || rec.at > at) continue
-      items.push(rec)
-    }
-  }
-  return { items, skipped }
+  const got = events(dir, { from, to: at })
+  return { items: got.items, skipped: got.bad ?? 0 }
 }
 
 // 结论只走 memory 门面：它替我们处理"同 id 多行取最新"、"失效版本不出现"与坏行计数。

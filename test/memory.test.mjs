@@ -5,7 +5,18 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { MEMORY_MAX, cost } from '../src/core/index.mjs'
-import { add, conflict, find, list, ls, orphan, revise, show } from '../src/memory/index.mjs'
+import {
+  add,
+  conflict,
+  events,
+  find,
+  list,
+  ls,
+  markSeen,
+  orphan,
+  revise,
+  show,
+} from '../src/memory/index.mjs'
 import { appendJsonl, ensure, eventsFile } from '../src/store/index.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -380,6 +391,56 @@ test('空数据目录读命令不抛、也不顺手建库', async () => {
   assert.equal(show('她怕冷', ctxOf(home)).record, null)
   assert.deepEqual(conflict(ctxOf(home)).items, [])
   assert.equal(fs.existsSync(memoryPath(home)), false)
+})
+
+test('markSeen 只追加同 id 同 at 的副本：seen +1，旧行逐字不动', async () => {
+  const home = newHome()
+  const fact = await one(home, { fact: '她关窗是因为冷' })
+  const before = fs.readFileSync(memoryPath(home), 'utf8')
+  const rowsBefore = rawRows(home)
+
+  const got = markSeen(home, { ids: [fact.id, fact.id, 'm-missing'], at: NOW + 60 * 1000 })
+  assert.deepEqual(got.marked, [fact.id], '同一个 id 记两次就该只记一次')
+  assert.deepEqual(got.failed, [])
+  // 找不到的 id 不补一条记录，只报出来。
+  assert.deepEqual(got.skipped.map((one) => one.id), ['m-missing'])
+
+  // 旧行一个字节都不动：新副本追加在后面（AGENTS 五：旧行永不改写）。
+  assert.ok(fs.readFileSync(memoryPath(home), 'utf8').startsWith(before), '旧行被改写了')
+  const rows = rawRows(home)
+  assert.equal(rows.length, rowsBefore.length + 1)
+  const fresh = rows[rows.length - 1]
+  assert.equal(fresh.id, fact.id)
+  // at 照抄旧行：改了 at 读出来就是另一条了，"同一条的副本"这句话就不成立。
+  assert.equal(fresh.at, fact.record.at)
+  assert.equal(fresh.seen, 1)
+
+  const live = ls({}, ctxOf(home))
+  assert.equal(live.items.length, 1, '同 id 的副本被读成了两条')
+  assert.equal(live.items[0].seen, 1)
+})
+
+test('events 跨天合读：[from,to] 两端都含，坏行计数不吞', () => {
+  const home = newHome()
+  const yesterday = NOW - DAY
+  seedEvent(home, 'e-1', yesterday, '昨天她关了窗')
+  seedEvent(home, 'e-2', NOW, '今天她又关了窗')
+  seedEvent(home, 'e-3', NOW + 2 * DAY, '还没发生的事不是情景')
+
+  const got = events(home, { from: yesterday, to: NOW })
+  assert.deepEqual(got.items.map((one) => one.id), ['e-1', 'e-2'], '跨天没合读，或者窗口没卡住')
+  assert.equal(got.bad, 0)
+  // 两天确实落在两个分片里，否则这条用例什么都没验。
+  assert.notEqual(eventsFile(home, yesterday), eventsFile(home, NOW))
+
+  // JSON 坏掉一行、过不了 schema 一行：都要计数，不能装没看见。
+  fs.appendFileSync(eventsFile(home, NOW), 'not json\n')
+  fs.appendFileSync(eventsFile(home, NOW), `${JSON.stringify({ id: 'e-4', at: NOW })}\n`)
+  const dirt = events(home, { from: yesterday, to: NOW })
+  assert.equal(dirt.bad, 2)
+  assert.deepEqual(dirt.items.map((one) => one.id), ['e-1', 'e-2'])
+  // 不传窗口就是全部：早的、晚的都读得到，坏行仍计数。
+  assert.deepEqual(events(home, {}).items.map((one) => one.id), ['e-1', 'e-2', 'e-3'])
 })
 
 test('缺 ctx.home：明确报错，不往当前工作目录写记忆', async () => {
