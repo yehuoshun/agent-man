@@ -616,6 +616,9 @@ const RETRY_ATTEMPTS = 6
 
 async function writeTextAtomic(file, text) {
   const tmp = `${file}.tmp`
+  // 数据目录还不存在时，写配置**顺手把它建出来**：config.json 就住在数据目录里，
+  // 新机器上第一件事就是 `config set`，那时还没有人跑过 ensure()。报 ENOENT 栈不是帮忙。
+  fs.mkdirSync(path.dirname(file), { recursive: true })
   const fd = fs.openSync(tmp, 'w')
   try {
     fs.writeSync(fd, text)

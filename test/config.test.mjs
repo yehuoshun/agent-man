@@ -318,6 +318,14 @@ test('registry 只递一个 ctx 时（argv 在 ctx 里）也能跑', async (t) =
   assert.equal(out.join(''), `${path.join(dir, 'config.json')}\n`)
 })
 
+test('数据目录还不存在时 config set 顺手建目录，不甩 ENOENT 栈', async (t) => {
+  // 新机器上第一条命令常常就是 config set：那时还没有人跑过 ensure()。
+  const dir = path.join(home(t), '还没建出来的数据目录')
+  const value = await config.setKey(dir, 'clock.dayStart', '03:00')
+  assert.equal(value, '03:00')
+  assert.equal(readConfig(dir).clock.dayStart, '03:00')
+})
+
 test('文件没写 version 时提醒一句，但不擅自改文件', async (t) => {
   const dir = home(t)
   const before = writeConfig(dir, { inject: { total: 1200 } })
