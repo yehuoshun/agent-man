@@ -165,14 +165,15 @@ function searchFor(deps, { header, userText }) {
   })
 }
 
-// 两个工具：注册 API 只按任务书给的形状写（ctx.get('tools')?.register?.({name, description,
-// inputSchema, handler})）。真实形状没文档，所以这里对"没有 tools 服务"只警告、不猜别名。
+// 两个工具：注册形状照 DSH 真实现（app.asar 里 dsh-tools/lib/index.js:433 的 register）。
+// 它要的是 { name, description, parameters(JSON Schema), output: { schema, render }, execute }，
+// 缺 output 会抛 TypeError，所以我们这边只做翻译：src/host 给"名字/说明/入参"，宿主形状在这里拼。
 function registerTools(deps) {
   const { cfg, homeDir, env, warn, ctx } = deps
   if (cfg.host && cfg.host.tools === false) return
   const tools = typeof ctx.get === 'function' ? ctx.get('tools') : null
   if (!tools || typeof tools.register !== 'function') {
-    warn('! 工具没注册：宿主没提供 ctx.get("tools").register（API 形状待定，见交付说明）')
+    warn('! 工具没注册：宿主没提供 ctx.get("tools").register')
     return
   }
   for (const tool of TOOLS) {
@@ -180,8 +181,13 @@ function registerTools(deps) {
       tools.register({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema,
-        handler: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env, dayStart: cfg.clock.dayStart })),
+        parameters: tool.inputSchema,
+        output: {
+          // 交出去的永远是纯文本：模型读得懂，宿主也不用猜结构。
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        execute: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env, dayStart: cfg.clock.dayStart })),
       })
     } catch (e) {
       warn(`! 工具 ${tool.name} 没注册上（${messageOf(e)}）：模型这轮看不到它`)
@@ -189,8 +195,7 @@ function registerTools(deps) {
   }
 }
 
-// 工具的返回值该长什么样，DSH 没有公开形状。这一版一律交纯文本：模型读得懂，宿主也不用猜。
-// 实机若要求 { content: [{ type: 'text', text }] } 之类，只改这一个函数，业务侧不动。
+// 执行结果统一成一段纯文本（宿主按 output.schema={type:'string'} 校验，所以这里不许交对象）。
 function toolText(out) {
   if (typeof out === 'string') return out
   if (out && typeof out === 'object' && typeof out.error === 'string') return `! ${out.error}`

@@ -264,8 +264,9 @@ test('apply 在假 ctx 上不抛：挂 agent/created、注册两个工具', asyn
     assert.deepEqual(calls.register.map((one) => one.name), ['agent_man', 'agent_man_look'])
     for (const tool of calls.register) {
       assert.equal(typeof tool.description, 'string')
-      assert.equal(typeof tool.handler, 'function')
-      assert.equal(tool.inputSchema.type, 'object')
+      assert.equal(typeof tool.execute, 'function')
+      assert.equal(tool.parameters.type, 'object')
+      assert.equal(tool.output.schema.type, 'string')
     }
   })
 })

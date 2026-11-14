@@ -1,6 +1,7 @@
 // dsh/ 宿主适配的用例：用一个假的 DSH 宿主把插件真装进去，走一遍生命周期（design §9）。
-// 这个假宿主就是我们目前对 DSH 契约的假设：`ctx.on`、`ctx.get('tools' | 'sessionQuery')`、
-// `agent/created` 里给 `agent.ctx.on / effect`。实机形状不一样时只改这里，插件那侧不该跟着动。
+// 假宿主照实机契约捏（app.asar 里的 dsh-tools/dsh-agent 实现）：`ctx.on`、`ctx.get('tools' | 'sessionQuery')`、
+// `register({ name, description, parameters, output: { schema, render }, execute })`、
+// `agent/created` 里给 `agent.ctx.on / effect`。实机再变时只改这里，插件那侧不该跟着动。
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -103,7 +104,7 @@ test('首步注入：root 第 1 步在最前插一条，自我/处境/情绪/回
   const host = fakeHost({ home, sessions })
   // 情景走工具入口写：欠账也是那条路上记的（tools 里 add 完就 bump），直接调门面不会记账。
   const write = host.registered.find((one) => one.name === 'agent_man')
-  await write.handler({ action: 'event add', text: '她说明天复查眼睛', imp: 2 })
+  await write.execute({ action: 'event add', text: '她说明天复查眼睛', imp: 2 })
   host.openSession()
 
   const payload = {
@@ -178,30 +179,37 @@ test('只有 root 的第 1 步注入：第 2 步、子代理、被拦、被中�
   assert.equal(headerless.messages.length, 1)
 })
 
-test('两个工具按宿主给的形状注册，handler 真写盘、真出处境屏', async () => {
+test('两个工具按 dsh-tools 的 register 形状注册，execute 真写盘、真出处境屏', async () => {
   const home = newHome()
   const host = fakeHost({ home })
   assert.deepEqual(host.registered.map((one) => one.name), ['agent_man', 'agent_man_look'])
   for (const tool of host.registered) {
-    assert.equal(tool.inputSchema.type, 'object')
     assert.equal(typeof tool.description, 'string')
+    // 参数交 parameters（JSON Schema）。inputSchema 是我们自己的叫法，翻完不许再漏给宿主。
+    assert.equal(tool.parameters.type, 'object')
+    assert.equal(tool.inputSchema, undefined)
+    // 宿主先拿 output.schema 校验值、再拿 render 翻成模型看见的字：缺一个真宿主当场抛 TypeError。
+    assert.equal(tool.output.schema.type, 'string')
+    assert.deepEqual(tool.output.render({}, '一段字'), [{ type: 'text', text: '一段字' }])
+    assert.equal(typeof tool.execute, 'function')
+    assert.equal(tool.handler, undefined)
   }
 
   const write = host.registered.find((one) => one.name === 'agent_man')
-  const wrote = await write.handler({ action: 'event add', text: '她说明天复查眼睛', imp: 2 })
+  const wrote = await write.execute({ action: 'event add', text: '她说明天复查眼睛', imp: 2 })
   assert.equal(typeof wrote, 'string')
   assert.match(wrote, /^已记下事件 e-\d{8}-\d{2}/u)
 
   const look = host.registered.find((one) => one.name === 'agent_man_look')
-  const screen = await look.handler({ action: 'context show' })
+  const screen = await look.execute({ action: 'context show' })
   assert.match(screen, /^agent-man · /u)
   // 处境屏只报"有几条待巩固"，不逐条列情景：写进去的那条要靠 event find 读回来。
   assert.match(screen, /积压：2 条待巩固/u)
-  const found = await look.handler({ action: 'event find', query: '复查' })
+  const found = await look.execute({ action: 'event find', query: '复查' })
   assert.match(found, /复查眼睛/u)
 
   // 参数不合形状时给一句能照着改的话，不抛，也不交对象给宿主（宿主不知道该拿它怎么办）。
-  const bad = await write.handler({ action: 'event add' })
+  const bad = await write.execute({ action: 'event add' })
   assert.equal(typeof bad, 'string')
   assert.match(bad, /^! event add 缺 text/u)
 })
@@ -233,7 +241,7 @@ test('sessionQuery 在但检索抛错：只少回顾这一块，处境与情绪�
   }
   const host = fakeHost({ home, sessions })
   const write = host.registered.find((one) => one.name === 'agent_man')
-  await write.handler({ action: 'event add', text: '她在改预算', imp: 2 })
+  await write.execute({ action: 'event add', text: '她在改预算', imp: 2 })
   host.openSession()
   const out = await host.preStep(
     { step: 1, header: ROOT, messages: [{ role: 'user', content: '看 docs/design.md' }] },

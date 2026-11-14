@@ -310,3 +310,25 @@ npm 上的 `agent-man` 从 2022 年起就是别人的包（`ksky521`，0.0.1，9
 **代价**
 没有 `npm i -g agent-man` 那一行，别人要用得先 clone；DSH 插件也只能从本地路径装，不能用包名。
 将来真要发，第一步是把 `name` 改成带作用域的包名，README 与 `dsh/` 里的自述要跟着改一遍。
+
+## 宿主工具注册照 dsh-tools 的 `register` 形状交，不猜
+
+**决定**
+`dsh/index.mjs` 交给 `ctx.get('tools').register()` 的是
+`{ name, description, parameters, output: { schema, render }, execute }`。
+工具表里仍叫 `inputSchema`（`src/host/tools.mjs`），只在这一层翻成 `parameters`；
+`execute` 只交值，`output.render(args, value)` 把值翻成 `[{ type: 'text', text }]`。
+参数 schema 不再写 `minimum`/`maximum`：范围写进 `description`，真值仍由 `checkImp()` 卡。
+
+**来由**
+真实现是 `@deepseek-ai/dsh-tools/lib/index.js` 的 `register()`：定义里没有 `output` 就直接抛
+`tool "<name>" must declare output { schema, render, presentationMeta? }`，整个插件装不上，
+这一轮连工具都看不见。`parameters` 只是拿去投影给模型的参数说明，`output.schema` 才是宿主校验返回值的那一份。
+DSH 认的关键字只有 `type/oneOf/properties/required/additionalProperties/items/enum/const`，
+把 0–3 写成 `minimum`/`maximum` 等于留了两个宿主根本不看、只有我们自己以为在管事的旋钮。
+
+**代价**
+`output.schema` 定成 `string`，工具就只能回一段字：以后想交结构化结果（`{id, text}` 之类）
+得同时改 schema、`render` 和模型的阅读约定。`render` 与 `execute` 分开后，同一段字在两个函数之间过一次手，
+读代码要多看一层。`inputSchema` → `parameters` 的翻译只活在这一处，宿主再改名改的还是这里，
+所以 `test/dsh.test.mjs` 里那张形状断言是锁，不是装饰。
