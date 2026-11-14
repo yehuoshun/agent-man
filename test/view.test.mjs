@@ -252,3 +252,39 @@ test('records：多行按入参顺序逐行排；不认识的类别当场报错�
 
   assert.throws(() => list([{ id: 'x-1', when: '今天', text: '?' }], 'diary'), /不认识的类别/)
 })
+
+test('建议排在最后一段，带零件名字：读者得知道这话是哪只眼睛看到的', () => {
+  const text = renderScreen({
+    clock: '2026-11-13 21:40',
+    quiet: false,
+    since: { text: '3 小时前', fresh: 1 },
+    backlog: { unconsolidated: 0, overdue: 0 },
+    plans: [],
+    notes: [],
+    weakest: [{ id: 'm-20261110-01', text: '她怕冷', r: 0.12, seen: 3 }],
+    suggest: [{ name: '天气', text: '外面在下雨' }],
+  })
+  assert.equal(
+    text,
+    [
+      'agent-man · 2026-11-13 21:40',
+      '上次开口：3 小时前（之后 1 条新记忆）',
+      '',
+      '最弱的三条',
+      '  她怕冷 · R=0.12 · 读到过 3 次（m-20261110-01）',
+      '',
+      '建议',
+      '  · 外面在下雨（天气）',
+    ].join('\n'),
+  )
+
+  // 没有建议时整段不出现；有建议但没有名字时也不留一对空括号。
+  assert.equal(
+    renderScreen({ clock: '2026-11-13 21:40', since: null, plans: [], notes: [], weakest: [], suggest: [] }),
+    ['agent-man · 2026-11-13 21:40', '上次开口：还没开过口'].join('\n'),
+  )
+  assert.match(
+    renderScreen({ clock: '2026-11-13 21:40', since: null, plans: [], notes: [], weakest: [], suggest: [{ name: '', text: '该订票了' }] }),
+    /\n建议\n  · 该订票了$/,
+  )
+})

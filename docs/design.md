@@ -313,6 +313,7 @@ AFFECT_MOOD_HALF 8h  AFFECT_MOOD_HALF_NEG 13h  AFFECT_ENERGY_HALF 3h
 AFFECT_TRUST_HALF 60d  AFFECT_RESPECT_HALF 90d  AFFECT_EMOTION_HALF 45min
 AFFECT_STIM_PER_HOUR 3  AFFECT_NEG_WEIGHT 1.5  AFFECT_HYST 3  AFFECT_DEADBAND 5
 AFFECT_INJECT_COST 80  AFFECT_KEEP_MONTHS 24  AFFECT_BIAS_IMP 0
+AFFECT_ACTIVE_V 65  AFFECT_ACTIVE_E 76  SUGGEST_MAX 1
 AFFECT_BASE {v:50, e:60, t:40, r:0}
 SOUL_INJECT_COST 200  SOUL_USER_COST 100  SOUL_IDENTITY_MAX 120
 SOUL_SOUL_MAX 200  SOUL_DIALOGUE_MAX 200  SOUL_USER_MAX 400
@@ -529,7 +530,14 @@ SOUL_SOUL_MAX 200  SOUL_DIALOGUE_MAX 200  SOUL_USER_MAX 400
 1. **开口门槛**：`cue` 的 min-gap 乘 `1 + (50−v)/200`（v 越低越不容易主动说话）；
 2. **主动性**：v ≥65 且 e ≥76 时允许在处境屏多带一条"可以开始做的事"；v <36 或 e <26 时只答不问。
 
-每个口子都要有测试：同一处境、只改 v，输出必须只有"带不带那条建议"这一处差异。
+第二个口子的料从哪来：PATH 上零件的答话（§8 的聚合模式，`parts.sense` 拿回来的 `lines`）。
+处境屏把它排成最后一段「建议」，**最多 `SUGGEST_MAX` 条**，行尾带零件名字（读者得知道这话是哪只眼睛看到的）。
+门槛 `v ≥ AFFECT_ACTIVE_V` 且 `e ≥ AFFECT_ACTIVE_E`；不到门槛时一条都不上屏，
+但每条都进 `dropped[{section:'建议', reason:'affect', why:'此刻 v=… e=…'}]`——
+"屏上没有建议"和"零件都没答话"是两件事，账上不能混。
+建议行跟日程、便条、最弱的三条抢同一份处境预算，装不下记 `reason:'budget'`。
+
+每个口子都要有测试：同一处境、只改 v，输出必须只有"带不带那条建议"这一处差异（`test/mind.test.mjs` 里逐字比过）。
 
 ### 14.6 手动 / 自动 / 显示
 
@@ -757,6 +765,7 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
+| 零件答话只在 CLI 那一屏 | `context show`（含裸 `agent-man`）先 `parts.sense` 再排屏；DSH 宿主注入**不跑零件**——零件最坏要等 `PART_TIMEOUT`×N，而首步注入要赶在人开口之前。两条通道因此在「建议」段上不齐 | 有人发现注入里从没出现过建议 |
 | 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |

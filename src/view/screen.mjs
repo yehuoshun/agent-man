@@ -45,6 +45,11 @@ function noteLine(note) {
   return note.trigger ? `· ${note.text}（等：${note.trigger}）` : `· ${note.text}`
 }
 
+// 建议行带零件名字：读者要能判断这话是哪只眼睛看到的，不是屏自己编的。
+function suggestLine(item) {
+  return item.name ? `· ${item.text}（${item.name}）` : `· ${item.text}`
+}
+
 // 标题固定写「最弱的三条」：上游最多给三条，数字随 len 变会让人以为这一段有条数配额。
 function weakLine(item) {
   return `${item.text} · R=${retention(item.r)} · 读到过 ${item.seen} 次（${item.id}）`
@@ -54,6 +59,7 @@ export function render(situation) {
   const plans = situation.plans || []
   const notes = situation.notes || []
   const weakest = situation.weakest || []
+  const suggest = situation.suggest || []
 
   const head = [
     `agent-man · ${situation.clock}`,
@@ -68,6 +74,9 @@ export function render(situation) {
     section('日程', plans.map(planLine)),
     section('便条', notes.map(noteLine)),
     section('最弱的三条', weakest.map(weakLine)),
+    // 建议排在最后：它是"可以开始做的事"，不是此刻的处境本身；放在最弱的三条前面
+    // 会让读者以为这是要做的事排在记忆之前，而这条建议随时可以不采纳。
+    section('建议', suggest.map(suggestLine)),
   ].filter((block) => block !== null)
 
   // 块之间空一行、结尾不留多余空行：CLI 与注入两条通道都直接拼这段字。

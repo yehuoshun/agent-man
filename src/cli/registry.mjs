@@ -760,12 +760,21 @@ async function selfAppend(ctx) {
 
 // 处境屏（design §6：裸 `agent-man` 就是它）。mind 算"此刻站在哪一段日子里"，view 排成一屏，
 // 这里只接线——不在这里挑哪条上屏，也不在这里算分数。
-function contextShow(ctx) {
+async function contextShow(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man context show [--json]（裸 agent-man 等同此命令）')
-  const scene = mind.situation(homeOf(ctx), { now: ctx.now })
+  // 零件先问一遍再排屏（design §8 的聚合模式）：它们答的话是这一屏最后那一段的料。
+  // 预算用处境那一份——建议行最终也要跟日程、便条抢同一个额度，先按小份抓回来
+  // 就不会出现"零件答得很响，屏上却一条都装不下"的浪费。
+  const got = await parts.sense(ctx.env, { budget: cfgOf(ctx).inject.situation })
+  const scene = mind.situation(homeOf(ctx), { now: ctx.now, parts: got })
   if (on(flags, 'json')) jsonOut(ctx, scene)
   else ctx.out(`${renderScreen(scene)}\n`)
+  // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被它的预算挤掉——
+  // 它们不在 scene.dropped 里，因为那是"屏上装不下"，这是"根本没拿到"。
+  for (const one of got.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
+  for (const one of got.dropped) ctx.err(`! 零件 ${one.name} 装不下：抓取预算 ${got.budget} 已经用完\n`)
+  for (const one of got.failures) ctx.err(`! 零件 ${one.name} 没出声：${one.why}\n`)
   screenNotes(ctx, scene)
   return 0
 }

@@ -89,6 +89,16 @@ export const AFFECT_INJECT_COST = 80 // cost：情绪行在注入里的上限
 export const AFFECT_KEEP_MONTHS = 24 // 月：刺激日志按月分片保留
 export const AFFECT_BIAS_IMP = 0 // 记账权重修正：0=关（design §14.12）
 
+// §14.5 的第二个口子：v 与 e 都到这个数才允许主动提一条建议。分开两个常数而不是写
+// `v >= 65 && e >= 76`，是因为它们各自是"她还有兴致"与"她还有力气"两条判据，
+// 将来调其中一个时不该顺手把另一个也动了。
+export const AFFECT_ACTIVE_V = 65 // 分
+export const AFFECT_ACTIVE_E = 76 // 分
+
+// §14.5 说的是"多带一条"：建议段最多一条。给成常数，是为了让"一条"这件事有名字，
+// 而不是散在屏渲染与处境计算两处的字面量 1。
+export const SUGGEST_MAX = 1 // 条：处境屏里"建议"最多几条
+
 // 四轴基线。r 是 −100..100 的"尊重"，其余 0..100。
 export const AFFECT_BASE = Object.freeze({ v: 50, e: 60, t: 40, r: 0 })
 

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { set as affectSet } from '../src/affect/index.mjs'
 import { main } from '../src/cli/index.mjs'
 import { plans } from '../src/intent/index.mjs'
 import * as memory from '../src/memory/index.mjs'
@@ -18,6 +19,31 @@ function box() {
   HOMES.push(dir)
   const now = new Date(2026, 10, 14, 10, 0, 0).getTime()
   return { dir, now, env: { AGENT_MAN_HOME: dir, PATH: '' } }
+}
+
+// 假零件：这里要真跑一次才证明"零件答话真的拐进了那一屏"（design §8 的聚合模式），
+// 所以这个用例是全仓唯一 spawn 子进程的 CLI 用例。正文用 ASCII——Windows 的 cmd 按
+// 代码页转码，塞中文进去断言的就不是产品行为了。
+function fakePart() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-part-'))
+  HOMES.push(dir)
+  const body = '{"name":"fake","desc":"fake part","section":"env","timeout_ms":1000,"side_effects":false}'
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(dir, 'agent-man-fake.cmd'), [
+      '@echo off',
+      'if "%~1"=="--describe" (',
+      `  echo ${body}`,
+      ') else (',
+      '  echo rain outside',
+      ')',
+      '',
+    ].join('\r\n'))
+  } else {
+    const file = path.join(dir, 'agent-man-fake')
+    fs.writeFileSync(file, ['#!/bin/sh', 'if [ "$1" = "--describe" ]; then', `  echo '${body}'`, 'else', '  echo "rain outside"', 'fi', ''].join('\n'))
+    fs.chmodSync(file, 0o755)
+  }
+  return dir
 }
 
 async function cli(boxOne, argv) {
@@ -270,6 +296,24 @@ test('context sense 在 PATH 上没有零件时写「没有可用的零件」，
   const got = await cli(one, ['context', 'sense'])
   assert.equal(got.code, 0)
   assert.match(got.out, /（没有可用的零件/)
+})
+
+test('context show 把零件答话摆成最后那一段：情绪够了才摆', async () => {
+  const one = box()
+  one.env.PATH = fakePart()
+  if (process.env.ComSpec) one.env.ComSpec = process.env.ComSpec
+  if (process.env.SystemRoot) one.env.SystemRoot = process.env.SystemRoot
+  // AFFECT_BASE 是 v=50 e=60：先确认这个处境下不主动提。
+  const quietOne = await cli(one, ['context', 'show'])
+  assert.equal(quietOne.code, 0)
+  assert.equal(quietOne.out.includes('建议'), false)
+  assert.match(quietOne.err, /! 建议 丢：此刻 v=50 e=60/)
+
+  await affectSet(one.dir, { axis: 'v', value: 90, why: '用例：高兴', at: one.now - 60 * 60 * 1000 })
+  await affectSet(one.dir, { axis: 'e', value: 90, why: '用例：有劲', at: one.now - 60 * 60 * 1000 })
+  const eager = await cli(one, ['context', 'show'])
+  assert.equal(eager.code, 0)
+  assert.match(eager.out, /\n\n建议\n  · rain outside（fake）\n$/)
 })
 
 test('audit timeline 在空目录上也有话说：窗口内什么都没发生', async () => {

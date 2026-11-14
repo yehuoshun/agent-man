@@ -466,12 +466,71 @@ test('读坏行跳过并计数：一行坏掉不让整屏读不出来，也不�
   assert.equal(scene.bad.memory, 1)
 })
 
-test('插件建议还没接就明说：摆不上屏的东西也要在 dropped 里点名', () => {
+test('插件建议在 v 与 e 没到口子时一条都不上屏，但每条都记下为什么', async () => {
   const home = newHome()
+  // AFFECT_BASE 是 v=50 e=60：理性线之下，正是"不主动提建议"的那一刻。
+  await affectSet(home, { axis: 'v', value: 50, why: '用例：普通', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 60, why: '用例：普通', at: T - HOUR })
   const scene = situation(home, { now: T, parts: [{ name: '天气', text: '要下雨' }] })
-  const gone = scene.dropped.filter((one) => one.reason === 'unsupported')
-  assert.equal(gone.length, 1)
-  assert.match(gone[0].why, /插件/)
+  assert.deepEqual(scene.suggest, [])
+  const gone = scene.dropped.filter((one) => one.reason === 'affect')
+  assert.equal(gone.length, 1, '被口子挡下的建议要在 dropped 里点名')
+  assert.equal(gone[0].section, '建议')
+  assert.match(gone[0].why, /v≥65 且 e≥76/)
+})
+
+test('同一处境只把 v 抬过口子：唯一的差别就是那一条建议上不上屏', async () => {
+  const home = newHome()
+  await affectSet(home, { axis: 'v', value: 64, why: '用例：差一分', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 80, why: '用例：有劲', at: T - HOUR })
+  const below = situation(home, { now: T, parts: [{ name: '天气', text: '要下雨' }] })
+  await affectSet(home, { axis: 'v', value: 65, why: '用例：正好到线', at: T - HOUR + 1 })
+  const above = situation(home, { now: T, parts: [{ name: '天气', text: '要下雨' }] })
+  assert.deepEqual(below.suggest, [])
+  assert.deepEqual(above.suggest, [{ name: '天气', text: '要下雨' }])
+  // 除了这一段与它带来的 dropped，屏上别处一个字都不许变（design §14.5 的"只差一处"）。
+  const strip = (one) => {
+    const { suggest, dropped, used, ...rest } = one
+    return { ...rest, dropped: dropped.filter((two) => two.section !== '建议') }
+  }
+  assert.deepEqual(strip(above), strip(below))
+  assert.ok(above.used > below.used, '上了屏的建议要真占预算')
+})
+
+test('建议最多一条：多出来的零件答话记 limit，不并成一段', async () => {
+  const home = newHome()
+  await affectSet(home, { axis: 'v', value: 90, why: '用例：高兴', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 90, why: '用例：有劲', at: T - HOUR })
+  const scene = situation(home, {
+    now: T,
+    parts: [{ name: '天气', text: '要下雨' }, { name: '日程助手', text: '该订票了' }],
+  })
+  assert.deepEqual(scene.suggest, [{ name: '天气', text: '要下雨' }])
+  const over = scene.dropped.filter((one) => one.reason === 'limit' && one.section === '建议')
+  assert.equal(over.length, 1)
+  assert.match(over[0].why, /一屏只放 1 条建议/)
+})
+
+test('建议也要跟日程便条抢同一份预算：装不下的记 budget，不悄悄塞进去', async () => {
+  const home = newHome()
+  await affectSet(home, { axis: 'v', value: 90, why: '用例：高兴', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 90, why: '用例：有劲', at: T - HOUR })
+  const scene = situation(home, {
+    now: T,
+    budget: 30,
+    parts: [{ name: '天气', text: '要'.repeat(120) }],
+  })
+  assert.deepEqual(scene.suggest, [])
+  assert.equal(scene.dropped.some((one) => one.reason === 'budget' && one.section === '建议'), true)
+})
+
+test('sense 的整包也认：{lines} 与拆好的行数组是同一件事', async () => {
+  const home = newHome()
+  await affectSet(home, { axis: 'v', value: 90, why: '用例：高兴', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 90, why: '用例：有劲', at: T - HOUR })
+  const asBox = situation(home, { now: T, parts: { lines: [{ name: '天气', section: '环境', text: '要下雨' }] } })
+  const asArray = situation(home, { now: T, parts: [{ name: '天气', text: '要下雨' }] })
+  assert.deepEqual(asBox.suggest, asArray.suggest)
 })
 
 test('design §7 的那个入口形状也认：单对象传 home 与传位置参数给同一份处境', async () => {

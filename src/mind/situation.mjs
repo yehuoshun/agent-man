@@ -2,8 +2,10 @@
 // 这一层只把数据摆成渲染层要的形状（design §4）：日程的 due → {when, left, late} 只在这里
 // 映射一次，view 那头一个 Date 都不碰；预算也只在这里砍，砍掉的都留着为什么。
 import {
-  INJECT_BUDGET, SECTION_ITEMS_MAX, WEAKEST_MAX, clock, config, dayKey, now, rel,
+  AFFECT_ACTIVE_E, AFFECT_ACTIVE_V, INJECT_BUDGET, SECTION_ITEMS_MAX, SUGGEST_MAX, WEAKEST_MAX,
+  clock, config, dayKey, now, rel,
 } from '../core/index.mjs'
+import { snapshot as affectOf } from '../affect/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
 import { events, ls } from '../memory/index.mjs'
 import { atOf, costOf, idOf, retention, textOf } from '../recall/index.mjs'
@@ -106,14 +108,47 @@ export function situation(homeDir, options = {}) {
   const noteLines = fill('便条', noteRows, SECTION_ITEMS_MAX)
   const weakLines = fill('最弱的三条', weakRows, WEAKEST_MAX)
 
-  // 插件建议还没接（§14.5 的第二口子等 M6）：递进来也摆不上屏，说出来而不是悄悄扔掉。
-  if (Array.isArray(call.parts) && call.parts.length > 0) {
-    dropped.push({
-      id: null,
-      section: '插件',
-      reason: 'unsupported',
-      why: '丢：插件建议还没接（design §14.5 的第二口子等 M6）',
-    })
+  // 插件建议（design §8 的聚合模式 + §14.5 的第二个口子）：零件答的话最多上屏一条，
+  // 而且只有 v 与 e 都够高时才给这个机会。情绪不到就不提——但每条都记进 dropped，
+  // 免得"屏上没有建议"被读成"零件都没答话"。
+  const partLines = linesOf(call.parts)
+  const suggestLines = []
+  if (partLines.length > 0) {
+    const feel = call.affect ?? affectOf(home, { now: at })
+    const eager = feel.v >= AFFECT_ACTIVE_V && feel.e >= AFFECT_ACTIVE_E
+    for (const row of partLines) {
+      if (!eager) {
+        dropped.push({
+          id: null,
+          section: '建议',
+          reason: 'affect',
+          why: `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，不主动提建议`,
+        })
+        continue
+      }
+      if (suggestLines.length >= SUGGEST_MAX) {
+        dropped.push({
+          id: null,
+          section: '建议',
+          reason: 'limit',
+          why: `丢：一屏只放 ${SUGGEST_MAX} 条建议`,
+        })
+        continue
+      }
+      const price = costOf(measureOf('建议', row))
+      if (used + price > budget) {
+        const left = Math.max(0, Math.round(budget - used))
+        dropped.push({
+          id: null,
+          section: '建议',
+          reason: 'budget',
+          why: `丢：这一条要 ${Math.round(price)}，只剩 ${left}`,
+        })
+        continue
+      }
+      suggestLines.push({ name: row.name, text: row.text })
+      used += price
+    }
   }
 
   return {
@@ -127,6 +162,7 @@ export function situation(homeDir, options = {}) {
     plans: planLines,
     notes: noteLines,
     weakest: weakLines,
+    suggest: suggestLines,
     budget,
     used,
     // 抬头是屏的框（几点、上次开口、积压），砍不动也换不得；预算比它还小时只能认账。
@@ -167,7 +203,18 @@ function headOf({ stamp, since, backlog, quiet }) {
 function measureOf(section, row) {
   if (section === '日程') return [row.when, row.text, row.left].filter(Boolean).join(' ')
   if (section === '便条') return [row.text, row.trigger].filter(Boolean).join(' ')
+  // 建议行要带零件名字（读者得知道这话是谁说的），量成本时就得把它算进去。
+  if (section === '建议') return `${row.text}（${row.name}）`
   return [row.text, row.r.toFixed(2), String(row.seen), row.id].filter(Boolean).join(' ')
+}
+
+// 零件递进来的东西有两种形状：sense() 的整包（{lines,…}）或已经拆好的行数组。
+// 只认 {name,text} 两个字符串字段——零件说不了屏的结构，屏的结构由这一层定。
+function linesOf(parts) {
+  const raw = Array.isArray(parts) ? parts : (Array.isArray(parts?.lines) ? parts.lines : [])
+  return raw
+    .filter((one) => one && typeof one.text === 'string' && one.text.trim() !== '')
+    .map((one) => ({ name: typeof one.name === 'string' ? one.name : '', text: one.text.trim() }))
 }
 
 function budgetOf(cfg) {
