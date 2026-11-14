@@ -768,5 +768,6 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | 零件答话只在 CLI 那一屏 | `context show`（含裸 `agent-man`）先 `parts.sense` 再排屏；DSH 宿主注入**不跑零件**——零件最坏要等 `PART_TIMEOUT`×N，而首步注入要赶在人开口之前。两条通道因此在「建议」段上不齐 | 有人发现注入里从没出现过建议 |
 | 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
-| 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |
+| `self set --id`（按块替换） | 明确退 2：自我块是整份覆盖（`setSelf`），没有按块替换（design §4：不分块） | 有人真的只想改一段时——那时得先想清楚"段"怎么切，不是先加一个 `--id` |
+| 规矩不参与复述记账 | 已修：`context digest` 把某条规矩选进「规矩」段时调 `memory.markRulesSeen()`，只追加一条同 `at`、`seen + 1` 的完整副本（同一 id 多行怎么折是记忆层的语义）；`audit/timeline` 看到的因此是折后的 `seen` | 有人手改 `rules.jsonl` 时 |
 
