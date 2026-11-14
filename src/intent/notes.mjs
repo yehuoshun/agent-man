@@ -20,7 +20,7 @@ export async function add(homeDir, input, extra) {
   const ttl = ttlOf(opts.ttl)
   // 字段顺序照 design §4：op, id, at, text, trigger, when, ttl；没有 when 就不写这一格。
   // 校验排在抢号之后没关系：真被拒也只是一枚空号，不影响唯一性，而重号才是致命的。
-  const rec = { op: 'add', id: await claim(homeDir, 'n', at), at, text, trigger }
+  const rec = { op: 'add', id: await claim(homeDir, 'n', at, { dayStart: opts.dayStart ?? 0 }), at, text, trigger }
   if (when !== undefined) rec.when = when
   rec.ttl = ttl
   return appendOp(homeDir, KIND, gate(KIND, rec))

@@ -343,7 +343,7 @@ async function eventAdd(ctx) {
     src: srcOf(arg(flags, 'src')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   }
-  const got = await memory.eventAdd(entry, { home: dir, now: ctx.now })
+  const got = await memory.eventAdd(entry, { home: dir, now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const cues = entry.cues.length > 0 ? `，cue ${entry.cues.join('、')}` : ''
@@ -439,7 +439,7 @@ async function memoryAdd(ctx) {
     imp: impOf(arg(flags, 'imp')),
     evidence: evidenceOf(arg(flags, 'from')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
-  }, { home: homeOf(ctx), now: ctx.now })
+  }, { home: homeOf(ctx), now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
 
   if (on(flags, 'json')) jsonOut(ctx, got)
   else if (got.status === 'same') ctx.out(`没变：${got.id} 已经是这条（同槽位同 imp）\n`)
@@ -554,7 +554,11 @@ async function memoryRevise(ctx) {
   }
   const patch = { fact }
   if (arg(flags, 'imp') !== undefined) patch.imp = impOf(arg(flags, 'imp'))
-  const got = await memory.revise(id, patch, { home: homeOf(ctx), now: ctx.now })
+  const got = await memory.revise(id, patch, {
+    home: homeOf(ctx),
+    now: ctx.now,
+    dayStart: cfgOf(ctx).clock.dayStart,
+  })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else ctx.out(`已改：${got.id} 换成新的说法（旧版本 ${got.from} 留着，没被抹掉）\n`)
   noisy(ctx, got.skipped ?? 0)
@@ -577,6 +581,7 @@ async function noteAdd(ctx) {
     trigger: arg(flags, 'trigger'),
     ttl: arg(flags, 'ttl'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
+    dayStart: cfgOf(ctx).clock.dayStart,
   })
   if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已留下 ${one.id}（${one.trigger ? `等：${one.trigger}` : '没有触发条件'}）\n`)
@@ -622,7 +627,12 @@ async function planAdd(ctx) {
   if (!text) throw new Error('用法：agent-man plan add "<要做的事>" --at "<什么时候>"')
   const due = instant(ctx, arg(flags, 'at'), 'at')
   if (due === undefined) throw new Error('plan add 要给 --at：什么时候到期（plan add "体检" --at 明天 9:00）')
-  const one = await intent.plans.add(homeOf(ctx), { text, due, at: ctx.now })
+  const one = await intent.plans.add(homeOf(ctx), {
+    text,
+    due,
+    at: ctx.now,
+    dayStart: cfgOf(ctx).clock.dayStart,
+  })
   if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已记下 ${one.id}（${rel(one.due, ctx.now)}到期）\n`)
   return 0
@@ -674,6 +684,7 @@ async function ruleAdd(ctx) {
     why: arg(flags, 'why'),
     supersedes: idsOf(arg(flags, 'supersedes')),
     at: ctx.now,
+    dayStart: cfgOf(ctx).clock.dayStart,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
@@ -736,7 +747,7 @@ async function selfAppend(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man self append "<一段话>"（段首自动补今天的日期）')
-  const got = await memory.appendSelf(homeOf(ctx), text, { now: ctx.now })
+  const got = await memory.appendSelf(homeOf(ctx), text, { now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const head = got.header ? `（新起 ${got.header.replace(/^## /, '')} 这一段）` : '（接在今天这段后面）'

@@ -563,6 +563,17 @@ test('memory add 的 --from 不认日期区间：退 2，并指去 event id', as
   assert.match(got.err, /证据要写事件 id（--from 区间这一版不支持）/)
 })
 
+
+test('CLI 写入口的日界读配置：凌晨两点记的事落在前一天', async () => {
+  const one = box()
+  // 配置里的日界是 04:00（默认值），此刻是 02:00 —— 该算前一天。
+  fs.writeFileSync(path.join(one.dir, 'config.json'), JSON.stringify({ clock: { dayStart: '04:00' } }))
+  one.now = new Date(2026, 10, 14, 2, 0, 0).getTime()
+  const got = await cli(one, ['event', 'add', '凌晨两点的事'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /e-20261113-01/, '号里的日期没按配置的日界算')
+})
+
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })

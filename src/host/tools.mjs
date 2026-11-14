@@ -83,7 +83,7 @@ const WRITE_RULES = new Map([
     run: async (a, ctx) => {
       const out = await memory.eventAdd(
         { ...pick(a, ['text', 'imp', 'cues', 'src']), at: atOf(a, ctx) },
-        { home: ctx.home, now: ctx.now },
+        { home: ctx.home, now: ctx.now, dayStart: ctx.dayStart },
       )
       // 欠账是"该巩固了"的唯一计数器（§14.9）：记了情景不记账，门槛就永远到不了。
       // 记不上也不该让这次写入失败——情景已经落盘了，说清楚就够。
@@ -113,7 +113,7 @@ const WRITE_RULES = new Map([
         imp: a.imp,
         evidence: { ids: evidenceIds(a.evidence) },
         at: atOf(a, ctx),
-      }, { home: ctx.home, now: ctx.now })
+      }, { home: ctx.home, now: ctx.now, dayStart: ctx.dayStart })
       if (out.status === 'same') return `同样的结论已经在（${out.id}）：没写第二份`
       const replaced = out.replaced.length > 0 ? `，取代了 ${out.replaced.join('、')}` : ''
       return `已记下结论 ${out.id}${replaced}`
@@ -129,6 +129,7 @@ const WRITE_RULES = new Map([
         supersedes: a.supersedes,
         at: atOf(a, ctx),
         now: ctx.now,
+        dayStart: ctx.dayStart,
       })
       const replaced = out.superseded.length > 0 ? `，替代了 ${out.superseded.join('、')}` : ''
       return `已立下规矩 ${out.id}${replaced}`
@@ -143,6 +144,7 @@ const WRITE_RULES = new Map([
         trigger: a.trigger,
         ttl: a.ttl,
         now: ctx.now,
+        dayStart: ctx.dayStart,
       })
       return `已记下便条 ${labelOf(rec)}：说到「${oneLine(a.trigger).trim()}」时该想起它`
     },
@@ -151,7 +153,12 @@ const WRITE_RULES = new Map([
     need: ['text', 'due'],
     hint: 'plan add 要 text 与 due（2026-11-20 09:00 / 明天 9:00 / 3d 都行）',
     run: async (a, ctx) => {
-      const rec = await plans.add(ctx.home, { text: a.text, due: a.due, now: ctx.now })
+      const rec = await plans.add(ctx.home, {
+        text: a.text,
+        due: a.due,
+        now: ctx.now,
+        dayStart: ctx.dayStart,
+      })
       return `已记下日程 ${labelOf(rec)}：${stampOf(rec.due)}`
     },
   }],
@@ -159,7 +166,7 @@ const WRITE_RULES = new Map([
     need: ['line'],
     hint: 'self append 要 line：往自我块追加一行（一行一个单位，别写成段落）',
     run: async (a, ctx) => {
-      await memory.appendSelf(ctx.home, oneLine(a.line).trim(), { now: ctx.now })
+      await memory.appendSelf(ctx.home, oneLine(a.line).trim(), { now: ctx.now, dayStart: ctx.dayStart })
       return '已追加到自我块'
     },
   }],

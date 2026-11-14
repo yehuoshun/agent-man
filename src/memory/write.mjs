@@ -1,6 +1,13 @@
 import { EVENTS_MAX, cost } from '../core/index.mjs'
 import { appendJsonl, claim, ensure, eventsFile, validate } from '../store/index.mjs'
 
+// 日界只有一个解释器（core/time 的 dayKey），这一层只把配置里的 HH:MM 原样往下递：
+// 号里的日期、事件分片名、自我块的日期段三者必须同一天，否则凌晨记的事会分裂成两天。
+function dayOpts(ctx) {
+  const one = ctx && typeof ctx === 'object' ? ctx : {}
+  return { dayStart: one.dayStart ?? 0 }
+}
+
 import {
   PATCHABLE,
   assertRecord,
@@ -67,7 +74,7 @@ export async function add(entry, ctx = {}) {
   const from = inherited ?? wantedFrom ?? evidence.from ?? at
 
   ensure(home)
-  const id = await claim(home, 'm', at)
+  const id = await claim(home, 'm', at, dayOpts(ctx))
   const record = assertRecord(makeRecord({ id, at, key, fact, imp, from, evidence, seen: 0 }))
 
   // 先落新条再收口：中途崩了会留下两条活记录（conflict 看得见），
@@ -112,7 +119,7 @@ export async function revise(id, patch, ctx = {}) {
 
   const at = nextAt(state.records, current.key, base)
   ensure(home)
-  const nextId = await claim(home, 'm', at)
+  const nextId = await claim(home, 'm', at, dayOpts(ctx))
   const record = assertRecord({
     id: nextId,
     at,
@@ -218,7 +225,7 @@ export async function eventAdd(input, ctx = {}) {
 
   const at = timeOf(given.at, base, 'at') ?? base
   ensure(home)
-  const id = await claim(home, 'e', at)
+  const id = await claim(home, 'e', at, dayOpts(ctx))
   const record = {
     id,
     at,
@@ -231,6 +238,6 @@ export async function eventAdd(input, ctx = {}) {
   const { ok, errors } = validate('events', record)
   if (!ok) throw new Error(errors.join('；'))
 
-  appendJsonl(eventsFile(home, at), record)
+  appendJsonl(eventsFile(home, at, dayOpts(ctx)), record)
   return { id, at, cost: price, record }
 }

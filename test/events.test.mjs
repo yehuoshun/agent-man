@@ -115,6 +115,18 @@ test('写进去的事件能被 events() 按窗口读回来', async () => {
   assert.equal(read.items[0].text, '她说周五的体检报告该出来了')
 })
 
+
+test('日界配成 04:00：凌晨两点记的事，号与分片都算前一天', async () => {
+  const home = newHome()
+  const late = new Date(2026, 10, 14, 2, 0, 0).getTime()
+  const got = await eventAdd({ text: '凌晨两点还醒着', at: late }, { home, now: late, dayStart: '04:00' })
+  assert.match(got.id, /^e-20261113-/, '号里的日期没跟着日界走')
+  assert.equal(path.basename(eventsFile(home, late, { dayStart: '04:00' })), '2026-11-13.jsonl')
+  // 分片里真有一行，读窗口按文件名认日期，所以 13 号那一窗要读得到。
+  const back = events(home, { now: late, days: 2 })
+  assert.ok(back.items.some((rec) => rec.id === got.id), '写进去的行没被读回来')
+})
+
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })

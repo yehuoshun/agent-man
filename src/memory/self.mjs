@@ -62,7 +62,9 @@ export async function appendSelf(home, text, opts = {}) {
   if (body.trim() === '') {
     throw new Error('appendSelf 要追加的段落是空的：写不出话的时候别留下一个只有日期的标题')
   }
-  const header = `## ${dayKey(nowOf({ now: input.now }))}`
+  // 日界跟着配置走（design §15 的 clock.dayStart）：自己算一份 00:00 就成了第二个解释器，
+  // 凌晨写下的那一段会归到前一天，跟事件分片名对不上。
+  const header = `## ${dayKey(nowOf({ now: input.now }), { dayStart: input.dayStart ?? 0 })}`
   const before = readSelf(dir)
   // 末尾那个换行会 split 出一个空串，所以只看非空行；判断"今天这段是不是已经开着"要看
   // 最后一个 `## ` 标题，而不是最后一行——最后一行通常是正文，正文永远不等于标题。

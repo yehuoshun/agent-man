@@ -181,7 +181,7 @@ function registerTools(deps) {
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
-        handler: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env })),
+        handler: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env, dayStart: cfg.clock.dayStart })),
       })
     } catch (e) {
       warn(`! 工具 ${tool.name} 没注册上（${messageOf(e)}）：模型这轮看不到它`)

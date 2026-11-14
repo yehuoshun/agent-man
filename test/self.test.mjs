@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -128,6 +128,18 @@ test('缺 home：明确报错，不往当前工作目录写自我块', async () 
   assert.throws(() => readSelf(''), /需要一个数据目录/)
 })
 
+test('日界跟着配置走：dayStart 04:00 时凌晨两点写的那段归前一天', async () => {
+  const home = newHome()
+  const late = new Date(2026, 10, 14, 2, 0, 0).getTime()
+  // 默认日界（00:00）：凌晨两点已经是 14 号。
+  await appendSelf(home, '凌晨两点写的', { now: late })
+  assert.match(readSelf(home).text, /^## 2026-11-14$/m)
+  // 配了 04:00 日界：同一时刻还在"上一个夜里"，该归 13 号。
+  fs.rmSync(selfPath(home))
+  const got = await appendSelf(home, '凌晨两点写的', { now: late, dayStart: '04:00' })
+  assert.equal(got.header, '## 2026-11-13')
+  assert.match(readSelf(home).text, /^## 2026-11-13$/m)
+})
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })

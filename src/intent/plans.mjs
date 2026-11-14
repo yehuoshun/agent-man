@@ -18,7 +18,7 @@ export async function add(homeDir, input, extra) {
   if (due === undefined) {
     throw new Error('日程要给 due：2026-11-20 09:00 / 明天 9:00 / 3d 都行，缺了就不叫日程')
   }
-  const rec = { op: 'add', id: await claim(homeDir, 'p', at), at, text, due }
+  const rec = { op: 'add', id: await claim(homeDir, 'p', at, { dayStart: opts.dayStart ?? 0 }), at, text, due }
   return appendOp(homeDir, KIND, gate(KIND, rec))
 }
 

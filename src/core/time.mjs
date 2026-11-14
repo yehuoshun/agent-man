@@ -137,6 +137,13 @@ function toDate(ts) {
 
 // dayStart 越界就按 0 算：这是配置值，不该让一次手误把整条事件流写到 '.jsonl' 里去。
 function dayStartHours(v) {
+  // 配置里存的是 `HH:MM`（config 的 clock 类型），这里认两种写法：整点数字与字符串。
+  // 日界的解释只有这一处——两个调用方各转一次，迟早转出两个"今天"。
+  if (typeof v === 'string') {
+    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v.trim())
+    if (m === null) return 0
+    return Number(m[1])
+  }
   if (!Number.isFinite(v)) return 0
   const n = Math.trunc(v)
   return n >= 0 && n <= 23 ? n : 0
