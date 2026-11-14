@@ -40,7 +40,10 @@ const WRITE_SCHEMA = Object.freeze({
     trigger: { type: 'string', description: 'note add 的触发线索：说到什么时该想起它' },
     due: { type: 'string', description: 'plan add 的时间点：2026-11-20 09:00 / 明天 9:00 / 3d' },
     line: { type: 'string', description: 'self append 要追加的一行' },
-    imp: { type: 'integer', minimum: 0, maximum: 3, description: '重要度 0–3' },
+    // 范围写进说明而不是 minimum/maximum：DSH 校 schema 只认
+    // type/oneOf/properties/required/additionalProperties/items/enum/const 这几样，
+    // 多写的关键字它不认（真值仍由下面的 checkImp 卡）。
+    imp: { type: 'integer', description: '重要度 0–3 的整数' },
     cues: { type: 'array', items: { type: 'string' }, description: 'event add 的线索词' },
     src: { type: 'string', description: 'event add 的来源：user / tool:<名字> / self' },
     ttl: { type: 'string', description: 'note add 的有效期：7d / 12h' },
