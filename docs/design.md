@@ -706,14 +706,18 @@ agent-man 不猜情绪。只有显式调用 `agent-man affect stim <kind> [--why
                "trustHalf": "60d", "respectHalf": "90d" },
   "soul":    { "current": "default", "injectOrder": ["identity", "soul", "dialogue", "lore"] },
   "parts":   { "timeout": 5000, "timeoutMax": 30000, "stdoutMax": 8192, "failLimit": 3 },
-  "host":    { "tools": true, "firstStepRecall": 250 }
+  "host":    { "tools": true }
 }
 ```
 
 - 每一节对应一个领域模块；**节名 = 模块名**，找配置不用翻代码；
 - 所有键都必须在 `core/config.mjs` 的 `SCHEMA` 白名单里，**未知键直接退出码 2 并指出键名**——拼写错的配置比没有配置更坏；
 - 键的值必须来自常数或落在范围里（`minKeepRatio` ∈ [0,1]、`stdoutMax` ∈ [512, 65536]），校验与读取在同一处；
-- 默认值只有一份：`DEFAULTS` 引用 `core/const.mjs`，**不许在 config 里复制一遍数字**。
+- 默认值只有一份：`DEFAULTS` 引用 `core/const.mjs`，**不许在 config 里复制一遍数字**；
+- `clock.dayStart` 是**"今天"从几点算起**的唯一来源，落点有三处且只有这三处：事件分片名
+  （`store/paths.eventsFile`）、id 里的日期（`store/ids.claim`）、自我块的 `## 日期` 段
+  （`memory/self.appendSelf`）。三处都经 `core/time.dayKey` 换算，谁也不许自己减小时数——
+  否则凌晨两点记下的事，号说是今天、分片说是昨天，读的人只能猜哪个算数。
 
 ### 15.3 命令面
 
@@ -752,7 +756,7 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | 证据区间 `--from 日期..日期` | 明确退 2，只认事件 id | 有人真的按区间给证据时，让记忆层自己解析 |
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
-| `appendSelf` 的日界 | 用默认 00:00，没接 `clock.dayStart`；00:00–04:00 之间写会归到前一天 | 有人凌晨写自我块时 |
+| 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
 | `audit/doctor` 的部分读路径 | `timeline` 直接读 `rules.jsonl`、`checkSelf` 直接读 `self.md`，绕过了门面 | 改规矩或自我块格式时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |
