@@ -8,6 +8,16 @@
 
 零依赖、纯 `node:` 内置、Node ≥ 20。
 
+## 装它
+
+没有 npm 包：`agent-man` 这个名字在 npm 上是别人的（2022 年的 0.0.1，一直没人动），
+本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 最后一节）。两条正当的装法：
+
+- **当命令行用**：`git clone` 之后 `npm link`（或直接把 `bin/agent-man.mjs` 放进 `PATH`）。
+- **当 DSH 插件用**：`package.json` 里的 `dsh.bundle.patch` 指本包的宿主补丁，用 DSH 的插件管理从本地路径装。
+
+数据落在 `~/.agent-man`；想换个地方就把 `AGENT_MAN_HOME` 指过去（试用与测试都靠这一条，不污染真数据）。
+
 ## 它解决的是模型的三个缺口
 
 | 缺口 | 表现 | agent-man 的做法 |

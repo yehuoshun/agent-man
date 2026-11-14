@@ -294,3 +294,19 @@ CLI 那一屏与宿主注入在「建议」段上不齐（§16 记了这一条�
 想找"我放弃过什么"目前只能直接读那一片 jsonl。
 两次收口的报错不再是同一句话（`已经关闭过` / `已经 done 过` / `已经 drop 过`），用例得锁具体那一个词。
 
+## 不发 npm：`private` 保持 true，那个名字拿不回来
+
+**决定**
+`package.json` 保持 `"private": true`，版本号与 tag 照常推进，但不发布到 npm。
+装它只有两条路：`git clone` 后 `npm link`（或把 `bin/agent-man.mjs` 放进 `PATH`），
+或把它当 DSH 插件从本地路径装（`dsh.bundle.patch` 指 `./dsh/cordis.patch.yml`）。
+
+**来由**
+npm 上的 `agent-man` 从 2022 年起就是别人的包（`ksky521`，0.0.1，90 字节的占位），名字拿不回来；
+要发只能换成带作用域的 `@<账号>/agent-man`，那是另一摊要维护的东西（发布凭据、两个名字、
+别人 `npm i -g agent-man` 装到的仍是别人的包）。这一层是自用的，两种装法都通，不值得为「能发」改名。
+`private: true` 同时是保险：手滑 `npm publish` 会被直接挡下，而不是把半成品推到公开仓库。
+
+**代价**
+没有 `npm i -g agent-man` 那一行，别人要用得先 clone；DSH 插件也只能从本地路径装，不能用包名。
+将来真要发，第一步是把 `name` 改成带作用域的包名，README 与 `dsh/` 里的自述要跟着改一遍。
