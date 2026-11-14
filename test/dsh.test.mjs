@@ -134,6 +134,36 @@ test('首步注入：root 第 1 步在最前插一条，自我/处境/情绪/回
   assert.deepEqual(host.warnings, [])
 })
 
+test('自我块已经在上下文里就不再重发，上下文里没有了（比如被压缩折掉）就重新带', async () => {
+  const home = newHome()
+  await plantCard(home)
+  const host = fakeHost({ home })
+  host.openSession()
+
+  const ask = (text, history = []) => ({
+    step: 1,
+    header: ROOT,
+    messages: [{ role: 'user', content: [{ type: 'text', text }] }, ...history],
+  })
+
+  const first = await host.preStep(ask('在吗'), enter)
+  const firstText = first.messages[0].content[0].text
+  assert.match(firstText, /\[称呼\] 小满/u)
+
+  // 第二轮：上一轮那条注入还在上下文里 —— 自我块不再发第二份，处境照旧每轮重算。
+  const second = await host.preStep(ask('还在吗', [first.messages[0]]), enter)
+  const secondText = second.messages[0].content[0].text
+  assert.equal(secondText.includes('[称呼]'), false, '自我块还在上下文里，却又发了一份')
+  assert.ok(secondText !== '', '省掉自我块不等于整条注入也省掉')
+  assert.ok(cost(secondText) < cost(firstText), `第二轮 ${cost(secondText)} 不比第一轮 ${cost(firstText)} 省`)
+
+  // 第三轮：那条注入已经被压缩折掉（上下文里没有它了）—— 重新带一遍，
+  // 否则模型会以为灵魂还在旧址（账本必须是上下文本身，不是"我们记过一笔"）。
+  const third = await host.preStep(ask('还说吗'), enter)
+  assert.match(third.messages[0].content[0].text, /\[称呼\] 小满/u)
+  // 没有 sessionQuery 时那条"没接上"的警告本来就有，这里只看注入本身，不断言警告。
+})
+
 test('只有 root 的第 1 步注入：第 2 步、子代理、被拦、被中止都不插', async () => {
   const home = newHome()
   await eventAdd({ text: '她在改预算', imp: 1 }, { home, now: T })

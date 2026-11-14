@@ -64,7 +64,10 @@ async function preStep(deps, agent, payload, next) {
 
     const at = nowTs()
     const userText = lastUserText(payload.messages) || lastUserText(decision.messages)
-    const built = await buildInjection(deps, { header, userText, at })
+    // 上下文取两份的并集：payload 里的是宿主认领过的消息，decision 里的是它自己补进去的。
+    const context = [...(Array.isArray(payload.messages) ? payload.messages : []),
+      ...(Array.isArray(decision.messages) ? decision.messages : [])]
+    const built = await buildInjection(deps, { header, userText, at, context })
     for (const line of built.warnings) deps.warn(line)
     if (built.text === '') return decision
     return { ...decision, messages: [injectionMessage(built.text), ...decision.messages] }
@@ -75,7 +78,8 @@ async function preStep(deps, agent, payload, next) {
 }
 
 // 取数 + 装配：唯一一处把"环境里的东西"变成"块"的地方。
-async function buildInjection(deps, { header, userText, at }) {
+// context 是这次请求已经认领的消息：自我块已在里面就不再发第二份（见 alreadyInContext）。
+async function buildInjection(deps, { header, userText, at, context = [] }) {
   const { cfg, homeDir } = deps
   const warnings = []
 
@@ -92,6 +96,10 @@ async function buildInjection(deps, { header, userText, at }) {
       warnings.push(`! 灵魂卡 ${cur.name} 没读出来（${messageOf(e)}）：这次自我块空着`)
     }
   }
+
+  // 同一份自我块已经在这次请求的上下文里：不再重发（每轮省 200 cost）。
+  // 判断只比文本、不比时间——换卡、卡被重导、压缩把旧消息折掉，都会让它重新出现或改变。
+  if (soul !== '' && alreadyInContext(context, soul)) soul = ''
 
   // 处境块 = 处境正文 + 情绪行（§13）。正文交给 mind 与 view，宿主只负责拼：
   // 抬头那一行是给人看的屏框（"agent-man · 2026-11-13 15:00"），注入里用不上——
@@ -119,6 +127,34 @@ async function buildInjection(deps, { header, userText, at }) {
   const out = compose({ blocks, budget: cfg.inject.total })
   for (const line of out.warnings) warnings.push(line)
   return { text: out.text, warnings }
+}
+
+// 这段字是不是已经在**这次请求的上下文**里了：只比段首一小截，不记账、不比时间。
+// 用上下文本身当账本的好处是自动跟着压缩走：旧消息被折掉之后它就"不在了"，
+// 下一轮自然重发一遍；反过来，只要还在历史里，就不再塞第二份（每轮省 200 cost）。
+function alreadyInContext(messages, text) {
+  const head = typeof text === 'string' ? text.slice(0, 60) : ''
+  if (head === '' || !Array.isArray(messages)) return false
+  for (const one of messages) {
+    for (const part of partsOf(one)) {
+      if (part.includes(head)) return true
+    }
+  }
+  return false
+}
+
+// 只认"能读成文字"的部分：content 可能是字符串，也可能是 [{type:'text',text}] 的块。
+function partsOf(message) {
+  const out = []
+  if (!message || typeof message !== 'object') return out
+  const content = message.content
+  if (typeof content === 'string') out.push(content)
+  else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (part && typeof part.text === 'string') out.push(part.text)
+    }
+  }
+  return out
 }
 
 function situationBlock(deps, at, warnings) {
