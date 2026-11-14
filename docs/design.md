@@ -747,13 +747,13 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 
 | 限制 | 现状 | 什么时候需要动 |
 |---|---|---|
-| DSH 工具注册的 API 形状 | 按 `ctx.get('tools')?.register?.(…)` 写，拿不到只发一条 `! ` | 第一次在 DSH 实机上跑宿主层时确认 |
-| 宿主层只做过结构用例 | `apply` 在假 ctx 上跑过；真会话里的首步注入没验 | 同上 |
+| DSH 工具注册与返回值形状 | 按 `ctx.get('tools')?.register?.(…)` 写；返回值一律纯文本（`toolText` 一处适配）；整套契约由 `test/dsh.test.mjs` 里的假宿主锁着 | 第一次在 DSH 实机上跑时确认；形状不符只改 `dsh/index.mjs` 的 `registerTools`/`toolText` 与那个假宿主，业务侧不动 |
+| 宿主层没进过真会话 | 假宿主走完了 `agent/created` → `agent/pre-step` → 首步注入 → 工具调用；四块内容、预算上限、root 判定、缺服务时的降级都有用例 | 同上：实机开一个新会话看一眼 |
 | 证据区间 `--from 日期..日期` | 明确退 2，只认事件 id | 有人真的按区间给证据时，让记忆层自己解析 |
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | `appendSelf` 的日界 | 用默认 00:00，没接 `clock.dayStart`；00:00–04:00 之间写会归到前一天 | 有人凌晨写自我块时 |
 | `audit/doctor` 的部分读路径 | `timeline` 直接读 `rules.jsonl`、`checkSelf` 直接读 `self.md`，绕过了门面 | 改规矩或自我块格式时 |
-| 测试残留 | 各用例 `mkdtemp` 后不清理，`os.tmpdir` 里会攒 `agent-man-*` 目录 | 嫌吵时加一个统一的清理钩子 |
+| 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |
 
