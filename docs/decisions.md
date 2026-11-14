@@ -333,6 +333,26 @@ DSH 认的关键字只有 `type/oneOf/properties/required/additionalProperties/i
 读代码要多看一层。`inputSchema` → `parameters` 的翻译只活在这一处，宿主再改名改的还是这里，
 所以 `test/dsh.test.mjs` 里那张形状断言是锁，不是装饰。
 
+## 注入去重问的是会话 surface，不是 `payload.messages`
+
+**决定**
+`dsh/index.mjs` 的 `preStep` 判断"自我块是不是已经在这次请求里"时，先问 `agent.session`：
+`surface.nodes` 里还活着的 `user/message`（`snapshotEvents()` 按 seq 筛出来）。拿不到 session
+（假宿主、形状变了、读事件抛错）才退回 `payload.messages ∪ decision.messages`。
+
+**来由**
+真宿主 `preStep`（`dsh-agent-loop/lib/index.js:670`）交给 `agent/pre-step` 水流的 `messages`
+就是 `this.inbox.claim(target, position.turn)` 的产物——**只有这一轮新认领的消息**，runtime-context
+快照由宿主自己追加在它后面。上一轮我们 prepend 进去的那条注入不在里面，所以只看 `payload.messages`
+的去重永远扫不到自己，静默失效（安全，但等于没做）。`session.surface` 才是请求真正用到的那份投影：
+压缩、替换之后旧消息会从 `nodes` 里消失——拿它当账本，"还在就不发、不在就重发"才真的跟着上下文走，
+也不用在进程里记账（进程里的账在压缩之后会说谎）。
+
+**代价**
+每轮多扫一遍会话事件（O(事件数)，纯内存、无 IO）；`surface` 的形状是宿主的内部约定，变了就静默退回
+旧口径——去重失效，但不会多发也不漏发，`test/dsh.test.mjs` 里那条「去重认的是会话 surface」的用例
+是这条依赖的锁。
+
 ## 每轮第一步都注入
 
 **决定**
