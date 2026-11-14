@@ -54,7 +54,7 @@ function seedEvent(home, { id, at, text }) {
 
 function seedRule(home, { id, at, supersedes = [], text = '夜里十一点后不提工作' }) {
   ensure(home)
-  return appendJsonl(path.join(home, 'rules.jsonl'), { id, at, text, why: '昨天 23:40 提加班', supersedes })
+  return appendJsonl(path.join(home, 'rules.jsonl'), { id, at, text, why: '昨天 23:40 提加班', supersedes, seen: 0 })
 }
 
 function traceRow(at, over = {}) {

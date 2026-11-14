@@ -4,7 +4,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { RULE_LIMIT, SELF_MAX, cost } from '../core/index.mjs'
+import { RULE_LIMIT, SELF_MAX } from '../core/index.mjs'
+import * as memory from '../memory/index.mjs'
 import { VERSION, checkHome, readJson } from '../store/index.mjs'
 
 // 分片只有一个层级（design §3：不许加目录层级）：events/<天>.jsonl 与 state/*.jsonl，
@@ -212,14 +213,10 @@ function checkParts(dir) {
 }
 
 function checkSelf(dir) {
-  let text = ''
-  try {
-    text = fs.readFileSync(path.join(dir, 'self.md'), 'utf8')
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { ok: true, detail: '还没写过 self.md' }
-    throw e
-  }
-  const used = cost(text)
+  // 走 memory 门面的读：文件叫什么、预算怎么算，只有那一处说了算（doctor 仍然只读）。
+  const read = memory.readSelf(dir)
+  if (read.updatedAt === null) return { ok: true, detail: '还没写过 self.md' }
+  const used = read.cost
   if (used > SELF_MAX) {
     return { ok: false, detail: `self.md 是 ${used.toFixed(1)} cost，超过上限 ${SELF_MAX}：删掉过时的段落（doctor 只报不改）` }
   }

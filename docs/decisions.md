@@ -236,3 +236,19 @@ CLI 与宿主层各在写入口读一次配置交给它们，中间层不许自�
 **代价**
 `config set` 会把一个"看起来像数据目录"的空目录建出来；如果路径写错（比如多了个反斜杠），
 会在错的地方留一个只有 `config.json` 的目录。这比"报错但不知道怎么办"轻，接受。
+
+## 规矩与自我块只有门面一个读者
+
+**决定**
+`audit/timeline` 要列规矩时不自己读 `rules.jsonl`，改调 `memory.listRules({ all: true })`；
+`audit/doctor` 的 `checkSelf` 也不自己读 `self.md`，改调 `memory.readSelf()`。分层上 `audit → memory` 是允许的。
+
+**来由**
+一个 id 在 `rules.jsonl` 里可能有多行（`seen` +1 是追加同 at 的完整副本），"哪行算数"是记忆层的语义决定。
+在 audit 里再实现一遍折叠，等于第二个真源：记忆层改了折叠规则，时间线还是旧口径，而且没人会想到去改它。
+同理 `self.md` 的预算与段落格式只有 `memory/self` 知道，doctor 自己 `cost()` 一遍迟早对不上。
+
+**代价**
+audit 多了一层调用，坏行的"跳过"由记忆层计数（`skipped` 一路带出，不吞）；
+手写进 `rules.jsonl`、缺 `seen` 的行会被记忆层当坏行跳过，时间线上看不见——这是形状契约的代价，正常写入路径一定写 `seen: 0`。
+

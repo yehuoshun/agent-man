@@ -1,8 +1,6 @@
 // audit timeline（design §6）：情景、结论、规矩、便条、日程按 at 现读现排成一条线。
 // 不落盘、不建索引（design §11 的 read-only 账本语义）：每次调用都从分片现读，
 // 因为多一份时间线就等于多一份真源（AGENTS 一·不做）——错开一次就再也对不上。
-import path from 'node:path'
-
 import { DEFAULT_WINDOW_DAYS, now as coreNow } from '../core/index.mjs'
 import * as intent from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
@@ -49,15 +47,11 @@ export function timeline({ home, now, limit, all } = {}) {
 
   // 规矩没有分片（design §3）：一个文件读到底。旧行永不改写，被 supersedes 的那条照样
   // 留在时间线上——它确实在某天被定下过，把它藏起来才是编故事。
-  const rules = readJsonl(path.join(dir, 'rules.jsonl'))
-  skipped += rules.bad
-  for (const rec of rules.items) {
-    if (!validate('rules', rec).ok) {
-      skipped += 1
-      continue
-    }
-    add(rec.at, 'rule', rec.id, rec.text)
-  }
+  // 规矩走 memory 门面读：一个 id 可能有多行（seen 的 +1 是追加副本），折成一条是记忆层的事，
+  // 在这里再实现一遍"哪行算数"就等于第二个真源。
+  const rules = memory.listRules(dir, { all: true, now: base })
+  skipped += rules.skipped
+  for (const rec of rules.items) add(rec.at, 'rule', rec.id, rec.text)
 
   // 便条与日程"现在还剩什么"是 intent 折叠出来的（design §4 的 op 流水账）：
   // 这里不重算 take/drop，否则同一条便条会在两个地方有两种活法。

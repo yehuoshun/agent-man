@@ -757,7 +757,7 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
-| `audit/doctor` 的部分读路径 | `timeline` 直接读 `rules.jsonl`、`checkSelf` 直接读 `self.md`，绕过了门面 | 改规矩或自我块格式时 |
+| 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | 规矩不参与复述记账 | `rules.seen` 恒 0（没有调用方给它 +1） | 需要"这条规矩用过几次"的时候 |
 
