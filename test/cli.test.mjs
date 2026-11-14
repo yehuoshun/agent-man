@@ -257,6 +257,27 @@ test('plan add 认得「明天 9:00」，plan done 打勾后重复打勾退出�
   assert.match(again.err, /已经 done 过/)
 })
 
+test('note drop 与 plan drop：丢掉后 ls 里不见，第二次退出码 2 且说清是 drop 收的口', async () => {
+  const one = box()
+  const note = JSON.parse((await cli(one, ['note', 'add', '周末买电池', '--trigger', '出门', '--json'])).out)
+  const droppedNote = await cli(one, ['note', 'drop', note.id])
+  assert.equal(droppedNote.code, 0)
+  assert.match(droppedNote.out, /已丢掉/)
+  assert.doesNotMatch((await cli(one, ['note', 'ls'])).out, /周末买电池/, '丢掉的便条不许再上屏')
+  const noteAgain = await cli(one, ['note', 'drop', note.id])
+  assert.equal(noteAgain.code, 2)
+  assert.match(noteAgain.err, /已经关闭过/, '第二次放弃要退 2，不是默默当成功')
+
+  const plan = JSON.parse((await cli(one, ['plan', 'add', '去体检', '--at', '明天 9:00', '--json'])).out)
+  const droppedPlan = await cli(one, ['plan', 'drop', plan.id])
+  assert.equal(droppedPlan.code, 0)
+  assert.match(droppedPlan.out, /已丢掉/)
+  assert.doesNotMatch((await cli(one, ['plan', 'ls'])).out, /去体检/, '丢掉的日子不许再上屏')
+  const planAgain = await cli(one, ['plan', 'drop', plan.id])
+  assert.equal(planAgain.code, 2)
+  assert.match(planAgain.err, /已经 drop 过/, '第二次放弃要退 2')
+})
+
 test('plan ls 把过点的排在前面并标「已晚」', async () => {
   const one = box()
   await cli(one, ['plan', 'add', '交房租', '--at', '2026-11-13 09:00'])

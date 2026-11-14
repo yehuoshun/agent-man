@@ -138,8 +138,8 @@ agent-man event  ls | find <字面> [--since …] [--until …] [--all] [--limit
 agent-man memory add "<事实>" --key <槽位> --from <事件id…> [--imp 0-3]
 agent-man memory ls | find | show <id|key> | revise <id> "<新事实>" [--imp 0-3]
 agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls
-agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id>
-agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id>  ·  plan ls
+agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take <id> | drop <id>
+agent-man plan   add "<事>" --at "<什么时候>"    ·  plan done <id> | drop <id>  ·  plan ls
 agent-man self   show | set "<整份文本>" | append "<文本>"
 agent-man soul   ls | use <名字> | show [--json] | check <名字> | import <卡文件>
 agent-man affect show | set <轴> <数值> [--for 2h] [--why "…"] | clear | why
@@ -222,8 +222,8 @@ src/
 | memory/conclusions | `add` `revise` `list`（别名 `ls`）`find` `show(home,idOrKey)` `markSeen(home,{ids,at})` `conflict(key)` `orphan(home)` |
 | memory/rules | `addRule(home,{text,why,supersedes})` `listRules(home,{all})` → `{items,live,total,over,limit,skipped}` |
 | memory/self | `readSelf(home)` `setSelf(home,text)` `appendSelf(home,text,{now})` |
-| intent/notes | `add` `list(home,{now})` `take(home,id)` `match(home,text)` |
-| intent/plans | `add` `done` `list(home,{now,days})` |
+| intent/notes | `add` `list(home,{now})` `take(home,id)` `drop(home,id)` `match(home,text)` |
+| intent/plans | `add` `done(home,id)` `drop(home,id)` `list(home,{now,days})` |
 | recall/rank | `retention(rec,now,kind)` `score(rec,q,now,kind)` `sortByScore(items,q,now,kind)` |
 | recall/find | `find(home,{query,kinds,from,to,limit,all})` |
 | recall/budget | `fit(sections,budget)` `costOf(text)` |

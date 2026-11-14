@@ -6,7 +6,7 @@ import { appendOp, fold, readOps } from './ledger.mjs'
 import { atOf, gate, optsOf, textOf, timeOf } from './shape.mjs'
 
 const KIND = 'plans'
-const CLOSED = new Set(['done'])
+const CLOSED = new Set(['done', 'drop'])
 const DAY_MS = 24 * 60 * 60 * 1000 // 单位换算，不是 §10 的调参常数
 
 export async function add(homeDir, input, extra) {
@@ -52,9 +52,19 @@ export const ls = list
 
 export function done(homeDir, id, { now: nowTs } = {}) {
   const at = Number.isFinite(nowTs) ? nowTs : now()
-  const rec = openPlan(homeDir, id)
+  const rec = openPlan(homeDir, id, 'done')
   appendOp(homeDir, KIND, { op: 'done', id: rec.id, at })
   return { ...item(rec, at), doneAt: at }
+}
+
+// 不做了：与 done 一样只追加一条 op、ls 里立刻消失，区别只在账本上记的词。
+// "做到过"和"压根没做"将来回看不是一回事（design §4 的 op 流水账留着这两笔就是为了分得清），
+// 所以 drop 不写成 done，也不复用 done 的返回值语义。
+export function drop(homeDir, id, { now: nowTs } = {}) {
+  const at = Number.isFinite(nowTs) ? nowTs : now()
+  const rec = openPlan(homeDir, id, 'drop')
+  appendOp(homeDir, KIND, { op: 'drop', id: rec.id, at })
+  return { ...item(rec, at), droppedAt: at }
 }
 
 // late 只给数据：晚到什么程度、要不要催，是 view 与 gate 的判断。
@@ -63,13 +73,13 @@ function item(rec, at) {
   return { id: rec.id, at: rec.at, text: rec.text, due, late: due !== null && due < at }
 }
 
-// 找不到 / 已经 done 都抛：让 CLI 变成退出码 2，而不是"好像做了"。
-function openPlan(homeDir, id) {
+// 找不到 / 已经收口（done 或 drop）都抛：让 CLI 变成退出码 2，而不是"好像做了"。
+function openPlan(homeDir, id, what) {
   const want = typeof id === 'string' ? id.trim() : ''
-  if (want === '') throw new Error('done 要给日程 id：plan ls 的第一列就是')
+  if (want === '') throw new Error(`${what} 要给日程 id：plan ls 的第一列就是`)
   const { ops } = readOps(homeDir, KIND)
   const slot = fold(ops, CLOSED).byId.get(want)
   if (!slot) throw new Error(`没有这条日程：${want}（plan ls 看现在有哪些）`)
-  if (slot.closedAt !== null) throw new Error(`这条日程已经 done 过：${want}`)
+  if (slot.closedAt !== null) throw new Error(`这条日程已经 ${slot.closedOp} 过：${want}`)
   return slot.rec
 }

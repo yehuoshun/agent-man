@@ -43,9 +43,11 @@ export const TABLE = new Map([
   ['note add', guard(noteAdd)],
   ['note ls', guard(noteLs)],
   ['note take', guard(noteTake)],
+  ['note drop', guard(noteDrop)],
   ['plan', guard(planLs)],
   ['plan add', guard(planAdd)],
   ['plan done', guard(planDone)],
+  ['plan drop', guard(planDrop)],
   ['plan ls', guard(planLs)],
 
   // 规矩与自我块也住语义层（design §7）：规矩只追加，替代靠新条点名 supersedes；
@@ -621,6 +623,21 @@ function noteTake(ctx) {
   return 0
 }
 
+// 不要了：与 take 一样只是追加一条 op、ls 里立刻消失；账本上记的词不同，
+// 因为"递出去过"和"压根没用上"将来回看不是一件事（design §4）。
+function noteDrop(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const id = words.join(' ').trim()
+  if (!id) throw new Error('用法：agent-man note drop <id>')
+  const one = intent.notes.drop(homeOf(ctx), id, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, one)
+  else {
+    ctx.out(`已丢掉 ${record({ id: one.id, when: rel(one.at, ctx.now), text: one.text,
+      trigger: one.trigger }, 'note')}\n`)
+  }
+  return 0
+}
+
 async function planAdd(ctx) {
   const { words, flags } = split(ctx.rest, { names: ['at'], bools: ['json'] })
   const text = words.join(' ').trim()
@@ -664,6 +681,17 @@ function planDone(ctx) {
   const one = intent.plans.done(homeOf(ctx), id, { now: ctx.now })
   if (on(flags, 'json')) jsonOut(ctx, one)
   else ctx.out(`已打勾 ${record({ id: one.id, when: rel(one.due, ctx.now), text: one.text }, 'plan')}\n`)
+  return 0
+}
+
+// 不做了：与 done 一样把这条日程从 ls 里收掉，账本上记的是 drop 不是 done。
+function planDrop(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const id = words.join(' ').trim()
+  if (!id) throw new Error('用法：agent-man plan drop <id>')
+  const one = intent.plans.drop(homeOf(ctx), id, { now: ctx.now })
+  if (on(flags, 'json')) jsonOut(ctx, one)
+  else ctx.out(`已丢掉 ${record({ id: one.id, when: rel(one.due, ctx.now), text: one.text }, 'plan')}\n`)
   return 0
 }
 

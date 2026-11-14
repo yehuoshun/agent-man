@@ -40,14 +40,19 @@ export function fold(ops, closed) {
     if (op.op === 'add') {
       // 同一个 id 两条 add 只可能来自手写或并发事故：留头一条，多出来的计数报出去。
       if (byId.has(op.id)) bad += 1
-      else byId.set(op.id, { rec: op, closedAt: null })
+      else byId.set(op.id, { rec: op, closedAt: null, closedOp: null })
       continue
     }
     if (closed.has(op.op)) {
       const slot = byId.get(op.id)
       // 关一个没见过的 id：这一行对不上账，跳过并计数，不猜它是哪一条。
       if (!slot) bad += 1
-      else slot.closedAt = op.at
+      else {
+        slot.closedAt = op.at
+        // 收口用的是哪个词要留下：done 与 drop 之后都"不活了"，但报错和回看时要分得清
+        // （"已经 done 过"和"已经 drop 过"不是同一句话）。
+        slot.closedOp = op.op
+      }
       continue
     }
     bad += 1 // 认不出的 op：读不懂的行跳过并计数，不抛

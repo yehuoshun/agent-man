@@ -265,6 +265,27 @@ test('done 之后 ls 不再出现；流水账里仍留着 done，旧行不动', 
   assert.throws(() => plans.done(home, 'p-19700101-01', { now: T }), /没有这条日程/)
 }))
 
+test('drop 之后 ls 不再出现；流水账里留的 drop 不是 done：做完了和不做了要分得清', () => inHome(async (home) => {
+  const rec = await plans.add(home, { text: '陪她看牙', due: '明天 9:00', at: T })
+  const file = shard(home, 'plans', T)
+  const before = lines(file)
+  const dropped = plans.drop(home, rec.id, { now: T + HOUR })
+  assert.equal(dropped.text, '陪她看牙', 'drop 要把放弃掉的日程交回来')
+  assert.equal(dropped.droppedAt, T + HOUR)
+  assert.equal(dropped.doneAt, undefined, 'drop 不是 done：不许顺手冒充做完')
+  const after = lines(file)
+  assert.equal(after.length, before.length + 1)
+  assert.equal(after[0], before[0], '旧行被改写了：op 流水账只追加')
+  assert.deepEqual(JSON.parse(after[after.length - 1]), { op: 'drop', id: rec.id, at: T + HOUR },
+    '关闭记录只带 op / id / at')
+  assert.equal(plans.list(home, { now: T + HOUR }).items.length, 0, '放弃掉的日程不该再折出来')
+  assert.equal(plans.list(home, { now: T + HOUR }).late, 0, 'drop 不是逾期：不许混进 late 计数')
+  assert.throws(() => plans.drop(home, rec.id, { now: T + 2 * HOUR }), /已经 drop 过/, '同一条不能放弃两次')
+  assert.throws(() => plans.done(home, rec.id, { now: T + 2 * HOUR }), /已经 drop 过/,
+    'drop 过的日程不能再打勾：报错要说清是谁收的口')
+  assert.throws(() => plans.drop(home, '', { now: T }), /plan ls 的第一列/, '没给 id 要说清去哪儿找')
+}))
+
 test('due 过了标 late、没过的不标：late 只给数据，催不催是别人判断', () => inHome(async (home) => {
   const yesterday = new Date(2026, 10, 12, 9, 0).getTime()
   const tomorrow = new Date(2026, 10, 14, 9, 0).getTime()

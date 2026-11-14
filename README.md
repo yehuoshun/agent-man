@@ -41,8 +41,8 @@ agent-man                             处境屏（≡ context show）
 agent-man event  add|ls|find          情景
 agent-man memory add|ls|find|show|revise   结论
 agent-man rule   add|ls               规矩
-agent-man note   add|ls|take          便条
-agent-man plan   add|done|ls          日程
+agent-man note   add|ls|take|drop     便条
+agent-man plan   add|done|drop|ls     日程
 agent-man self   show|set|append      自我块
 agent-man soul   ls|use|show|check|import  灵魂卡（角色卡）
 agent-man affect show|set|clear|why   情绪（四轴：情绪/精力/信任/尊重）
