@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { RULE_LIMIT, RULE_MAX, cost } from '../src/core/index.mjs'
-import { addRule, listRules } from '../src/memory/index.mjs'
+import { addRule, listRules, markRulesSeen } from '../src/memory/index.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 // 时间用例一律传死 now（AGENTS 六）：规矩不衰减，但排序与标题日期都得可复现。
@@ -265,6 +265,36 @@ test('数据里活条超过上限：不删也不抛，把超出的条数交给�
 test('缺 home：明确报错，不往当前工作目录写规矩', async () => {
   await assert.rejects(() => addRule(undefined, { text: '规矩', why: '理由', now: NOW }), /需要一个数据目录/)
   assert.throws(() => listRules(''), /需要一个数据目录/)
+})
+
+test('复述记账：追加一条同 id 同 at 的副本，只有 seen +1，旧行逐字不动', async () => {
+  const home = newHome()
+  const added = await seed(home)
+  const before = rawRules(home)
+  const got = markRulesSeen(home, { ids: [added.id], at: NOW + 1000 })
+  assert.deepEqual(got.marked, [added.id])
+  const after = rawRules(home)
+  assert.equal(after.length, 2, '旧行被改写或者副本没落盘')
+  assert.deepEqual(after[0], before[0], '旧行不该动一个字节')
+  assert.equal(after[1].seen, 1)
+  // at 照抄：规矩不衰减，把 at 挪到复述时刻就等于改了"什么时候立的"
+  assert.equal(after[1].at, after[0].at)
+  assert.equal(after[1].text, after[0].text)
+  assert.deepEqual(after[1].supersedes, after[0].supersedes)
+  // 读出来仍是一条，seen 是后写的那版
+  const listed = listRules(home, { now: NOW })
+  assert.equal(listed.items.length, 1)
+  assert.equal(listed.items[0].seen, 1)
+})
+
+test('复述记账：同一个 id 传两遍只 +1，不存在的 id 说出来而不是补一条', async () => {
+  const home = newHome()
+  const added = await seed(home)
+  const got = markRulesSeen(home, { ids: [added.id, added.id, 'r-19990101-01'], at: NOW })
+  assert.deepEqual(got.marked, [added.id])
+  assert.equal(got.skipped.length, 1)
+  assert.match(got.skipped[0].why, /找不到/)
+  assert.equal(rawRules(home).length, 2)
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。

@@ -695,7 +695,8 @@ function ruleLs(ctx) {
     ctx.out(`${rowsOf(ctx, got.items, 'rule', (one, c) => ({
       id: one.id,
       when: rel(one.at, c.now),
-      text: one.text,
+      // 复述次数只在真被复述过时补一句：0 次是常态，天天印一个 0 会把行读成噪声。
+      text: one.seen > 0 ? `${one.text}（复述过 ${one.seen} 次）` : one.text,
     }))}\n`)
   }
   if (got.over > 0) {

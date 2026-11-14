@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { SECTION_ITEMS_MAX, cost } from '../src/core/index.mjs'
 import { trace as auditTrace } from '../src/audit/index.mjs'
 import { build, run } from '../src/digest/index.mjs'
-import { add, show } from '../src/memory/index.mjs'
+import { add, addRule, listRules, show } from '../src/memory/index.mjs'
 import { appendJsonl, ensure, eventsFile, readJsonl, stateFile } from '../src/store/index.mjs'
 import { renderDigest } from '../src/view/index.mjs'
 
@@ -225,7 +225,7 @@ test('窗口只认 30 天：40 天前的结论与情景都不进这一屏', asyn
   await seedFact(home, { key: 'k-old', ids: ['e-old'], at: old, text: '四十天前的结论' })
 
   const got = build({ home, now: NOW })
-  assert.deepEqual(got.candidates, { memory: 0, event: 1 }, '窗口外的记录被选进来了')
+  assert.deepEqual(got.candidates, { memory: 0, rule: 0, event: 1 }, '窗口外的记录被选进来了')
   assert.ok(got.kept.every((row) => row.id !== 'e-old'))
 })
 
@@ -364,6 +364,34 @@ test('"还没巩固过"由 audit.trace 回空数组表达：digest 不再自带 
   seedEvent(home, { id: 'e1' })
   await run({ home, now: NOW, render: renderDigest, ...QUIET })
   assert.equal(auditTrace({ home, now: NOW }).items.length, 1, '已经落过账了还说从没落过')
+})
+
+test('规矩进「规矩」这一段：抬头带规矩数，正文写它，复述名单也单列', async () => {
+  const home = newHome()
+  seedEvent(home, { id: 'e1' })
+  const rule = await addRule(home, { text: '走之前先关窗', why: '上次淋湿了地板', at: NOW, now: NOW })
+
+  const got = build({ home, now: NOW })
+  const section = got.sections.find((one) => one.name === '规矩')
+  assert.ok(section !== undefined, '规矩这一段没出现')
+  assert.deepEqual(section.items, [rule.id])
+  assert.match(got.body, /## 规矩\n- 走之前先关窗/u)
+  assert.match(got.header, /规矩 1/u, '抬头该说出有几条规矩')
+  assert.deepEqual(got.retellRules, [rule.id])
+  assert.deepEqual(got.retell, [], '规矩不该混进结论的复述名单')
+})
+
+test('规矩的复述账：run 完之后 seen +1，dry-run 一次都不记', async () => {
+  const home = newHome()
+  seedEvent(home, { id: 'e1' })
+  const rule = await addRule(home, { text: '先说结论再解释', why: '她没耐心听铺垫', at: NOW, now: NOW })
+
+  await run({ home, now: NOW, render: renderDigest, write: false, ...QUIET })
+  assert.equal(listRules(home, { now: NOW }).items[0].seen, 0, 'dry-run 也记了账')
+
+  const result = await run({ home, now: NOW, render: renderDigest, ...QUIET })
+  assert.deepEqual(result.rulesSeen, [rule.id])
+  assert.equal(listRules(home, { now: NOW }).items[0].seen, 1)
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。

@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { markRulesSeen } from '../memory/index.mjs'
 import { debt } from '../mind/index.mjs'
 import { writeAtomic } from '../store/index.mjs'
 
@@ -39,6 +40,7 @@ export async function run(opts = {}) {
   const warnings = built.warnings.slice()
   let written = null
   let seen = null
+  let markedRules = []
   let traced = null
   let settled = null
 
@@ -54,6 +56,11 @@ export async function run(opts = {}) {
     // 没记上的每一条都说出来：seen 少一次不会报错，只会让"我说过几次"慢慢变成假话。
     for (const miss of seen.skipped) warnings.push(`! ${miss.id} 没记进 seen：${miss.why}`)
     for (const miss of seen.failed) warnings.push(`! ${miss.id} 记账失败：${miss.why}`)
+    // 规矩的复述账走它自己的写入路径（没有版本链，一个 id 一行），失败同样要说出来。
+    const rulesSeen = markRulesSeen(dir, { ids: built.retellRules, at })
+    for (const miss of rulesSeen.skipped) warnings.push(`! 规矩 ${miss.id} 没记进 seen：${miss.why}`)
+    for (const miss of rulesSeen.failed) warnings.push(`! 规矩 ${miss.id} 记账失败：${miss.why}`)
+    markedRules = rulesSeen.marked
     traced = record({
       home: dir,
       now: at,
@@ -71,7 +78,7 @@ export async function run(opts = {}) {
   if (target === null) say(`${text}\n`)
   for (const line of warnings) warn(`${line}\n`)
 
-  return { text, built, seen, trace: traced, settled, out: written, wrote: !dry, warnings }
+  return { text, built, seen, rulesSeen: markedRules, trace: traced, settled, out: written, wrote: !dry, warnings }
 }
 
 // out 的目录不替你建：写到哪儿是调用方的决定，猜错地方再建一串目录，

@@ -6,7 +6,7 @@ import {
   DEFAULT_WINDOW_DAYS, DIGEST_BUDGET, SECTION_ITEMS_MAX, clock, cost, dayKey,
   now as coreNow, rel,
 } from '../core/index.mjs'
-import { events, ls as memoryLs } from '../memory/index.mjs'
+import { events, listRules, ls as memoryLs } from '../memory/index.mjs'
 import { atOf, fit, idOf, rank, textOf } from '../recall/index.mjs'
 
 // 天→毫秒只是单位换算，不是 §10 的常数：30 天这个数来自 core（design §5）。
@@ -16,10 +16,12 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // 少写一份就不会出现"'记住的事'里有条情景"这种事。
 const SECTIONS = [
   { name: '记住的事', kind: 'memory' },
+  { name: '规矩', kind: 'rule' },
   { name: '最近', kind: 'event' },
 ]
 
 const MEMORY = SECTIONS[0].name
+const RULES = SECTIONS[1].name
 const TITLE = '# 我记得的事'
 
 // 抬头的四个形态，信息从多到少（design §4 的账本里 header 记的就是这几个名字，例子里是 "full"）：
@@ -44,7 +46,9 @@ function headerOf(form, counts) {
   const scope = `${DEFAULT_WINDOW_DAYS} 天窗口`
   if (form === 'bare') return `${TITLE} · ${scope}`
   if (form === 'compact') return `${TITLE} · ${scope} · 候选 ${counts.total} 条`
-  return `${TITLE} · ${scope} · 候选 结论 ${counts.memory} / 情景 ${counts.event} · ${counts.stamp}`
+  // 规矩只在真有的时候才进抬头：没有规矩的人不必看见一个恒为 0 的计数。
+  const rules = counts.rule > 0 ? ` / 规矩 ${counts.rule}` : ''
+  return `${TITLE} · ${scope} · 候选 结论 ${counts.memory} / 情景 ${counts.event}${rules} · ${counts.stamp}`
 }
 
 // build({home,now,budget}) → 一屏摘要的选段结果，外加"为什么少了东西"的全部理由。
@@ -57,12 +61,18 @@ export function build(opts = {}) {
 
   const scenes = readEvents(dir, at, from)
   const facts = readConclusions(dir, at, from)
+  const rules = readLiveRules(dir, at)
 
   // 先排序再选：rank 只认分数、时间、id 三段，同一批数据换台机器次序也一样（design §5）。
+  const sources = { memory: facts.items, rule: rules.items, event: scenes.items }
   const ranked = SECTIONS.map((sec) => ({
     ...sec,
-    items: rank(sec.kind === 'memory' ? facts.items : scenes.items, { now: at, kind: sec.kind }),
+    items: rank(sources[sec.kind] ?? [], { now: at, kind: sec.kind }),
   }))
+  const countOf = (kind) => {
+    const one = ranked.find((sec) => sec.kind === kind)
+    return one === undefined ? 0 : one.items.length
+  }
 
   const lost = []
   const blocks = []
@@ -83,9 +93,10 @@ export function build(opts = {}) {
   }
 
   const counts = {
-    memory: ranked[0].items.length,
-    event: ranked[1].items.length,
-    total: ranked[0].items.length + ranked[1].items.length,
+    memory: countOf('memory'),
+    rule: countOf('rule'),
+    event: countOf('event'),
+    total: countOf('memory') + countOf('rule') + countOf('event'),
     stamp: `${dayKey(at)} ${clock(at)}`,
   }
   // 段骨架要占的字：只有真有条目的段才出现在正文里，这一串就是它们的标题与隔行。
@@ -122,8 +133,10 @@ export function build(opts = {}) {
     weakest: weakestOf(ranked, keptIds, lost),
     // 该 +1 seen 的名单：build 只列名单，落账在 run（"复述只发生在一处"，design §5）。
     retell: kept.filter((row) => row.section === MEMORY).map((row) => row.id),
+    // 规矩的账单独列：它没有版本链（一个 id 一行），+1 走的是 rules 自己的写入路径。
+    retellRules: kept.filter((row) => row.section === RULES).map((row) => row.id),
     skipped: scenes.skipped + facts.skipped,
-    candidates: { memory: counts.memory, event: counts.event },
+    candidates: { memory: counts.memory, rule: counts.rule, event: counts.event },
     warnings: warnOf(scenes.skipped, facts.skipped),
   }
 }
@@ -230,6 +243,13 @@ function readEvents(dir, at, from) {
 // 发号撞了同一毫秒时 add 会把 at 往后挪 1ms，卡上界就会让刚写下的结论在摘要里消失。
 function readConclusions(dir, at, from) {
   const got = memoryLs({ since: from }, { home: dir, now: at })
+  return { items: got.items, skipped: got.skipped ?? 0 }
+}
+
+// 规矩只走 memory 门面：它替我们处理"被取代的旧条不算活条"与坏行计数。
+// 规矩不按窗口截（S0_RULE = Infinity，design §10）：立了三个月的规矩今天仍然作数。
+function readLiveRules(dir, at) {
+  const got = listRules(dir, { now: at })
   return { items: got.items, skipped: got.skipped ?? 0 }
 }
 

@@ -142,6 +142,51 @@ export function listRules(home, opts = {}) {
   }
 }
 
+// 复述记账（design §5）：规矩被摘要选进「规矩」那一刻 seen +1，别处一律不写。
+// 一个 id 只有一行"当前态"，所以 +1 只能是**追加一条完整副本**（同 at，只动 seen）：
+// 读方按 id 取后写的那行，旧行一个字节不动（AGENTS 五）。
+// at 照抄旧行——规矩不衰减（S0_RULE = Infinity），把 at 往前挪会让"立规矩的时刻"变成"上次复述的时刻"。
+export function markRulesSeen(home, opts = {}) {
+  const dir = requireHome({ home })
+  const options = opts && typeof opts === 'object' && !Array.isArray(opts) ? opts : {}
+  const at = nowOf({ now: options.at })
+  const wanted = Array.isArray(options.ids) ? options.ids : []
+  const { records } = readRules(dir)
+  const byId = new Map(records.map((rec) => [rec.id, rec]))
+
+  const marked = []
+  const skipped = []
+  const failed = []
+  const once = new Set()
+  for (const raw of wanted) {
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    if (id === '' || once.has(id)) continue
+    once.add(id)
+    const rec = byId.get(id)
+    if (rec === undefined) {
+      skipped.push({ id, why: '这条规矩已经找不到了：不 +1，也不替它补一条记录' })
+      continue
+    }
+    // 字段逐个抄而不是展开：规矩的六个字段是白名单，多一个少一个都会被读成坏行。
+    const copy = {
+      id: rec.id,
+      at: rec.at,
+      text: rec.text,
+      why: rec.why,
+      supersedes: [...rec.supersedes],
+      seen: rec.seen + 1,
+    }
+    try {
+      ensure(dir)
+      appendJsonl(rulesFile(dir), copy)
+      marked.push(id)
+    } catch (e) {
+      failed.push({ id, why: `seen 没能落盘：${e && e.message ? e.message : String(e)}` })
+    }
+  }
+  return { at, marked, skipped, failed }
+}
+
 // 规矩正文的预算是 RULE_MAX cost（design §10）。
 function checkText(value) {
   if (typeof value !== 'string' || value.trim() === '') {
