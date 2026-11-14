@@ -64,8 +64,10 @@ async function preStep(deps, agent, payload, next) {
 
     const at = nowTs()
     const userText = lastUserText(payload.messages) || lastUserText(decision.messages)
-    // 上下文取两份的并集：payload 里的是宿主认领过的消息，decision 里的是它自己补进去的。
-    const context = [...(Array.isArray(payload.messages) ? payload.messages : []),
+    // 上下文先问会话本身的 surface：那才是这次请求真正会带上的消息。
+    // 真宿主里 payload.messages 只是这一轮新认领的那几条，上一轮我们插进去的注入不在里面，
+    // 只看 payload 等于永远看不见自己发过什么（去重会静默失效）。拿不到 surface 才退回这两条来源。
+    const context = surfaceMessages(agent) ?? [...(Array.isArray(payload.messages) ? payload.messages : []),
       ...(Array.isArray(decision.messages) ? decision.messages : [])]
     const built = await buildInjection(deps, { header, userText, at, context })
     for (const line of built.warnings) deps.warn(line)
@@ -127,6 +129,30 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
   const out = compose({ blocks, budget: cfg.inject.total })
   for (const line of out.warnings) warnings.push(line)
   return { text: out.text, warnings }
+}
+
+// 这次请求真正会带上的那些消息：会话 surface 里还活着的 user/message。
+// 真宿主里 `payload.messages` 只是这一轮新认领的那几条（`preStep` 里 `claimed`），
+// 我们上一轮插进去的注入不在里面——只看 payload 等于永远看不见自己发过什么。
+// surface 是请求真正用到的那份投影：压缩、替换之后旧消息会从 `nodes` 里消失，那时"就不在了"。
+// 拿不到（假宿主、形状变了、读事件抛错）返回 null，让调用方退回 payload 那两条来源。
+function surfaceMessages(agent) {
+  const session = agent && typeof agent === 'object' ? agent.session : undefined
+  if (!session || typeof session.snapshotEvents !== 'function') return null
+  const surface = session.surface
+  if (!surface || !Array.isArray(surface.nodes)) return null
+  const nodes = new Set(surface.nodes)
+  const out = []
+  try {
+    for (const event of session.snapshotEvents()) {
+      if (event === null || typeof event !== 'object') continue
+      if (event.type !== 'user/message' || !nodes.has(event.seq)) continue
+      out.push(event.data)
+    }
+  } catch {
+    return null
+  }
+  return out
 }
 
 // 这段字是不是已经在**这次请求的上下文**里了：只比段首一小截，不记账、不比时间。

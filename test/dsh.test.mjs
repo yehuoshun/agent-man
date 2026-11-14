@@ -43,7 +43,9 @@ function fakeHost({ home, sessions = null, tools = true } = {}) {
   apply(ctx, { env: { AGENT_MAN_HOME: home }, warn: (line) => state.warnings.push(line) })
 
   // 模拟宿主开出一个会话：agent/created 的载荷里带 agent.ctx。
-  state.openSession = () => {
+  // session 可选：给了就当真实会话的形状（surface.nodes + snapshotEvents()），
+  // 让"这次请求到底带上了哪些消息"这件事能被用例摆布。
+  state.openSession = (session) => {
     const agent = {
       ctx: {
         on(name, handler, opts) {
@@ -55,8 +57,10 @@ function fakeHost({ home, sessions = null, tools = true } = {}) {
         },
       },
     }
+    if (session !== undefined) agent.session = session
     const created = state.applied.find((one) => one.name === 'agent/created')
     if (created !== undefined) created.handler({ agent })
+    return agent
   }
   state.preStep = (payload, next) => {
     const hook = state.hooks.find((one) => one.name === 'agent/pre-step')
@@ -162,6 +166,35 @@ test('自我块已经在上下文里就不再重发，上下文里没有了（�
   const third = await host.preStep(ask('还说吗'), enter)
   assert.match(third.messages[0].content[0].text, /\[称呼\] 小满/u)
   // 没有 sessionQuery 时那条"没接上"的警告本来就有，这里只看注入本身，不断言警告。
+})
+
+test('真宿主里上一轮那条注入不在 payload 里：去重认的是会话 surface，折掉之后照样重发', async () => {
+  const home = newHome()
+  await plantCard(home)
+  const host = fakeHost({ home })
+  // 真宿主 `preStep` 交下来的 `payload.messages` 只有这一轮新认领的消息（`claimed`），
+  // 上一轮插进去的注入不在里面——所以"发没发过"只能问会话本身的 surface。
+  const events = []
+  const session = { surface: { nodes: [] }, snapshotEvents: () => events }
+  host.openSession(session)
+  const ask = (text) => ({ step: 1, header: ROOT, messages: [{ role: 'user', content: [{ type: 'text', text }] }] })
+
+  const first = await host.preStep(ask('在吗'), enter)
+  assert.match(first.messages[0].content[0].text, /\[称呼\] 小满/u)
+
+  // 宿主把这条注入 append 进会话：surface 多一个节点，事件里多一条 user/message。
+  events.push({ seq: 7, type: 'user/message', data: first.messages[0] })
+  session.surface.nodes.push(7)
+
+  const second = await host.preStep(ask('还在吗'), enter)
+  const secondText = second.messages[0].content[0].text
+  assert.equal(secondText.includes('[称呼]'), false, 'surface 里还有上一轮那条，却又发了一份')
+  assert.ok(secondText !== '', '省掉自我块不等于整条注入也省掉')
+
+  // 压缩/替换把它从 surface 里折掉（nodes 不再包含 7）—— 重新带一遍。
+  session.surface.nodes.length = 0
+  const third = await host.preStep(ask('还说吗'), enter)
+  assert.match(third.messages[0].content[0].text, /\[称呼\] 小满/u)
 })
 
 test('只有 root 的第 1 步注入：第 2 步、子代理、被拦、被中止都不插', async () => {
