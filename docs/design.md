@@ -270,8 +270,14 @@ stdout ≤8KB，超了截断并标 `truncated`；
 ## 9. DSH 宿主
 
 一个包两个入口：`bin` 走 CLI，`main` 指向 `dsh/index.mjs`。
-首步注入一条消息，总预算 1000 cost：灵魂 200 / 用户模型 100 / 处境 550 / 旧会话字面回顾 150
+**每轮第一步**（真宿主里 `payload.step === 1`，即每条用户消息开始的那一步）注入一条消息，总预算 1000 cost：
+灵魂 200 / 用户模型 100 / 处境 550 / 旧会话字面回顾 150
 （这一串数字只在 §15 的 `inject.*` 里有一份，改预算改配置不改代码）。
+每轮都注入而不是只在会话第一轮，理由见 `docs/decisions.md`「每轮第一步都注入」：
+回顾的检索词来自**当前这一句**，处境与情绪是**此刻**的快照，第一轮的快照留到第十轮就是会说谎的历史。
+同一份自我块（灵魂卡那一段）若已经在这次请求的上下文里就不再重发——账本用上下文本身，不另外记一笔，
+换卡或重导卡让它变了自然重带；上下文里没有了（比如被压缩折掉）也会重新带。
+所以真正常见的每轮开销是 750–800 cost，而不是整 1000。
 工具两个：`agent_man`（写：event/memory/rule/note/plan/self）与 `agent_man_look`（读：context.show/find/memory.show）。
 不注册命令面板、不新增 session event 类型、不建第二份存储、只对 root。
 
@@ -282,7 +288,7 @@ stdout ≤8KB，超了截断并标 `truncated`；
 | `src/host/inject.mjs` 的 `compose({blocks,budget})` | 把已经算好的块装进预算：次序 soul→user→situation→recall，装不下**整块丢**记 `dropped[{name,reason}]`，`used` 必须等于 `cost(text)` | 这一半是纯函数，才能在 `node --test` 里钉住"预算不可协商" |
 | `src/host/tools.mjs` | 工具 schema、参数校验、把调用翻成领域门面的一次调用 | 参数错回 `{ok:false,error:'怎么改'}`，不抛、不猜、不补默认值 |
 | `src/host/recall.mjs` | 旧会话字面回顾：按预算挑几条 | 拿不到 `sessionQuery` 就明确报"没接上"，不让模型以为旧会话里什么都没有 |
-| `dsh/index.mjs` | 读配置、挂 `agent/created` → `agent/pre-step`（prepend、只 `step === 1`、只 root）、注册两个工具、发 `! ` | DSH 运行时只在实机里；这一层越薄，坏掉时越好查 |
+| `dsh/index.mjs` | 读配置、挂 `agent/created` → `agent/pre-step`（prepend、只每轮第一步 `step === 1`、只 root）、注册两个工具、发 `! ` | DSH 运行时只在实机里；这一层越薄，坏掉时越好查 |
 
 处境块 = `mind.situation()` 交给 `view.renderScreen()` 之后**去掉抬头那一行**，再空一行拼情绪行。
 抬头（`agent-man · 2026-11-13 15:00`）是给人看屏框用的，注入里时刻已经由正文说过一次，再说就是花钱复读。
