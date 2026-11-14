@@ -181,12 +181,20 @@ function registerTools(deps) {
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,
-        handler: (args) => callTool(tool.name, args, { home: homeDir, now: nowTs(), env }),
+        handler: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env })),
       })
     } catch (e) {
       warn(`! 工具 ${tool.name} 没注册上（${messageOf(e)}）：模型这轮看不到它`)
     }
   }
+}
+
+// 工具的返回值该长什么样，DSH 没有公开形状。这一版一律交纯文本：模型读得懂，宿主也不用猜。
+// 实机若要求 { content: [{ type: 'text', text }] } 之类，只改这一个函数，业务侧不动。
+function toolText(out) {
+  if (typeof out === 'string') return out
+  if (out && typeof out === 'object' && typeof out.error === 'string') return `! ${out.error}`
+  return `! 工具没给出可读结果：${JSON.stringify(out)}`
 }
 
 // root 判断照旧实现（code\dsh-agent-man\index.mjs）：root 才注入，子代理不共享记忆。
