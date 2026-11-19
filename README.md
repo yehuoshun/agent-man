@@ -13,7 +13,12 @@
 没有 npm 包：`agent-man` 这个名字在 npm 上是别人的（2022 年的 0.0.1，一直没人动），
 本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 最后一节）。两条正当的装法：
 
-- **当命令行用**：`git clone` 之后 `npm link`（或直接把 `bin/agent-man.mjs` 放进 `PATH`）。
+- **当命令行用**：`git clone` 之后 `npm link`，或者把 `code/agent-man/bin` 整目录加进 `PATH`。
+  Windows 上那个目录里有 `agent-man.cmd` 垫片，加完直接敲 `agent-man` 就行，
+  不用再敲 `node …\bin\agent-man.mjs`。
+  不想动 `PATH`、只希望**零件**能找到本体：设 `AGENT_MAN_BIN` 或 `AGENT_MAN_REPO` 也可以
+  （零件侧的查找顺序是 `AGENT_MAN_BIN` → `PATH` → `AGENT_MAN_REPO`；这两条环境变量是
+  "本体在哪"的入口提示，本体自己不读，也不是配置键）。
 - **当 DSH 插件用**：`package.json` 里的 `dsh.bundle.patch` 指本包的宿主补丁，用 DSH 的插件管理从本地路径装。
 
 数据落在 `~/.agent-man`；想换个地方就把 `AGENT_MAN_HOME` 指过去（试用与测试都靠这一条，不污染真数据）。
