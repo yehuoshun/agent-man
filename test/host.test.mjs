@@ -506,6 +506,18 @@ test('问零件这一路整个炸掉时只降级：一行 `! ` 说明，注入�
   assert.match(got.warnings[0], /! 零件这次没问成（PATH 读不动）：注入里不带建议/u)
 })
 
+test('注入里带着零件哨兵时一个零件都不问：没有建议、只有一行说明', async () => {
+  const captured = []
+  const deps = fakeDeps(['a'], { captured })
+  const got = await askParts({ AGENT_MAN_PART_CALL: '1' }, { budget: 120, deadline: 300, deps })
+  assert.deepEqual(got.lines, [])
+  assert.equal(got.used, 0)
+  // 连 scan 都不该走到：走了就是又起进程，套娃就是这么来的。
+  assert.deepEqual(captured, [])
+  assert.equal(got.warnings.length, 1)
+  assert.match(got.warnings[0], /! 零件在零件里：这次不问零件（AGENT_MAN_PART_CALL=1/u)
+})
+
 test('处境块的槽位是处境 550 + 零件 120：两笔分开记，屏上是同一块', () => {
   assert.equal(situationBudget({ inject: { situation: 550, parts: 120 } }), 670)
   // 老配置（没有 inject.parts）只算处境自己的那一格，不会因为缺键变成 0 整块装不下。
