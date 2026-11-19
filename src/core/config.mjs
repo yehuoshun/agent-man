@@ -23,6 +23,10 @@ const FILE_NAME = 'config.json'
 const PREFIX = 'AGENT_MAN_'
 // 数据目录的变量不算配置键：它由 store/paths.mjs 的 home() 认，这里只负责不去覆盖它。
 const DATA_HOME_ENV = `${PREFIX}HOME`
+// 零件哨兵也不是配置键：它由 parts/call.mjs 盖给零件子进程、由 CLI 的零件护栏认（design §8）。
+// 只因为和配置共用这个前缀，名字得在这里拼一次——别处一律 import 它，别再写字面量，
+// 否则每次零件回问本体，真源会多一行"这个变量不对应任何配置键"的噪声。
+export const PART_CALL_ENV = `${PREFIX}PART_CALL`
 
 // §15.2 里有四个默认值在 §10 常数表里找不到对应常数：日界 04:00、处境 550、回顾 150、
 // 首步回顾 250。写成常量而不是散在 SCHEMA 里当字面值，一半是为了"只此一份"，
@@ -446,7 +450,7 @@ function orderSection(sec, body) {
 }
 
 function applyEnv(cfg, env, warn) {
-  const known = new Set([DATA_HOME_ENV])
+  const known = new Set([DATA_HOME_ENV, PART_CALL_ENV])
   for (const key of KEYS) {
     const name = envKey(key)
     known.add(name)
