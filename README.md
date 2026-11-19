@@ -96,6 +96,9 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 `--describe` 自报家门、退出码 `0/64/69/75`、骨架强制超时、stdout ≤ 8KB、连续三次失败冷却）。
 插件只能写情景层（`event add --src tool:<名字>`），不许写结论、规矩、自我块——
 工具的观察不能替 agent 下结论。
+零件被本体调用时会带上 `AGENT_MAN_PART_CALL=1` 哨兵，本体见到它就不再问零件（零件在零件里会无限套娃）；
+嫌零件慢或不想让它们参与，就 `agent-man config set parts.inject false`——CLI 那一屏与宿主注入会一起停，
+只留一条 `! ` 说明这次没问零件。
 
 ## 作为 DSH 宿主
 

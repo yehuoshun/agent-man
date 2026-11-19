@@ -267,6 +267,18 @@ stdout ≤8KB，超了截断并标 `truncated`；
 边界：插件只能写情景层（`event add --src tool:<名字>`）；
 **不许写结论、规矩、自我块**——工具的观察不能替 agent 下结论。
 
+**不许零件在零件里**（防套娃）：零件是外部程序，它可以反过来调本体（无参时读一次
+`agent-man context show` 是最自然的一种）；本体若照常 `sense` 一遍，就成
+"本体 → 零件 → 本体 → 零件 …"，一路套到超时。所以骨架在 `capture()` 里给零件子进程的 env 盖一个哨兵
+`AGENT_MAN_PART_CALL=1`（在调用方给的 env 之后覆盖：这一层说了算），而本体自己的每一个出口
+——CLI 的处境屏（`context show` / `look` / 裸 `agent-man`）与 `context sense`、宿主注入——
+见到这个哨兵就**一个零件都不问**，等价于 PATH 上没有零件（`parts = []`，不产生 `! ` 噪声，
+只在 stderr 留一行"零件在零件里"），`--json` 的 stdout 仍然恰好一行合法 JSON。
+代价写在明处：零件不能再嵌套问零件，要那个数据就自己带。
+
+**整体关掉零件**：`parts.inject = false`（`AGENT_MAN_PARTS_INJECT=0`）让 CLI 与宿主两侧一起停——
+两侧各自判断 `cfg.parts.inject !== false`，都只在 stderr 留一行说明，屏上不多一个字。
+
 ## 9. DSH 宿主
 
 一个包两个入口：`bin` 走 CLI，`main` 指向 `dsh/index.mjs`。
