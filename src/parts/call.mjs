@@ -3,7 +3,7 @@
 // 契约见 docs/design.md §8，Windows 上的引号与 %名字% 结论见 docs/decisions.md §32。
 import { spawn, spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { PART_TIMEOUT, PART_TIMEOUT_MAX, PART_STDOUT_MAX } from '../core/index.mjs'
+import { config, PART_TIMEOUT, PART_TIMEOUT_MAX, PART_STDOUT_MAX } from '../core/index.mjs'
 
 const WIN = process.platform === 'win32'
 
@@ -171,6 +171,10 @@ export function passthrough(part, args = [], env = process.env) {
 export function capture(part, opts = {}, legacyEnv) {
   const o = opts ?? {}
   const env = o.env ?? legacyEnv ?? process.env
+  // 零件可能反过来调本体（比如无参时要读一次 `agent-man context show`），本体再 sense 一遍零件，
+  // 就成了「零件在零件里」，一路套娃到超时。给子进程盖一个零件哨兵：本体见到它就不再问零件。
+  // 放在合并之后覆盖：调用方给的 env 里若已经有同名键，也必须是我们这一层说了算。
+  const childEnv = { ...env, [config.PART_CALL_ENV]: '1' }
   const args = (Array.isArray(o.args) ? o.args : []).map(String)
   const timeout = deadline(o.timeout)
   const limit = Number.isFinite(o.limit) && o.limit >= 0 ? o.limit : PART_STDOUT_MAX
@@ -199,9 +203,9 @@ export function capture(part, opts = {}, legacyEnv) {
       if (!part?.file) return finish({ status: 'missing', why: '没有可执行文件' })
       // 参数不安全也是调用方的错（同 64），不是零件没装：报 usage，别让它进冷却计数。
       if (unsafeArg(args)) return finish({ status: 'usage', why: '不安全的参数' })
-      const { cmd, argv, verbatim } = commandOf(part.file, args, env)
+      const { cmd, argv, verbatim } = commandOf(part.file, args, childEnv)
       const child = spawn(cmd, argv, {
-        env,
+        env: childEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsVerbatimArguments: verbatim,
         windowsHide: true,

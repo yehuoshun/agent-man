@@ -786,15 +786,33 @@ async function selfAppend(ctx) {
 
 // ── 处境与摘要 ─────────────────────────────────────────────────────────────
 
+// 零件护栏（design §8）：两种情况下一个零件都不问，等价于 PATH 上没有零件。
+// 1) 环境里带着零件哨兵（core/config.mjs 的 PART_CALL_ENV）=1：这次调用是某个零件发起的
+//    （capture 给子进程盖的）。零件回问本体时若再 sense 一遍，就成「零件在零件里」，
+//    一路套娃到超时；
+// 2) parts.inject=false：配置层面整体关掉零件——这个键本该在这儿生效，不能只有宿主那一侧认。
+// 说明只走 stderr：`--json` 的 stdout 必须仍然恰好一行合法 JSON。
+async function senseParts(ctx, cfg, budget) {
+  const nested = ctx.env?.[config.PART_CALL_ENV] === '1'
+  if (cfg.parts.inject !== false && !nested) return parts.sense(ctx.env, { budget })
+  ctx.err(nested
+    ? `! 零件在零件里：这次不问零件（${config.PART_CALL_ENV}=1，防无限套娃）\n`
+    : '! 零件注入已关（parts.inject=false）：这次不问零件\n')
+  // 传 parts: [] 而不是干脆不调用：sense 的账目形状（lines/used/budget/warnings/dropped/failures）
+  // 是下游唯一的输入形状，空零件也走同一条路，宁可多一次空转也不让两个出口分叉。
+  return parts.sense(ctx.env, { budget, parts: [] })
+}
+
 // 处境屏（design §6：裸 `agent-man` 就是它）。mind 算"此刻站在哪一段日子里"，view 排成一屏，
 // 这里只接线——不在这里挑哪条上屏，也不在这里算分数。
 async function contextShow(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   noWords(words, 'agent-man context show [--json]（裸 agent-man 等同此命令）')
+  const cfg = cfgOf(ctx)
   // 零件先问一遍再排屏（design §8 的聚合模式）：它们答的话是这一屏最后那一段的料。
   // 预算用处境那一份——建议行最终也要跟日程、便条抢同一个额度，先按小份抓回来
   // 就不会出现"零件答得很响，屏上却一条都装不下"的浪费。
-  const got = await parts.sense(ctx.env, { budget: cfgOf(ctx).inject.situation })
+  const got = await senseParts(ctx, cfg, cfg.inject.situation)
   const scene = mind.situation(homeOf(ctx), { now: ctx.now, parts: got })
   if (on(flags, 'json')) jsonOut(ctx, scene)
   else ctx.out(`${renderScreen(scene)}\n`)
@@ -896,7 +914,7 @@ async function contextSense(ctx) {
   const budget = arg(flags, 'budget') === undefined
     ? cfg.inject.situation
     : numberOr(arg(flags, 'budget'), 'budget')
-  const got = await parts.sense(ctx.env, { budget })
+  const got = await senseParts(ctx, cfg, budget)
   if (on(flags, 'json')) {
     ctx.out(`${JSON.stringify(got)}\n`)
   } else {
