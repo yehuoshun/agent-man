@@ -270,28 +270,39 @@ stdout ≤8KB，超了截断并标 `truncated`；
 ## 9. DSH 宿主
 
 一个包两个入口：`bin` 走 CLI，`main` 指向 `dsh/index.mjs`。
-**每轮第一步**（真宿主里 `payload.step === 1`，即每条用户消息开始的那一步）注入一条消息，总预算 1000 cost：
-灵魂 200 / 用户模型 100 / 处境 550 / 旧会话字面回顾 150
+**每轮第一步**（真宿主里 `payload.step === 1`，即每条用户消息开始的那一步）注入一条消息，总预算 1120 cost：
+灵魂 200 / 用户模型 100 / 处境 550 / 零件答话 120 / 旧会话字面回顾 150
 （这一串数字只在 §15 的 `inject.*` 里有一份，改预算改配置不改代码）。
 每轮都注入而不是只在会话第一轮，理由见 `docs/decisions.md`「每轮第一步都注入」：
 回顾的检索词来自**当前这一句**，处境与情绪是**此刻**的快照，第一轮的快照留到第十轮就是会说谎的历史。
 同一份自我块（灵魂卡那一段）若已经在这次请求的上下文里就不再重发——账本用上下文本身，不另外记一笔，
 换卡或重导卡让它变了自然重带；上下文里没有了（比如被压缩折掉）也会重新带。
-所以真正常见的每轮开销是 750–800 cost，而不是整 1000。
+所以真正常见的每轮开销是 860–920 cost，而不是整 1120。
 工具两个：`agent_man`（写：event/memory/rule/note/plan/self）与 `agent_man_look`（读：context.show/find/memory.show）。
 不注册命令面板、不新增 session event 类型、不建第二份存储、只对 root。
 
-落地的分工（`src/host` 四文件 + `dsh/` 薄适配）：
+**注入里也跑零件**（与 CLI 那一屏同一套 `parts.sense`，但带死期限）：
+`parts.sense(env, { budget: inject.parts, deadline: parts.deadline })`，答话交给
+`mind.situation({ parts })` 进「建议」段；`parts.inject = false` 就整段不跑（行为回到 1.1，一个字都不多说）。
+期限的算法是**总账不是分账**：到点就用已经拿到的部分继续，没答上来的进 `dropped[{name, reason:'deadline'}]`
+并出 `! … 到 Nms 的期限还没答上来`——首步注入最多多等 `parts.deadline`（默认 1200ms），
+而不是"零件数 × `parts.timeout`"；期限与失败都由 `sense` 出声，装不下由 `src/host/parts.mjs` 补一句，
+三条路都不许静默。查询与旧会话回顾是**并行**跑的，两个都在等 IO，串起来只是白等。
+
+落地的分工（`src/host` 五文件 + `dsh/` 薄适配）：
 
 | 在哪 | 只做什么 | 为什么 |
 |---|---|---|
 | `src/host/inject.mjs` 的 `compose({blocks,budget})` | 把已经算好的块装进预算：次序 soul→user→situation→recall，装不下**整块丢**记 `dropped[{name,reason}]`，`used` 必须等于 `cost(text)` | 这一半是纯函数，才能在 `node --test` 里钉住"预算不可协商" |
+| `src/host/parts.mjs` 的 `askParts(env,{budget,deadline})` | 在期限里问一遍零件，把 `sense` 的账翻成"行 / 警告 / 为什么没有那一行"，永不抛 | 零件坏掉只能降级成"这次没有建议"，不能把首步注入拖没；期限与预算在这里就位，`dsh/` 不用自己算 |
 | `src/host/tools.mjs` | 工具 schema、参数校验、把调用翻成领域门面的一次调用 | 参数错回 `{ok:false,error:'怎么改'}`，不抛、不猜、不补默认值 |
 | `src/host/recall.mjs` | 旧会话字面回顾：按预算挑几条 | 拿不到 `sessionQuery` 就明确报"没接上"，不让模型以为旧会话里什么都没有 |
 | `dsh/index.mjs` | 读配置、挂 `agent/created` → `agent/pre-step`（prepend、只每轮第一步 `step === 1`、只 root）、注册两个工具、发 `! ` | DSH 运行时只在实机里；这一层越薄，坏掉时越好查 |
 
 处境块 = `mind.situation()` 交给 `view.renderScreen()` 之后**去掉抬头那一行**，再空一行拼情绪行。
 抬头（`agent-man · 2026-11-13 15:00`）是给人看屏框用的，注入里时刻已经由正文说过一次，再说就是花钱复读。
+处境块的槽位是 `inject.situation + inject.parts`（550 + 120）：零件答话只占「建议」一段，
+装不下时丢的是建议、不是处境——这也是两笔预算分开记、而不是把零件塞进处境那一格的理由。
 `user` 槽位这一版留空：称呼已由灵魂卡的 `[称呼]` 行承担，再写一段画像就是第二份灵魂。
 
 写入口的边界（与 §8 一致）：`agent_man` 只收六个动作，其中 `event add` 是插件唯一能走的写入路径，
@@ -768,12 +779,12 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | 限制 | 现状 | 什么时候需要动 |
 |---|---|---|
 | DSH 工具注册与返回值形状 | 按 `ctx.get('tools')?.register?.(…)` 写；返回值一律纯文本（`toolText` 一处适配）；整套契约由 `test/dsh.test.mjs` 里的假宿主锁着 | 第一次在 DSH 实机上跑时确认；形状不符只改 `dsh/index.mjs` 的 `registerTools`/`toolText` 与那个假宿主，业务侧不动 |
-| 宿主层没进过真会话 | 假宿主走完了 `agent/created` → `agent/pre-step` → 首步注入 → 工具调用；四块内容、预算上限、root 判定、缺服务时的降级都有用例 | 同上：实机开一个新会话看一眼 |
+| 宿主层没进过真会话 | 假宿主走完了 `agent/created` → `agent/pre-step` → 首步注入 → 工具调用；五块内容、预算上限、root 判定、缺服务时与零件超期/装不下时的降级都有用例 | 同上：实机开一个新会话看一眼 |
 | 证据区间 `--from 日期..日期` | 明确退 2，只认事件 id | 有人真的按区间给证据时，让记忆层自己解析 |
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
-| 零件答话只在 CLI 那一屏 | `context show`（含裸 `agent-man`）先 `parts.sense` 再排屏；DSH 宿主注入**不跑零件**——零件最坏要等 `PART_TIMEOUT`×N，而首步注入要赶在人开口之前。两条通道因此在「建议」段上不齐 | 有人发现注入里从没出现过建议 |
+| ~~零件答话只在 CLI 那一屏~~ **已修（v1.2）**：注入也跑零件 | `context show`（含裸 `agent-man`）先 `parts.sense` 再排屏；DSH 宿主注入现在也跑——`inject.parts` 只给零件答话，`parts.deadline` 是**总**期限（不分摊给每个零件），到点就用已经拿到的部分继续，没答上来的进 `dropped[{name,reason:'deadline'}]` 并出 `! `。`parts.inject = false` 回到 1.1 的"不跑" | 代价：首步注入最多多等 `parts.deadline`（默认 1200ms）；零件坏掉只降级成"这次没有建议"，不阻塞会话。要动它的时机：有人嫌注入慢了（调小 `parts.deadline`），或嫌建议太少（调大 `inject.parts` / 期限） |
 | 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | `self set --id`（按块替换） | 明确退 2：自我块是整份覆盖（`setSelf`），没有按块替换（design §4：不分块） | 有人真的只想改一段时——那时得先想清楚"段"怎么切，不是先加一个 `--id` |

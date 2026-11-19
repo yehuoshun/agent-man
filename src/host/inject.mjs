@@ -70,6 +70,15 @@ export function compose({ blocks, budget } = {}) {
   return { text, used: cost(text), budget: cap, dropped, warnings }
 }
 
+// 处境块在注入里的那一格（design §9 / §15.2）：处境正文的 550 + 零件答话的 120。
+// 两笔在配置里分开记（inject.situation / inject.parts），但屏上是同一块——
+// 「建议」段就排在处境正文后面，所以这一块的槽位是两者之和，而不是把零件塞进处境那一格。
+// 分开记的理由：零件答话是"可以不出现"的一段，装不下时丢的是零件，不该连处境一起丢。
+export function situationBudget(cfg) {
+  const inject = cfg && typeof cfg.inject === 'object' && cfg.inject !== null ? cfg.inject : {}
+  return finiteOr(inject.situation, 0) + finiteOr(inject.parts, 0)
+}
+
 // 情绪行（design §14.6）：只出数字、标签与一句机械规则，一个字都不许是"感觉"。
 // 数字一律取调用方给的 snapshot（affect/state 算好的），这里只做四舍五入——
 // 宿主层自己再算一遍，就等于开了第二个真源，迟早会和 affect show 对不上。

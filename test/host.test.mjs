@@ -5,11 +5,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 
+import { set as setAffect } from '../src/affect/index.mjs'
 import { cost } from '../src/core/index.mjs'
 import {
-  LOOK_ACTIONS, SLOTS, TOOLS, WRITE_ACTIONS, affectLine, callTool, compose, recall,
+  LOOK_ACTIONS, SLOTS, TOOLS, WRITE_ACTIONS, affectLine, askParts, callTool, compose, recall,
+  situationBudget,
 } from '../src/host/index.mjs'
 import { debt } from '../src/mind/index.mjs'
 import { use as useSoul } from '../src/soul/index.mjs'
@@ -311,7 +314,8 @@ test('apply 的 pre-step：只对 root 的第 1 步注入一条，子代理不�
     assert.equal(added.role, 'user')
     assert.equal(added.source.kind, 'agent-man')
     const text = added.content[0].text
-    assert.ok(cost(text) <= 1000, `注入 ${cost(text)} cost 超过总预算`)
+    // 总预算 §15.2 的 inject.total（默认 1120 = 灵魂 200 + 用户 100 + 处境与零件 670 + 回顾 150）。
+    assert.ok(cost(text) <= 1120, `注入 ${cost(text)} cost 超过总预算`)
     assert.match(text, /\[称呼\] 小满/u)
     // 情绪行是块里的最后一段：只有数字、标签与那句机械规则，不许出现第一人称感受动词。
     const blocks = text.split('\n\n')
@@ -345,4 +349,156 @@ test('写情景顺手记欠账：记完一条 imp=2 的事，欠账就是 2 imp 
     assert.equal(got.unconsolidated, 2)
     assert.equal(got.unreflected, 1)
   })
+})
+
+// ---------------------------------------------------------------- 注入里的零件（§9）
+
+const WIN = process.platform === 'win32'
+
+// 假零件：Windows 上必须是 .cmd（Node 只认 PATHEXT），POSIX 上要无后缀 + x 位。
+// .cmd 那层用双引号包着整段 JS：对象里只能写单引号，正文只用 ASCII
+// （cmd.exe 按自己的代码页读批处理文件，写进去的汉字会被换掉）。
+// 参数要靠 `-- %*` 转发：`.cmd` 不会自己把收到的参数塞给 node，而 node 又会把 `--describe`
+// 当成自己的选项（报 bad option）——`--` 之后才是零件的参数，实测见 tmp/ 里的探针。
+const selfReport = (name) => `{name:'${name}',desc:'d',section:'env',timeout_ms:3000,side_effects:false}`
+
+function makePart(dir, name, tail) {
+  const js = `const a=process.argv`
+    + `;if(a.includes('--describe')){console.log(JSON.stringify(${selfReport(name)}))}`
+    + `else{${tail}}`
+  const file = path.join(dir, WIN ? `agent-man-${name}.cmd` : `agent-man-${name}`)
+  fs.writeFileSync(file, WIN ? `@node -e "${js}" -- %*\r\n` : `#!/usr/bin/env node\n${js}\n`, 'utf8')
+  if (!WIN) fs.chmodSync(file, 0o755)
+  return file
+}
+
+// 临时 bin 目录 + 真 PATH：只把自己的目录放进 PATH，子进程就找不到 node 了。
+async function withBin(body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-bin-'))
+  try {
+    return await body(dir, dir + path.delimiter + (process.env.PATH || process.env.Path || ''))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+// 走一遍真的 pre-step：假 ctx + 假 next，回来的是"插进去的那条"与所有 `! `。
+async function injectOnce(home, env = {}) {
+  const calls = { on: [] }
+  const ctx = {
+    on(name, handler) { calls.on.push({ name, handler }) },
+    get(name) { return name === 'tools' ? { register: () => {} } : null },
+  }
+  const warnings = []
+  apply(ctx, { env: { AGENT_MAN_HOME: home, ...env }, warn: (line) => warnings.push(line) })
+  const hooks = []
+  const agent = { ctx: { on(name, handler) { hooks.push({ name, handler }) } } }
+  calls.on[0].handler({ agent })
+  const payload = {
+    step: 1,
+    header: { parentSession: null, origin: 'user' },
+    messages: [{ role: 'user', content: [{ type: 'text', text: '继续看 docs/design.md 的注入' }] }],
+  }
+  const next = async () => ({ kind: 'enter', messages: [{ role: 'user', content: '现有' }] })
+  const started = performance.now()
+  const out = await hooks[0].handler(payload, next)
+  const ms = performance.now() - started
+  const first = Array.isArray(out.messages) ? out.messages[0] : null
+  const text = first && Array.isArray(first.content) ? first.content[0].text : ''
+  return { text, warnings, ms }
+}
+
+// 建议段有情绪门（v ≥ 65 且 e ≥ 76）：不抬这两根轴，零件答话再正常也进不去正文。
+async function eagerMood(home) {
+  await setAffect(home, { axis: 'v', value: 80, why: '测试：把 v 抬过建议的门', at: T })
+  await setAffect(home, { axis: 'e', value: 85, why: '测试：把 e 抬过建议的门', at: T })
+}
+
+test('零件到期限没答上来：注入照样完成，正文有答上来的那行，`! ` 点名超期的那个', async () => {
+  await inHome(async (home) => {
+    await eagerMood(home)
+    await withBin(async (dir, PATH) => {
+      makePart(dir, 'quick', "console.log('the window is open')")
+      makePart(dir, 'slow', "setTimeout(()=>console.log('late'),5000)")
+      const got = await injectOnce(home, { PATH, AGENT_MAN_PARTS_DEADLINE: '1500' })
+      // 期限 1500ms：慢零件必须被硬杀掉，注入最多多等 200ms 的抖动，绝不等到它自己答话（5 秒）。
+      // 数字给得比"100ms 就够"宽松，是因为 Windows 上起一个进程本身就要 100-200ms，
+      // 全量测试并行跑时更慢——把期限压到贴着进程启动时间，测的就是机器快慢而不是这段逻辑。
+      assert.ok(got.ms < 1700, `注入用了 ${got.ms.toFixed(0)}ms：首步注入被零件拖住了`)
+      assert.match(got.text, /建议/u, got.text)
+      assert.match(got.text, /the window is open/u, got.text)
+      assert.match(got.text, /（quick）/u, got.text)
+      const lines = got.warnings.join('\n')
+      assert.match(lines, /slow/u, lines)
+      assert.match(lines, /1500ms/u, lines)
+      assert.match(lines, /期限/u, lines)
+      // 超期是"这次不用它的答话"，不是"它崩了"：别把降级写成失败。
+      assert.doesNotMatch(lines, /slow 起不来/u, lines)
+    })
+  })
+})
+
+test('parts.inject=false：完全不跑零件——正文没有建议段，也不产生任何零件相关的 `! `', async () => {
+  await inHome(async (home) => {
+    await eagerMood(home)
+    await withBin(async (dir, PATH) => {
+      makePart(dir, 'quick', "console.log('the window is open')")
+      const got = await injectOnce(home, { PATH, AGENT_MAN_PARTS_INJECT: 'off' })
+      assert.doesNotMatch(got.text, /建议/u, got.text)
+      assert.doesNotMatch(got.text, /window is open/u, got.text)
+      const lines = got.warnings.join('\n')
+      assert.doesNotMatch(lines, /零件/u, lines)
+      assert.doesNotMatch(lines, /quick/u, lines)
+    })
+  })
+})
+
+// ---------------------------------------------------------------- askParts（纯函数那一半）
+
+const fakePart = (name) => ({ name, file: path.join(os.tmpdir(), name) })
+
+function fakeDeps(names, { out = () => 'ok', captured = [] } = {}) {
+  return {
+    scan: () => names.map(fakePart),
+    describe: async (one) => ({
+      ok: true, name: one.name, desc: '', section: '环境', timeout_ms: 3000, side_effects: false,
+    }),
+    capture: async (one, opts) => {
+      captured.push({ name: one.name, timeout: opts.timeout })
+      return { status: 'ok', code: 0, out: out(one.name), err: '', truncated: false }
+    },
+  }
+}
+
+test('零件答话装不进 inject.parts 时整条丢并出声，装得下的照常收', async () => {
+  const deps = fakeDeps(['a', 'b'], { out: () => ascii(100) })
+  const got = await askParts({}, { budget: 40, deadline: 500, deps })
+  assert.deepEqual(got.lines.map((one) => one.name), ['a'])
+  assert.deepEqual(got.dropped, [{ name: 'b', reason: 'budget' }])
+  assert.ok(got.used <= 40, `装下的部分 ${got.used} 超过预算 40`)
+  assert.match(got.warnings.join('\n'), /! b 的答话装不进注入的零件预算 40/u)
+})
+
+test('askParts 把期限透给每个零件，而不是各给一份 PART_TIMEOUT', async () => {
+  const captured = []
+  const deps = fakeDeps(['a', 'b'], { captured })
+  const got = await askParts({}, { budget: 120, deadline: 300, deps })
+  assert.equal(got.deadline, 300)
+  for (const one of captured) {
+    assert.ok(one.timeout <= 300, `${one.name} 拿到 ${one.timeout}ms，超过总期限 300ms`)
+  }
+})
+
+test('问零件这一路整个炸掉时只降级：一行 `! ` 说明，注入不带建议', async () => {
+  const deps = { scan: () => { throw new Error('PATH 读不动') } }
+  const got = await askParts({}, { budget: 120, deadline: 300, deps })
+  assert.deepEqual(got.lines, [])
+  assert.equal(got.warnings.length, 1)
+  assert.match(got.warnings[0], /! 零件这次没问成（PATH 读不动）：注入里不带建议/u)
+})
+
+test('处境块的槽位是处境 550 + 零件 120：两笔分开记，屏上是同一块', () => {
+  assert.equal(situationBudget({ inject: { situation: 550, parts: 120 } }), 670)
+  // 老配置（没有 inject.parts）只算处境自己的那一格，不会因为缺键变成 0 整块装不下。
+  assert.equal(situationBudget({ inject: { situation: 550 } }), 550)
 })

@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto'
 
 import { snapshot as affectSnapshot } from '../src/affect/index.mjs'
 import { config, now as nowTs } from '../src/core/index.mjs'
-import { affectLine, callTool, compose, recall, TOOLS } from '../src/host/index.mjs'
+import {
+  affectLine, askParts, callTool, compose, recall, situationBudget, TOOLS,
+} from '../src/host/index.mjs'
 import { situation } from '../src/mind/index.mjs'
 import { renderScreen } from '../src/view/index.mjs'
 import { build as buildSoul, current as currentSoul } from '../src/soul/index.mjs'
@@ -103,10 +105,14 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
   // 判断只比文本、不比时间——换卡、卡被重导、压缩把旧消息折掉，都会让它重新出现或改变。
   if (soul !== '' && alreadyInContext(context, soul)) soul = ''
 
-  // 处境块 = 处境正文 + 情绪行（§13）。正文交给 mind 与 view，宿主只负责拼：
-  // 抬头那一行是给人看的屏框（"agent-man · 2026-11-13 15:00"），注入里用不上——
-  // 时刻已经在正文里说过一次，再说一遍就是花模型的钱复读。
-  const situation = situationBlock(deps, at, warnings)
+  // 零件（§8 / §9）：注入里也问一遍 PATH 上的零件，答话并进处境块的「建议」段。
+  // 两件事值得单独说：一是先发出去、后收（和下面的旧会话回顾并行跑），首步注入最多多等
+  // parts.deadline 而不是"零件数 × PART_TIMEOUT"；二是到点没答上来的由 sense 记进 dropped 并
+  // 出 `! `，装不下的也出 `! `——零件坏掉只降级成"这次没有建议"，绝不阻塞、也绝不静默。
+  const asking = cfg.parts.inject === false ? null : askParts(deps.env, {
+    budget: cfg.inject.parts,
+    deadline: cfg.parts.deadline,
+  })
 
   let recalled = ''
   try {
@@ -118,12 +124,23 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
     warnings.push(`! 旧会话回顾失败（${messageOf(e)}）：这次不回顾`)
   }
 
+  // 处境块 = 处境正文 + 零件答话的「建议」段 + 情绪行（§13）。正文交给 mind 与 view，宿主只负责拼：
+  // 抬头那一行是给人看的屏框（"agent-man · 2026-11-13 15:00"），注入里用不上——
+  // 时刻已经在正文里说过一次，再说一遍就是花模型的钱复读。
+  let partLines = []
+  if (asking !== null) {
+    const asked = await asking
+    partLines = asked.lines
+    for (const line of asked.warnings) warnings.push(line)
+  }
+  const situation = situationBlock(deps, at, warnings, partLines)
+
   // user 槽位（§15.2 的 100 cost）暂时没有上游：称呼已经由灵魂卡出在 [称呼] 行里，
   // 再在这里编一段画像就是第二份灵魂。空着，等真有画像来源再接。
   const blocks = [
     { name: 'soul', text: soul, budget: cfg.inject.soul },
     { name: 'user', text: '', budget: cfg.inject.user },
-    { name: 'situation', text: situation, budget: cfg.inject.situation },
+    { name: 'situation', text: situation, budget: situationBudget(cfg) },
     { name: 'recall', text: recalled, budget: cfg.inject.recall },
   ]
   const out = compose({ blocks, budget: cfg.inject.total })
@@ -183,24 +200,29 @@ function partsOf(message) {
   return out
 }
 
-function situationBlock(deps, at, warnings) {
+function situationBlock(deps, at, warnings, partLines = []) {
   const { cfg, homeDir } = deps
-  const parts = []
+  const lines = Array.isArray(partLines) ? partLines : []
+  const chunks = []
   try {
-    const scene = situation(homeDir, { now: at, cfg })
+    // 预算给两笔之和（处境 550 + 零件 120）：零件答话只进「建议」一段，装不下就由 mind
+    // 记 dropped{reason:'budget'}，处境正文照发——丢的是建议，不是处境。
+    const scene = situation(homeDir, {
+      now: at, cfg, parts: lines, budget: situationBudget(cfg),
+    })
     const body = renderScreen(scene)
       .split('\n')
       .filter((line, i) => !(i === 0 && line.startsWith('agent-man')))
       .join('\n')
       .trim()
-    if (body !== '') parts.push(body)
+    if (body !== '') chunks.push(body)
   } catch (e) {
     // 处境读不出来不该让整个注入消失：灵魂与回顾照发，只少了这一块，并说清为什么。
     warnings.push(`! 处境没算出来（${messageOf(e)}）：这次不带处境`)
   }
   const mood = moodLine(deps, at, warnings)
-  if (mood !== '') parts.push(mood)
-  return parts.join('\n\n')
+  if (mood !== '') chunks.push(mood)
+  return chunks.join('\n\n')
 }
 
 // 情绪行：数字只从 affect 的快照里取，宿主这一层连加法都不做（§14.6 的口径）。
