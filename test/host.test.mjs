@@ -360,11 +360,15 @@ const WIN = process.platform === 'win32'
 // （cmd.exe 按自己的代码页读批处理文件，写进去的汉字会被换掉）。
 // 参数要靠 `-- %*` 转发：`.cmd` 不会自己把收到的参数塞给 node，而 node 又会把 `--describe`
 // 当成自己的选项（报 bad option）——`--` 之后才是零件的参数，实测见 tmp/ 里的探针。
-const selfReport = (name) => `{name:'${name}',desc:'d',section:'env',timeout_ms:3000,side_effects:false}`
+const selfReport = (name, timeoutMs) =>
+  `{name:'${name}',desc:'d',section:'env',timeout_ms:${timeoutMs},side_effects:false}`
 
-function makePart(dir, name, tail) {
+// 零件自己声明的 timeout_ms 决定了 askOnce 给它多长：拿它和注入期限比大小的就是这段逻辑，
+// 所以要用例里能分别拨——慢零件必须声明得比期限长，否则先撞上的是它自己的超时，
+// 那记的就不是"期限没用它的答话"，而是"它崩了"（两件事在 §8 里的下一步不一样）。
+function makePart(dir, name, tail, { timeoutMs = 3000 } = {}) {
   const js = `const a=process.argv`
-    + `;if(a.includes('--describe')){console.log(JSON.stringify(${selfReport(name)}))}`
+    + `;if(a.includes('--describe')){console.log(JSON.stringify(${selfReport(name, timeoutMs)}))}`
     + `else{${tail}}`
   const file = path.join(dir, WIN ? `agent-man-${name}.cmd` : `agent-man-${name}`)
   fs.writeFileSync(file, WIN ? `@node -e "${js}" -- %*\r\n` : `#!/usr/bin/env node\n${js}\n`, 'utf8')
@@ -419,18 +423,23 @@ test('零件到期限没答上来：注入照样完成，正文有答上来的�
     await eagerMood(home)
     await withBin(async (dir, PATH) => {
       makePart(dir, 'quick', "console.log('the window is open')")
-      makePart(dir, 'slow', "setTimeout(()=>console.log('late'),5000)")
-      const got = await injectOnce(home, { PATH, AGENT_MAN_PARTS_DEADLINE: '1500' })
-      // 期限 1500ms：慢零件必须被硬杀掉，注入最多多等 200ms 的抖动，绝不等到它自己答话（5 秒）。
-      // 数字给得比"100ms 就够"宽松，是因为 Windows 上起一个进程本身就要 100-200ms，
-      // 全量测试并行跑时更慢——把期限压到贴着进程启动时间，测的就是机器快慢而不是这段逻辑。
-      assert.ok(got.ms < 1700, `注入用了 ${got.ms.toFixed(0)}ms：首步注入被零件拖住了`)
+      // 慢零件挂 20 秒不答话、也声明自己需要 20 秒：这样先到的一定是注入期限，注入要真去等它，
+      // 这条用例就先原地站 20 秒，差值大得没法拿机器快慢解释。
+      makePart(dir, 'slow', "setTimeout(()=>console.log('late'),20000)", { timeoutMs: 20000 })
+      const got = await injectOnce(home, { PATH, AGENT_MAN_PARTS_DEADLINE: '4000' })
+      // 期限 4000ms 的余量是量出来的，不是拍的（本机 Windows，2026-11-20，见 tmp 里的计时探针）：
+      // 一个假零件"describe + capture"两次起进程，空载约 250ms，四份全量测试并行压着跑时最坏 1357ms。
+      // 所以快零件答上来至少留 3× 最坏值；而 deadline 到点之后还要等 killTree 杀完进程树，
+      // 实测这段在负载里会晚 300-500ms——故断言放到"期限 + 2 秒"（实测最坏一次 4504ms，
+      // 仍留 1.5 秒余量）。它仍远小于慢零件的 20 秒：证明的是"到点收手并记账"，
+      // 不是"等到它答话"，也就不会跟着机器快慢变红。
+      assert.ok(got.ms < 6000, `注入用了 ${got.ms.toFixed(0)}ms：首步注入被零件拖住了`)
       assert.match(got.text, /建议/u, got.text)
       assert.match(got.text, /the window is open/u, got.text)
       assert.match(got.text, /（quick）/u, got.text)
       const lines = got.warnings.join('\n')
       assert.match(lines, /slow/u, lines)
-      assert.match(lines, /1500ms/u, lines)
+      assert.match(lines, /4000ms/u, lines)
       assert.match(lines, /期限/u, lines)
       // 超期是"这次不用它的答话"，不是"它崩了"：别把降级写成失败。
       assert.doesNotMatch(lines, /slow 起不来/u, lines)
