@@ -10,8 +10,8 @@ import {
   AFFECT_BIAS_IMP, AFFECT_ENERGY_HALF, AFFECT_MOOD_HALF, AFFECT_RESPECT_HALF,
   AFFECT_TRUST_HALF, CUE_MIN_GAP, DEBT_STALE, DEBT_SUM_IMP, DEBT_UNREFLECTED,
   DEFAULT_WINDOW_DAYS, DIGEST_BUDGET, INJECT_BUDGET, MIN_KEEP_COST, MIN_KEEP_RATIO,
-  PART_FAIL_LIMIT, PART_STDOUT_MAX, PART_TIMEOUT, PART_TIMEOUT_MAX, QUIET,
-  SOUL_INJECT_COST, SOUL_USER_COST,
+  PART_DEADLINE, PART_FAIL_LIMIT, PART_STDOUT_MAX, PART_TIMEOUT, PART_TIMEOUT_MAX,
+  PARTS_INJECT_COST, QUIET, SOUL_INJECT_COST, SOUL_USER_COST,
 } from './const.mjs'
 
 const MINUTE = 60 * 1000
@@ -51,6 +51,8 @@ export const SCHEMA = {
   'inject.soul': { type: 'int', min: 0, max: 100000, default: SOUL_INJECT_COST },
   'inject.user': { type: 'int', min: 0, max: 100000, default: SOUL_USER_COST },
   'inject.situation': { type: 'int', min: 0, max: 100000, default: INJECT_SITUATION },
+  // 零件答话在注入里的那一格。单列而不并进 situation：坏零件该挤掉自己，不该挤掉日程。
+  'inject.parts': { type: 'int', min: 0, max: 100000, default: PARTS_INJECT_COST },
   'inject.recall': { type: 'int', min: 0, max: 100000, default: INJECT_RECALL },
 
   'digest.budget': { type: 'int', min: 200, max: 100000, default: DIGEST_BUDGET },
@@ -78,6 +80,10 @@ export const SCHEMA = {
 
   'parts.timeout': { type: 'int', min: 1, max: 10 * MINUTE, default: PART_TIMEOUT },
   'parts.timeoutMax': { type: 'int', min: 1, max: 10 * MINUTE, default: PART_TIMEOUT_MAX },
+  // 注入时等零件的总期限，0 = 一个都不等（不是"不设上限"：上限就是 PART_TIMEOUT×N）。
+  'parts.deadline': { type: 'int', min: 0, max: PART_TIMEOUT_MAX, default: PART_DEADLINE },
+  // 关掉就完全不跑零件：注入与 1.1 一致，连一条 `! ` 都不多。
+  'parts.inject': { type: 'bool', default: true },
   'parts.stdoutMax': { type: 'int', min: 512, max: 65536, default: PART_STDOUT_MAX },
   'parts.failLimit': { type: 'int', min: 1, max: 100, default: PART_FAIL_LIMIT },
 
@@ -87,7 +93,8 @@ export const SCHEMA = {
 const KEYS = Object.keys(SCHEMA)
 const SECTIONS = [...new Set(KEYS.map((key) => key.split('.')[0]))]
 const SECTIONS_SET = new Set(SECTIONS)
-const INJECT_PARTS = ['soul', 'user', 'situation', 'recall']
+// 注入里的五笔：谁花了钱就得在账上有一栏，凑成 total 才说得清"钱花在哪"。
+const INJECT_PARTS = ['soul', 'user', 'situation', 'parts', 'recall']
 
 // 默认值只有一份：DEFAULTS 由 SCHEMA 的 default 组装，不在这里重写数字（§15.2）。
 // version 不在里面：它是文件格式的版本，不是配置值。
@@ -163,7 +170,7 @@ function inspect(cfg) {
   const slots = INJECT_PARTS.map((name) => rows[`inject.${name}`]).filter(Number.isFinite)
   const sum = slots.reduce((n, one) => n + one, 0)
   if (Number.isFinite(rows['inject.total']) && sum !== rows['inject.total']) {
-    warnings.push({ key: 'inject.total', msg: `inject 四块之和 ${sum} 与 total ${rows['inject.total']} 不一致` })
+    warnings.push({ key: 'inject.total', msg: `inject 五块之和 ${sum} 与 total ${rows['inject.total']} 不一致` })
   }
   if (Number.isFinite(rows['parts.timeout']) && Number.isFinite(rows['parts.timeoutMax'])
     && rows['parts.timeout'] > rows['parts.timeoutMax']) {

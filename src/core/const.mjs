@@ -33,7 +33,10 @@ export const SHARE_EVENTS = 0.4
 
 // —— 预算（cost）——
 export const DIGEST_BUDGET = 1200
-export const INJECT_BUDGET = 1000
+// 注入的总预算 = 五块之和：灵魂 200 + 用户模型 100 + 处境 550 + 零件答话 120 + 旧会话 150。
+// 零件答话单列一笔而不是并进处境：坏零件该挤掉的是它自己那一格，不该是「日程 / 便条」。
+export const INJECT_BUDGET = 1120
+export const PARTS_INJECT_COST = 120 // cost：零件答话在注入里的上限
 
 // —— 时间窗（天 / ms）——
 export const DEFAULT_WINDOW_DAYS = 30 // 天
@@ -66,6 +69,8 @@ export const WEAKEST_MAX = 3 // 条：处境屏里"最弱的三条"
 // —— 插件（design §8）——
 export const PART_TIMEOUT = 5000 // ms
 export const PART_TIMEOUT_MAX = 30000 // ms
+// 注入时等零件的总期限：首步注入要赶在人开口之前，等不起 PART_TIMEOUT×N（design §9）。
+export const PART_DEADLINE = 1200 // ms
 export const PART_STDOUT_MAX = 8192 // 字节
 export const PART_FAIL_LIMIT = 3 // 次
 

@@ -106,7 +106,8 @@ test('config set 值越界退 2，一个字节都不写', async (t) => {
   const dir = home(t)
   const { err, ctx } = ctxFor(dir)
   for (const [key, value] of [['parts.stdoutMax', '100'], ['recall.minKeepRatio', '1.5'],
-    ['digest.budget', '100'], ['inject.total', 'abc'], ['cue.minGap', '6x']]) {
+    ['digest.budget', '100'], ['inject.total', 'abc'], ['cue.minGap', '6x'],
+    ['parts.deadline', '30001'], ['parts.deadline', '-1'], ['inject.parts', '-1']]) {
     assert.equal(await config.run(ctx, ['set', key, value]), 2, `${key}=${value} 应当退 2`)
     assert.ok(err.at(-1).includes(key), `stderr 里要有键名 ${key}：${err.at(-1)}`)
   }
@@ -118,10 +119,23 @@ test('AGENT_MAN_INJECT_TOTAL 能盖掉文件里的 inject.total', (t) => {
   writeConfig(dir, { version: 1, inject: { total: 1500, soul: 200 } })
   const fromFile = config.load({ env: {}, homeDir: dir })
   assert.equal(fromFile.inject.total, 1500)
-  // 三层优先级：默认 1000 ← 文件 1500 ← 环境 1200，环境压在最上面。
+  // 三层优先级：默认 1120 ← 文件 1500 ← 环境 1200，环境压在最上面。
   const fromEnv = config.load({ env: { AGENT_MAN_INJECT_TOTAL: '1200' }, homeDir: dir })
   assert.equal(fromEnv.inject.total, 1200)
   assert.equal(fromEnv.inject.soul, 200, '别的键不该被顺手改掉')
+})
+
+test('注入的零件那三个键：默认 120 / 1200 / true，环境变量按键名机械映射', (t) => {
+  const dir = home(t)
+  const base = config.load({ env: {}, homeDir: dir })
+  assert.equal(base.inject.parts, 120, '零件答话在注入里的预算')
+  assert.equal(base.parts.deadline, 1200, '注入时等零件的总期限')
+  assert.equal(base.parts.inject, true, '默认就注入也跑零件，不然零件等于白装')
+  // inject.parts → AGENT_MAN_INJECT_PARTS；parts.* → AGENT_MAN_PARTS_*。
+  assert.equal(config.load({ env: { AGENT_MAN_INJECT_PARTS: '60' }, homeDir: dir }).inject.parts, 60)
+  assert.equal(config.load({ env: { AGENT_MAN_PARTS_INJECT: 'off' }, homeDir: dir }).parts.inject, false)
+  // 0 是"一个都不等"，不是"不设上限"：后者会让改小配置反而更慢。
+  assert.equal(config.load({ env: { AGENT_MAN_PARTS_DEADLINE: '0' }, homeDir: dir }).parts.deadline, 0)
 })
 
 test('环境变量值非法时退 2，报出变量名而不是只报键名', async (t) => {
@@ -142,15 +156,15 @@ test('config reset 把键删回默认，不把默认值抄进文件', async (t) 
   assert.equal(await config.run(ctx, ['reset', 'inject.total']), 0)
   // 删掉覆盖与写入默认值对 load 是一回事，对 `git diff` 不是。
   assert.deepEqual(readConfig(dir), { version: 1 })
-  assert.equal(config.load({ env: {}, homeDir: dir }).inject.total, 1000)
-  assert.ok(out.join('').includes('inject.total = 1000'), out.join(''))
+  assert.equal(config.load({ env: {}, homeDir: dir }).inject.total, 1120)
+  assert.ok(out.join('').includes('inject.total = 1120'), out.join(''))
 
   assert.equal(await config.run(ctx, ['set', 'parts.failLimit', '9']), 0)
   assert.equal(await config.run(ctx, ['reset']), 0)
   assert.deepEqual(readConfig(dir), { version: 1 }, '全部重置只该留 version')
 })
 
-test('config show --json 是扁平的 30 个键，形状与 flat(load) 一致', async (t) => {
+test('config show --json 是扁平的键集合，形状与 flat(load) 一致', async (t) => {
   const dir = home(t)
   const { out, ctx } = ctxFor(dir)
   assert.equal(await config.run(ctx, ['show', '--json']), 0)
@@ -267,7 +281,7 @@ test('DEFAULTS 与 load 的结果都是冻结的，改它不会污染下一份�
   assert.equal(Object.isFrozen(cfg), true)
   assert.throws(() => { cfg.inject.total = 1 }, TypeError)
   // 真跑第二次：前一次的赋值若成功过，这里会看到被改的数字。
-  assert.equal(config.load({ env: {}, homeDir: dir }).inject.total, 1000)
+  assert.equal(config.load({ env: {}, homeDir: dir }).inject.total, 1120)
 })
 
 test('SCHEMA 覆盖 §15.2 的九节，每个默认值本身合法', () => {

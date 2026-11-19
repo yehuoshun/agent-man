@@ -245,7 +245,7 @@ src/
 | affect/stim | `KINDS` `weightOf(kind)` `record(home,one)` `list(home,{from,to})` `appendOp(home,op)` |
 | parts/discover | `scan(env)` `describe(part,{timeout})` |
 | parts/call | `passthrough(part,args,env)` `capture(part,{timeout,limit},env)` |
-| parts/sense | `sense(env,{budget,parts,deps})` → `{lines,used,budget,warnings,dropped,failures}` |
+| parts/sense | `sense(env,{budget,parts,deadline,deps})` → `{lines,used,budget,warnings,dropped,failures}` |
 | view/screen | `render(situation)` |
 | view/digest | `render(digest)` |
 | view/records | `list(items,kind)` `item(rec,kind)` |
@@ -307,14 +307,14 @@ EVENTS_MAX 400    MEMORY_MAX 240  RULE_MAX 120   SELF_MAX 600
 S0_EVENT 3d  S0_MEMORY 30d  S0_RULE ∞
 SCORE_R 0.6  SCORE_CUE 0.4
 SHARE_MEMORY 0.6  SHARE_EVENTS 0.4
-DIGEST_BUDGET 1200  INJECT_BUDGET 1000
+DIGEST_BUDGET 1200  INJECT_BUDGET 1120  PARTS_INJECT_COST 120
 DEBT_SUM_IMP 12  DEBT_UNREFLECTED 40  DEBT_STALE 24h
 CLUSTER_HITS 3  CLUSTER_DAYS 2
 CUE_MIN_GAP 6h  QUIET 23:00–08:00
 NOTE_TTL 7d  RULE_LIMIT 20
 JUDGE_KEEP 200  TRACE_KEEP_MONTHS 12  AUDIT_LIMIT 20
 DEFAULT_WINDOW_DAYS 30
-PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
+PART_TIMEOUT 5000  PART_TIMEOUT_MAX 30000  PART_DEADLINE 1200  PART_STDOUT_MAX 8192  PART_FAIL_LIMIT 3
 AFFECT_MOOD_HALF 8h  AFFECT_MOOD_HALF_NEG 13h  AFFECT_ENERGY_HALF 3h
 AFFECT_TRUST_HALF 60d  AFFECT_RESPECT_HALF 90d  AFFECT_EMOTION_HALF 45min
 AFFECT_STIM_PER_HOUR 3  AFFECT_NEG_WEIGHT 1.5  AFFECT_HYST 3  AFFECT_DEADBAND 5
@@ -712,14 +712,16 @@ agent-man 不猜情绪。只有显式调用 `agent-man affect stim <kind> [--why
 {
   "version": 1,
   "clock":   { "dayStart": "04:00", "quiet": ["23:00", "08:00"] },
-  "inject":  { "total": 1000, "soul": 200, "user": 100, "situation": 550, "recall": 150 },
+  "inject":  { "total": 1120, "soul": 200, "user": 100, "situation": 550, "parts": 120,
+               "recall": 150 },
   "digest":  { "budget": 1200, "dueImp": 12, "dueUnreflected": 40, "dueStaleHours": 24 },
   "recall":  { "windowDays": 30, "minKeepRatio": 0.4, "minKeepCost": 32 },
   "cue":     { "minGap": "6h", "respectQuiet": true },
   "affect":  { "visible": true, "biasImp": 0, "moodHalf": "8h", "energyHalf": "3h",
                "trustHalf": "60d", "respectHalf": "90d" },
   "soul":    { "current": "default", "injectOrder": ["identity", "soul", "dialogue", "lore"] },
-  "parts":   { "timeout": 5000, "timeoutMax": 30000, "stdoutMax": 8192, "failLimit": 3 },
+  "parts":   { "timeout": 5000, "timeoutMax": 30000, "deadline": 1200, "inject": true,
+               "stdoutMax": 8192, "failLimit": 3 },
   "host":    { "tools": true }
 }
 ```
