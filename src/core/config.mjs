@@ -27,6 +27,11 @@ const DATA_HOME_ENV = `${PREFIX}HOME`
 // 只因为和配置共用这个前缀，名字得在这里拼一次——别处一律 import 它，别再写字面量，
 // 否则每次零件回问本体，真源会多一行"这个变量不对应任何配置键"的噪声。
 export const PART_CALL_ENV = `${PREFIX}PART_CALL`
+// 零件契约里给零件定位本体的两条入口提示：`AGENT_MAN_BIN` 指向本体的可执行垫片，
+// `AGENT_MAN_REPO` 指向仓库根（优先级 `AGENT_MAN_BIN` → PATH → `AGENT_MAN_REPO`，由零件自己实现）。
+// 本体既不读也不解释它们——它们不是配置键，只是"本体在哪"的提示；这里只负责认下名字，
+// 否则每个零件回问本体时，真源都会把这两条提示报成"不对应任何配置键"。
+export const PART_HINT_ENVS = Object.freeze([`${PREFIX}BIN`, `${PREFIX}REPO`])
 
 // §15.2 里有四个默认值在 §10 常数表里找不到对应常数：日界 04:00、处境 550、回顾 150、
 // 首步回顾 250。写成常量而不是散在 SCHEMA 里当字面值，一半是为了"只此一份"，
@@ -450,7 +455,7 @@ function orderSection(sec, body) {
 }
 
 function applyEnv(cfg, env, warn) {
-  const known = new Set([DATA_HOME_ENV, PART_CALL_ENV])
+  const known = new Set([DATA_HOME_ENV, PART_CALL_ENV, ...PART_HINT_ENVS])
   for (const key of KEYS) {
     const name = envKey(key)
     known.add(name)
