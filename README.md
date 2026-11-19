@@ -95,7 +95,7 @@ stdout 只放结果，stderr 只放 `! ` 开头的警告。
 瞬时情绪这一版不启用（理由见 `docs/decisions.md`）：宁可说"最近 45 分钟有 3 条刺激"，
 也不给一个编出来的情绪名字。
 
-## 插件
+## 零件（插件）
 
 PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约六条（一调用一进程、
 `--describe` 自报家门、退出码 `0/64/69/75`、骨架强制超时、stdout ≤ 8KB、连续三次失败冷却）。
@@ -104,6 +104,15 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 零件被本体调用时会带上 `AGENT_MAN_PART_CALL=1` 哨兵，本体见到它就不再问零件（零件在零件里会无限套娃）；
 嫌零件慢或不想让它们参与，就 `agent-man config set parts.inject false`——CLI 那一屏与宿主注入会一起停，
 只留一条 `! ` 说明这次没问零件。
+
+**接一个新的**：在 PATH 上放一个可执行文件 `agent-man-<名字>`，它得能 `--describe` 报五个字段
+（`name` / `desc` / `section` / `timeout_ms` / `side_effects`），无参时只读、只往 stdout 回一行。
+写完先 `agent-man context sense --json` 看它答了什么、预算怎么算的。
+第一个真零件是 `agent-man-yuQue`（把处境与记忆同步进语雀的私密库），装法看它自己的 README。
+
+**出问题看哪**：`agent-man context sense --json` 里有每件的答话、预算与 `dropped`；
+`agent-man config get parts.inject` 确认开关没被关掉；四条通道各走哪条路、实测数字与代价
+见 `docs/integration.md`。
 
 ## 作为 DSH 宿主
 
@@ -117,6 +126,7 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 ## 文档
 
 - `docs/design.md` —— v3 设计，**本仓库唯一真源**。设计与代码冲突时，先改设计。
+- `docs/integration.md` —— 本体与零件的联调记录：四条通道、实测数字、代价与自验步骤。
 - `docs/decisions.md` —— 为什么这么选（决定 / 来由 / 代价）。
 - `docs/soul-card.md`、`docs/soul-example.md` —— 灵魂卡格式与示例。
 - `docs/research-emotion.md` —— 情绪模型的调研底稿（一手来源与数值）。
