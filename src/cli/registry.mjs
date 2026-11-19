@@ -473,7 +473,7 @@ function memoryLs(ctx) {
     names: ['since', 'until', 'key'],
     bools: ['all', 'live', 'json'],
   })
-  noWords(words, 'agent-man memory ls [--since …] [--until …] [--all] [--live] [--key 槽位]')
+  noWords(words, 'agent-man memory ls [--since …] [--until …] [--all] [--live] [--key 槽位] [--json]')
   const got = memory.ls({
     all: on(flags, 'all'),
     live: on(flags, 'live') ? true : undefined,
