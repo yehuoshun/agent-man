@@ -796,7 +796,7 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
-| ~~零件答话只在 CLI 那一屏~~ **已修（v1.2）**：注入也跑零件 | `context show`（含裸 `agent-man`）先 `parts.sense` 再排屏；DSH 宿主注入现在也跑——`inject.parts` 只给零件答话，`parts.deadline` 是**总**期限（不分摊给每个零件），到点就用已经拿到的部分继续，没答上来的进 `dropped[{name,reason:'deadline'}]` 并出 `! `。`parts.inject = false` 回到 1.1 的"不跑" | 代价：首步注入最多多等 `parts.deadline`（默认 1200ms）；零件坏掉只降级成"这次没有建议"，不阻塞会话。要动它的时机：有人嫌注入慢了（调小 `parts.deadline`），或嫌建议太少（调大 `inject.parts` / 期限） |
+| ~~零件答话只在 CLI 那一屏~~ **已修（v1.2）**：注入也跑零件 | `context show`（含裸 `agent-man`、`look`）先 `parts.sense` 再排屏；DSH 宿主注入现在也跑——`inject.parts` 只给零件答话，`parts.deadline` 是**总**期限（不分摊给每个零件），到点就用已经拿到的部分继续，没答上来的进 `dropped[{name,reason:'deadline'}]` 并出 `! `。宿主按 `situationBudget(cfg) = inject.situation + inject.parts`（默认 550 + 120 = 670）给处境与建议两格，装不下丢的是建议不是日程。`parts.inject = false` 回到 1.1 的"不跑"，**CLI 与宿主两侧都认**。零件被本体调用时带 `AGENT_MAN_PART_CALL=1` 哨兵，本体见到它就不再问零件——"零件在零件里"会一路套娃到超时，这是护栏。四条通道、实测与代价另见 `docs/integration.md` | 代价：首步注入最多多等 `parts.deadline`（默认 1200ms）；零件坏掉只降级成"这次没有建议"，不阻塞会话；零件不能再嵌套问零件，要别的零件的观察就得自己在无参输出里带出来。要动它的时机：有人嫌注入慢了（调小 `parts.deadline`），或嫌建议太少（调大 `inject.parts` / 期限） |
 | 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | `self set --id`（按块替换） | 明确退 2：自我块是整份覆盖（`setSelf`），没有按块替换（design §4：不分块） | 有人真的只想改一段时——那时得先想清楚"段"怎么切，不是先加一个 `--id` |
