@@ -3,3 +3,5 @@
 *.mjs text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+# Windows 上的可执行垫片也得是 LF：批处理按行读，CRLF 混进去会让 `%*` 带个尾巴。
+*.cmd text eol=lf
