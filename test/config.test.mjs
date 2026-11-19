@@ -147,6 +147,32 @@ test('环境变量值非法时退 2，报出变量名而不是只报键名', asy
   assert.ok(boom.msg.includes('AGENT_MAN_PARTS_STDOUT_MAX'), `报错里要有变量名：${boom.msg}`)
 })
 
+test('零件找本体的两条入口提示不算未知变量：认下名字，但不当配置键读', (t) => {
+  const dir = home(t)
+  const warned = []
+  const env = {
+    AGENT_MAN_HOME: dir,
+    AGENT_MAN_BIN: 'D:\\fake\\agent-man.cmd',
+    AGENT_MAN_REPO: 'D:\\fake',
+  }
+  const cfg = config.load({ env, homeDir: dir, warn: (line) => warned.push(line) })
+  // 这两条是零件契约里的"本体在哪"提示，本体自己不读：报成未知变量，零件每次回问就多两行噪声。
+  assert.deepEqual(warned, [], `入口提示被报成了未知变量：${warned.join('')}`)
+  assert.equal(cfg.parts.inject, true, '认下名字不等于把它读成某个键')
+})
+
+test('认下入口提示没把整个前缀放开：陌生的 AGENT_MAN_ 变量照旧报', (t) => {
+  const dir = home(t)
+  const warned = []
+  config.load({
+    env: { AGENT_MAN_HOME: dir, AGENT_MAN_NOT_A_KEY: '1' },
+    homeDir: dir,
+    warn: (line) => warned.push(line),
+  })
+  assert.equal(warned.length, 1, `陌生变量应当恰好报一行，实际 ${warned.length} 行：${warned.join('')}`)
+  assert.match(warned[0], /AGENT_MAN_NOT_A_KEY 不对应任何配置键/u)
+})
+
 test('config reset 把键删回默认，不把默认值抄进文件', async (t) => {
   const dir = home(t)
   const { out, ctx } = ctxFor(dir)
