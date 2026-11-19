@@ -271,7 +271,10 @@ function registerTools(deps) {
           schema: { type: 'string' },
           render: (_args, value) => [{ type: 'text', text: value }],
         },
-        execute: async (args) => toolText(await callTool(tool.name, args, { home: homeDir, now: nowTs(), env, dayStart: cfg.clock.dayStart })),
+        execute: async (args) => {
+          const box = { home: homeDir, now: nowTs(), env, dayStart: cfg.clock.dayStart }
+          return toolText(await callTool(tool.name, args, box))
+        },
       })
     } catch (e) {
       warn(`! 工具 ${tool.name} 没注册上（${messageOf(e)}）：模型这轮看不到它`)

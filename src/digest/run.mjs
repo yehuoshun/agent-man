@@ -78,7 +78,9 @@ export async function run(opts = {}) {
   if (target === null) say(`${text}\n`)
   for (const line of warnings) warn(`${line}\n`)
 
-  return { text, built, seen, rulesSeen: markedRules, trace: traced, settled, out: written, wrote: !dry, warnings }
+  return {
+    text, built, seen, rulesSeen: markedRules, trace: traced, settled, out: written, wrote: !dry, warnings,
+  }
 }
 
 // out 的目录不替你建：写到哪儿是调用方的决定，猜错地方再建一串目录，

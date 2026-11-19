@@ -775,7 +775,8 @@ async function selfAppend(ctx) {
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man self append "<一段话>"（段首自动补今天的日期）')
-  const got = await memory.appendSelf(homeOf(ctx), text, { now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
+  const when = { now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart }
+  const got = await memory.appendSelf(homeOf(ctx), text, when)
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const head = got.header ? `（新起 ${got.header.replace(/^## /, '')} 这一段）` : '（接在今天这段后面）'
