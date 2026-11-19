@@ -11,14 +11,19 @@ const part = (name) => ({ name, file: `C:/fake/agent-man-${name}` })
 function deps({ desc = {}, run = {} } = {}) {
   return {
     scan: () => [],
-    describe: async (p) => desc[p.name] ?? { ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 1000, side_effects: false },
-    capture: async (p) => run[p.name] ?? { status: 'ok', code: 0, out: `${p.name} 答话`, err: '', truncated: false },
+    describe: async (p) => desc[p.name] ?? {
+      ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 1000, side_effects: false,
+    },
+    capture: async (p) => run[p.name] ?? {
+      status: 'ok', code: 0, out: `${p.name} 答话`, err: '', truncated: false,
+    },
   }
 }
 
 test('零件按预算装，装不下的进 dropped 并写明是预算', async () => {
   const wide = '很'.repeat(200) // 200 cost，一行就够撑爆一个小预算
-  const r = await sense({}, { budget: 100, parts: [part('a'), part('b')], deps: deps({ run: { a: { status: 'ok', out: wide, err: '', truncated: false } } }) })
+  const depsOf = deps({ run: { a: { status: 'ok', out: wide, err: '', truncated: false } } })
+  const r = await sense({}, { budget: 100, parts: [part('a'), part('b')], deps: depsOf })
   assert.deepEqual(r.lines.map((one) => one.name), ['b'])
   assert.deepEqual(r.dropped, [{ name: 'a', reason: 'budget' }])
   assert.ok(r.used + cost(wide) + LINE_OVERHEAD > r.budget)
@@ -37,7 +42,9 @@ test('--describe 不可用的零件只出一条警告，不拖死别的零件', 
 test('超时与起不来都算这一次没答上来，且说清是什么', async () => {
   const r = await sense({}, {
     parts: [part('slow')],
-    deps: deps({ run: { slow: { status: 'timeout', code: null, out: '', err: '', truncated: false, timeout: 5000 } } }),
+    deps: deps({
+      run: { slow: { status: 'timeout', code: null, out: '', err: '', truncated: false, timeout: 5000 } },
+    }),
   })
   assert.deepEqual(r.lines, [])
   assert.deepEqual(r.failures, [{ name: 'slow', why: 'slow 超时（超过 5000ms）' }])
@@ -124,7 +131,9 @@ test('不给 deadline 时仍然串行，顺序就是传进来的顺序', async (
 test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来的照收', async () => {
   const waits = []
   const slow = {
-    describe: async (p) => ({ ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 60000, side_effects: false }),
+    describe: async (p) => ({
+      ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 60000, side_effects: false,
+    }),
     capture: async (p, o) => {
       waits.push({ name: p.name, timeout: o.timeout })
       if (p.name === 'slow') {

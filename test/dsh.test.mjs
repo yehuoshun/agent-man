@@ -177,7 +177,9 @@ test('真宿主里上一轮那条注入不在 payload 里：去重认的是会�
   const events = []
   const session = { surface: { nodes: [] }, snapshotEvents: () => events }
   host.openSession(session)
-  const ask = (text) => ({ step: 1, header: ROOT, messages: [{ role: 'user', content: [{ type: 'text', text }] }] })
+  const ask = (text) => ({
+    step: 1, header: ROOT, messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+  })
 
   const first = await host.preStep(ask('在吗'), enter)
   assert.match(first.messages[0].content[0].text, /\[称呼\] 小满/u)

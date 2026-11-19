@@ -40,7 +40,16 @@ function fakePart() {
     ].join('\r\n'))
   } else {
     const file = path.join(dir, 'agent-man-fake')
-    fs.writeFileSync(file, ['#!/bin/sh', 'if [ "$1" = "--describe" ]; then', `  echo '${body}'`, 'else', '  echo "rain outside"', 'fi', ''].join('\n'))
+    const script = [
+      '#!/bin/sh',
+      'if [ "$1" = "--describe" ]; then',
+      `  echo '${body}'`,
+      'else',
+      '  echo "rain outside"',
+      'fi',
+      '',
+    ].join('\n')
+    fs.writeFileSync(file, script)
     fs.chmodSync(file, 0o755)
   }
   return dir

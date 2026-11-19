@@ -284,7 +284,10 @@ test('建议排在最后一段，带零件名字：读者得知道这话是哪�
     ['agent-man · 2026-11-13 21:40', '上次开口：还没开过口'].join('\n'),
   )
   assert.match(
-    renderScreen({ clock: '2026-11-13 21:40', since: null, plans: [], notes: [], weakest: [], suggest: [{ name: '', text: '该订票了' }] }),
+    renderScreen({
+      clock: '2026-11-13 21:40', since: null, plans: [], notes: [], weakest: [],
+      suggest: [{ name: '', text: '该订票了' }],
+    }),
     /\n建议\n  · 该订票了$/,
   )
 })
