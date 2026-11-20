@@ -13,7 +13,7 @@
 ## 装它
 
 没有 npm 包：`agent-man` 这个名字在 npm 上是别人的（2022 年的 0.0.1，一直没人动），
-本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 最后一节）。
+本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 的「不发 npm」一节）。
 两条正当的装法：
 
 - **当命令行用**：`git clone` 之后 `npm link`，或者把 `code/agent-man/bin` 整目录加进 `PATH`。
