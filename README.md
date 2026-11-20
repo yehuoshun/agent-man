@@ -11,7 +11,8 @@
 ## 装它
 
 没有 npm 包：`agent-man` 这个名字在 npm 上是别人的（2022 年的 0.0.1，一直没人动），
-本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 最后一节）。两条正当的装法：
+本仓库用 `"private": true` 明说不发布（来由见 [docs/decisions.md](docs/decisions.md) 最后一节）。
+两条正当的装法：
 
 - **当命令行用**：`git clone` 之后 `npm link`，或者把 `code/agent-man/bin` 整目录加进 `PATH`。
   Windows 上那个目录里有 `agent-man.cmd` 垫片，加完直接敲 `agent-man` 就行，
@@ -60,10 +61,10 @@ agent-man note   add|ls|take|drop     便条
 agent-man plan   add|done|drop|ls     日程
 agent-man self   show|set|append      自我块
 agent-man soul   ls|use|show|check|import  灵魂卡（角色卡）
-agent-man affect show|set|clear|why   情绪（四轴：情绪/精力/信任/尊重）
+agent-man affect show|set|clear|why|stim <kind>   情绪（四轴：情绪/精力/信任/尊重）
 agent-man context show|digest|cue|sense    处境屏、摘要、开口判决、零件聚合
 agent-man audit  trace|timeline|orphan     审计账本
-agent-man config show|get|set|reset   配置（唯一真源，读命令无副作用）
+agent-man config path|show|get|set|reset   配置（唯一真源，读命令无副作用）
 agent-man doctor                      自检
 agent-man <其它名字> …                PATH 上的 agent-man-<名字>（插件直通）
 ```
@@ -85,7 +86,8 @@ stdout 只放结果，stderr 只放 `! ` 开头的警告。
 
 一个可切换的身份：`name.md`（称呼）/ `identity.md`（我是谁）/ `soul.md`（说话方式）/
 `dialogue.md`（示范对话，`<START>` 分组）/ `lore.jsonl`（往事，按触发词取）。
-支持导入 SillyTavern 的 CCv1/V2 角色卡，`creator_notes` 之类只进 `card.json`、不进注入。名字、身份、说话方式走常驻预算，往事与示范对话按触发竞争——**切角色不切记忆**，
+支持导入 SillyTavern 的 CCv1/V2 角色卡，`creator_notes` 之类只进 `card.json`、不进注入。
+名字、身份、说话方式走常驻预算，往事与示范对话按触发竞争——**切角色不切记忆**，
 角色换的是人设与说话方式，我记住的事还在。
 
 ## 情绪
@@ -108,8 +110,8 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 **接一个新的**：在 PATH 上放一个可执行文件 `agent-man-<名字>`，它得能 `--describe` 报五个字段
 （`name` / `desc` / `section` / `timeout_ms` / `side_effects`），无参时只读、只往 stdout 回一行。
 写完先 `agent-man context sense --json` 看它答了什么、预算怎么算的。
-第一个真零件是 `agent-man-yuQue`（把处境与记忆同步进语雀；库名必须自己设 `YUQUE_NAMESPACE`，
-   它没有内置默认库），装法看它自己的 README。
+第一个真零件是 [`agent-man-yuQue`](https://github.com/yehuoshun/agent-man-yuQue)
+（把处境与记忆同步进语雀；库名必须自己设 `YUQUE_NAMESPACE`，它没有内置默认库），装法看它自己的 README。
 
 **出问题看哪**：`agent-man context sense --json` 里有每件的答话、预算与 `dropped`；
 `agent-man config get parts.inject` 确认开关没被关掉；四条通道各走哪条路、实测数字与代价
@@ -134,5 +136,5 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 
 ## 状态
 
-1.0.0。已知限制写在 `docs/design.md` §16（宿主层未实机验、证据区间、`--due`、长表单行排版等）。
+1.1.0。已知限制写在 `docs/design.md` §16（宿主层未实机验、证据区间、`--due`、长表单行排版等）。
 旧实现存档在 `archive/v0.4`（`v0.4.0` tag）。
