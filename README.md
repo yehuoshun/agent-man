@@ -108,7 +108,8 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 **接一个新的**：在 PATH 上放一个可执行文件 `agent-man-<名字>`，它得能 `--describe` 报五个字段
 （`name` / `desc` / `section` / `timeout_ms` / `side_effects`），无参时只读、只往 stdout 回一行。
 写完先 `agent-man context sense --json` 看它答了什么、预算怎么算的。
-第一个真零件是 `agent-man-yuQue`（把处境与记忆同步进语雀的私密库），装法看它自己的 README。
+第一个真零件是 `agent-man-yuQue`（把处境与记忆同步进语雀；库名必须自己设 `YUQUE_NAMESPACE`，
+   它没有内置默认库），装法看它自己的 README。
 
 **出问题看哪**：`agent-man context sense --json` 里有每件的答话、预算与 `dropped`；
 `agent-man config get parts.inject` 确认开关没被关掉；四条通道各走哪条路、实测数字与代价
