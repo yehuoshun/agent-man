@@ -1,5 +1,7 @@
 # agent-man
 
+[![ci][ci-badge]][ci-link]
+
 给 LLM agent 补上它没有的那一层：**会话之外的记忆、此刻的处境、该不该开口**。
 
 它自己不是 agent——不常驻、不联网、不调用模型、不替你下判断。它只做三件事：
@@ -138,3 +140,6 @@ PATH 就是注册表：`agent-man-foo` 装上就能 `agent-man foo …`。契约
 
 1.1.0。已知限制写在 `docs/design.md` §16（宿主层未实机验、证据区间、`--due`、长表单行排版等）。
 旧实现存档在 `archive/v0.4`（`v0.4.0` tag）。
+
+[ci-badge]: https://github.com/yehuoshun/agent-man/actions/workflows/ci.yml/badge.svg
+[ci-link]: https://github.com/yehuoshun/agent-man/actions/workflows/ci.yml
