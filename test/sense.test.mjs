@@ -137,8 +137,12 @@ test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来
     capture: async (p, o) => {
       waits.push({ name: p.name, timeout: o.timeout })
       if (p.name === 'slow') {
-        // 契约是骨架到点硬杀，所以"等满给我的时间再回话"就是最坏情况。
-        await sleep(o.timeout)
+        // 契约是骨架到点硬杀，所以"给多少时间就睡多久（再多一点）"就是最坏情况。
+        // 那个"再多一点"是必须的：睡到恰好 o.timeout 等于和 deadline 的计时器同毫秒赛跑，
+        // 谁先到取决于事件循环里先排谁——CI 上实测睡赢过，慢零件"答上话了"，dropped 于是是空数组
+        // （run #73，windows-latest node 24，断言在 sense.test.mjs:155）。多睡一点点，胜负就只由
+        // "我们等没等"决定，不再由定时器排序决定。
+        await sleep(o.timeout + 150)
         return { status: 'timeout', code: null, out: '', err: '', truncated: false, timeout: o.timeout }
       }
       return { status: 'ok', code: 0, out: '快的答话', err: '', truncated: false }
@@ -147,7 +151,10 @@ test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来
   const t0 = performance.now()
   const r = await sense({}, { parts: [part('slow'), part('fast')], deps: slow, deadline: 60 })
   const waited = performance.now() - t0
-  assert.ok(waited < 200, `总等待 ${Math.round(waited)}ms 没有收在 deadline 附近`)
+  // 上界不是"贴着 60ms"：假 capture 自己要睡 o.timeout + 150，总额就该落在 deadline + 那 150 附近。
+  // 留 1 秒余量是给排队的（CI 上 `node --test` 一个进程里并行跑好几个文件）；真正要证明的是
+  // "没等满零件声明的 60s"，不是"这台机器有多快"。
+  assert.ok(waited < 1000, `总等待 ${Math.round(waited)}ms 没有收在 deadline 附近`)
   // 传给 capture 的是"剩余时间"：既不许是零件声明的 60s，也不许是短到不算数。
   const got = waits.find((one) => one.name === 'slow')
   assert.ok(got.timeout > 0 && got.timeout <= 60, `capture 拿到的 timeout 是 ${got.timeout}`)

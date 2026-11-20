@@ -423,17 +423,19 @@ test('零件到期限没答上来：注入照样完成，正文有答上来的�
     await eagerMood(home)
     await withBin(async (dir, PATH) => {
       makePart(dir, 'quick', "console.log('the window is open')")
-      // 慢零件挂 20 秒不答话、也声明自己需要 20 秒：这样先到的一定是注入期限，注入要真去等它，
-      // 这条用例就先原地站 20 秒，差值大得没法拿机器快慢解释。
-      makePart(dir, 'slow', "setTimeout(()=>console.log('late'),20000)", { timeoutMs: 20000 })
+      // 慢零件挂 60 秒不答话、声明自己需要 30 秒（契约的上限）：这样先到的一定是注入期限，
+      // 注入要真去等它就先原地站 60 秒，差值大得没法拿机器快慢解释。
+      makePart(dir, 'slow', "setTimeout(()=>console.log('late'),60000)", { timeoutMs: 30000 })
       const got = await injectOnce(home, { PATH, AGENT_MAN_PARTS_DEADLINE: '4000' })
       // 期限 4000ms 的余量是量出来的，不是拍的（本机 Windows，2026-11-20，见 tmp 里的计时探针）：
       // 一个假零件"describe + capture"两次起进程，空载约 250ms，四份全量测试并行压着跑时最坏 1357ms。
       // 所以快零件答上来至少留 3× 最坏值；而 deadline 到点之后还要等 killTree 杀完进程树，
-      // 实测这段在负载里会晚 300-500ms——故断言放到"期限 + 2 秒"（实测最坏一次 4504ms，
-      // 仍留 1.5 秒余量）。它仍远小于慢零件的 20 秒：证明的是"到点收手并记账"，
-      // 不是"等到它答话"，也就不会跟着机器快慢变红。
-      assert.ok(got.ms < 6000, `注入用了 ${got.ms.toFixed(0)}ms：首步注入被零件拖住了`)
+      // 实测这段在负载里会晚 300-500ms——故断言放到"期限 + 2 秒"（本机实测最坏一次 4504ms）。
+      // 但**上限只管我们等多久，管不住机器起进程多贵**：GitHub 的 windows-latest 冷机上一次
+      // `cmd.exe /c node -e …` 要一两秒（run #73 实测这条注入用了 9244ms 才收手，仍远小于慢零件的
+      // 20 秒）。所以上界放到 15 秒、慢零件挂到 60 秒：证明的仍是"到点收手并记账"（真等到答话就是
+      // 60 秒），而不是"这台机器有多快"——本机 4.5 秒与 CI 9.2 秒都能过。
+      assert.ok(got.ms < 15000, `注入用了 ${got.ms.toFixed(0)}ms：首步注入被零件拖住了`)
       assert.match(got.text, /建议/u, got.text)
       assert.match(got.text, /the window is open/u, got.text)
       assert.match(got.text, /（quick）/u, got.text)
