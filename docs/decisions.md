@@ -75,7 +75,8 @@ import store。
 
 **决定**
 `test/structure.test.mjs` 里立了两条规矩：`process.env` 只准出现在 `src/core/config.mjs` 与
-`bin/`；`config.json` / `meta.json` 字面量只准出现在 `src/store/paths.mjs`。规矩落地时已有的
+`src/cli/main.mjs`；`config.json` / `meta.json` 字面量只准出现在 `src/store/paths.mjs` 与
+`src/core/config.mjs`。规矩落地时已有的
 违规不为改它们而停下，记进 `ENV_DEBT` / `META_DEBT` 两张名单，用例只断言"名单不增长"。
 
 **来由**
