@@ -60,8 +60,10 @@
 
 ## 七、提交与分支
 
-- 工作在**分支 `v1`**，不直接改 `main`。旧代码存档在 `archive/v0.4`（v0.4.0 的 tag 也在）。
-- **一改一提交一 push**：每完成一个自洽的小步就 commit 并 `git push origin v1`，不攒批。
+- `main` 是主线。改代码按功能类型开分支（`fix/…`、`feat/…`、`docs/…`…），在分支上验完再
+  `git merge --ff-only` 合回 `main`；纯文档改动可直接改 `main`。旧的 `v1` 已 ff 合入 `main`，
+  不再单独使用（v0.4.0 的存档在 `archive/v0.4`）。
+- **一改一提交一 push**：每完成一个自洽的小步就 commit 并 `git push origin <当前分支>`，不攒批。
   中途被打断时，宁可提交一个"半成品但可解释"的状态，也不要留未提交改动在本地。
 - 提交信息中文，格式 `范围: 改了什么(为什么)`，范围用 `core` / `store` / `memory` / `recall` / `mind` / `digest` / `view` / `cli` / `parts` / `dsh` / `docs` / `test`。
 - push 失败必须报原文并停下；PowerShell 5.1 会把 `To github.com:...` 当错误——以 `git status -sb` 无 `ahead` 为准。
