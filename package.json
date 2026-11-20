@@ -2,6 +2,7 @@
   "name": "agent-man",
   "version": "1.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "给 LLM agent 的记忆、处境与克制",
   "type": "module",
   "engines": { "node": ">=20" },
@@ -13,6 +14,6 @@
     "./package.json": "./package.json"
   },
   "dsh": { "bundle": { "patch": "./dsh/cordis.patch.yml" } },
-  "files": ["bin/", "src/", "dsh/", "README.md", "AGENTS.md", "docs/"],
+  "files": ["bin/", "src/", "dsh/", "README.md", "AGENTS.md", "docs/", "LICENSE"],
   "scripts": { "test": "node --test" }
 }
