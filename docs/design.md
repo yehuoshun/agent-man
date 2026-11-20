@@ -318,7 +318,7 @@ stdout ≤8KB，超了截断并标 `truncated`；
 `user` 槽位这一版留空：称呼已由灵魂卡的 `[称呼]` 行承担，再写一段画像就是第二份灵魂。
 
 写入口的边界（与 §8 一致）：`agent_man` 只收六个动作，其中 `event add` 是插件唯一能走的写入路径，
-它顺手调 `mind.debt.bump`（§14.9 的计数器只有这里会加）；`digest.run` 写完账本后调 `mind.debt.settle`。
+它顺手调 `mind.debt.bump`（§7 的 `mind/debt` 只有这里会加）；`digest.run` 写完账本后调 `mind.debt.settle`。
 工具注册用的形状是 `ctx.get('tools')?.register?.({name,description,inputSchema,handler})`——
 DSH 没有公开文档，拿不到只发一条 `! ` 警告、不猜别名；**这一处需要在实机上确认一次**。
 
