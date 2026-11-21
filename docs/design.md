@@ -788,13 +788,14 @@ agent-man config reset [<a.b>]        删掉覆盖，回落到默认
 
 | 限制 | 现状 | 什么时候需要动 |
 |---|---|---|
-| DSH 工具注册与返回值形状 | 按 `ctx.get('tools')?.register?.(…)` 写；返回值一律纯文本（`toolText` 一处适配）；整套契约由 `test/dsh.test.mjs` 里的假宿主锁着 | 第一次在 DSH 实机上跑时确认；形状不符只改 `dsh/index.mjs` 的 `registerTools`/`toolText` 与那个假宿主，业务侧不动 |
-| 宿主层没进过真会话 | 假宿主走完了 `agent/created` → `agent/pre-step` → 首步注入 → 工具调用；五块内容、预算上限、root 判定、缺服务时与零件超期/装不下时的降级都有用例 | 同上：实机开一个新会话看一眼 |
+| DSH 工具注册与返回值形状 | **已验（2026-11-21 实机会话）**：`agent_man` 与 `agent_man_look` 在 DSH Web GUI 的新会话里都注册成功、都调得动——写走 `agent_man`（落下事件，CLI 里读得回）、读走 `agent_man_look`，返回的就是一段纯文本（不是块数组），接口一处没改 | DSH 换注册 API 时按实机报错只改 `dsh/index.mjs` 的 `registerTools`/`toolText` 与那个假宿主，业务侧不动 |
+| 宿主层没进过真会话 | **已验（2026-11-21 实机会话）**：新会话第一步就注入了——处境块 + 空行 + 情绪行，与 `renderScreen`/`affectLine` 的拼法逐字对得上；`payload.step === 1` 的语义核准过（DSH `docs/subsystems/core.zh.md:391`：每轮第一步、任何步骤开始前），与 §9「每轮第一步注入」一致。写入是真落盘：工具写、CLI 读回、欠账顺手 bump | —— |
 | 证据区间 `--from 日期..日期` | 明确退 2，只认事件 id | 有人真的按区间给证据时，让记忆层自己解析 |
 | `context digest --due` / `affect stim --imp` | 明确退 2 | 欠账口径与刺激权重表定下来之后 |
 | 长表单行（证据、账本、`affect why`）的排版 | 住在 CLI，view 里没有对应渲染器 | 出现第二个前端时 |
 | 日界（`clock.dayStart`） | 已修：分片名、id 日期、自我块日期段都跟着配置走（默认 04:00）；`config set` 在数据目录还不存在时会先建目录 | —— |
 | ~~零件答话只在 CLI 那一屏~~ **已修（v1.2）**：注入也跑零件 | `context show`（含裸 `agent-man`、`look`）先 `parts.sense` 再排屏；DSH 宿主注入现在也跑——`inject.parts` 只给零件答话，`parts.deadline` 是**总**期限（不分摊给每个零件），到点就用已经拿到的部分继续，没答上来的进 `dropped[{name,reason:'deadline'}]` 并出 `! `。宿主按 `situationBudget(cfg) = inject.situation + inject.parts`（默认 550 + 120 = 670）给处境与建议两格，装不下丢的是建议不是日程。`parts.inject = false` 回到 1.1 的"不跑"，**CLI 与宿主两侧都认**。零件被本体调用时带 `AGENT_MAN_PART_CALL=1` 哨兵，本体见到它就不再问零件——"零件在零件里"会一路套娃到超时，这是护栏。四条通道、实测与代价另见 `docs/integration.md` | 代价：首步注入最多多等 `parts.deadline`（默认 1200ms）；零件坏掉只降级成"这次没有建议"，不阻塞会话；零件不能再嵌套问零件，要别的零件的观察就得自己在无参输出里带出来。要动它的时机：有人嫌注入慢了（调小 `parts.deadline`），或嫌建议太少（调大 `inject.parts` / 期限） |
+| 零件答话的期限是**总**期限，不分摊 | 已实测定量（2026-11-21）：`parts.deadline` 默认 1200ms 一到就收，慢零件会把「建议」整段挤掉——`agent-man-yuQue` 原本串行问本体四份（1.3–1.6s），`parts.sense(env,{deadline:1200})` 连跑 5 次 5 次全丢（`dropped[{name:'yuQue',reason:'deadline'}]`）；把四份取数改成并行后无参 0.57–0.68s，同一期限下 5/5 答上来。本体这边的默认值一行没动（`src/core/const.mjs:73` `PART_DEADLINE = 1200`） | 有零件答话老不出现时先看 `context sense --json` 里的 `dropped[{name,reason}]`：`'deadline'`（`src/parts/sense.mjs:97`）是那个零件该提速，`'budget'`（`src/parts/sense.mjs:113`）才是调预算的事；别为了一个慢零件调大期限——期限是总账，一调每个人每一步都跟着等 |
 | 规矩与 `self.md` 的读不只一处实现 | 已修：`audit/timeline` 走 `memory.listRules({all:true})`、`doctor` 的 `checkSelf` 走 `memory.readSelf()`；代价是手写进 `rules.jsonl`、缺 `seen` 的行会被当坏行跳过（正常写入路径一定会写 `seen: 0`） | 有人手改数据文件时 |
 | 测试残留 | 已修：用例文件用 `test.after` 兜底删临时目录（`os.tmpdir` 里攒过的 1.5 万个也清了） | —— |
 | `self set --id`（按块替换） | 明确退 2：自我块是整份覆盖（`setSelf`），没有按块替换（design §4：不分块） | 有人真的只想改一段时——那时得先想清楚"段"怎么切，不是先加一个 `--id` |

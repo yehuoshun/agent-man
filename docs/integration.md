@@ -107,11 +107,31 @@ DSH 每一步注入（dsh/index.mjs）
 墙钟随机器、磁盘、网络变，只能当量级看：**一次零件答话 ≈ 两次进程启动**，Windows 每次
 100–200ms 起。
 
+### 2026-11-21 实机会话（DSH Web GUI，Windows，同一个数据目录）
+
+第一次在真宿主里跑完一次会话，量的都是墙钟：
+
+| 场景 | 墙钟 | 备注 |
+|---|---|---|
+| 会话首步注入（零件在） | 会话开头即出现 | 处境块 + 空行 + 情绪行，与 `renderScreen`/`affectLine` 拼法逐字对得上 |
+| `agent_man` / `agent_man_look` | — | 两个工具都注册成功、都能调用；`agent_man` 写的那条事件 CLI 里读得回 |
+| CLI `context show`，零件旧版（串行问本体四份） | 1776–1959ms | 零件自身 1.3–1.6s，整段落在 `parts.deadline`（1200ms）之外 |
+| 同上，零件改并行取数后 | 1030–1126ms | 零件无参 572–677ms |
+| `parts.sense(env,{deadline:1200})`，旧零件 | 5/5 被丢（1238–1260ms） | `dropped=[{name:'yuQue',reason:'deadline'}]`，`! ` 说「这次不用它的答话」 |
+| 同上，新零件 | 5/5 答上来（814–961ms） | `dropped: []`，建议行照常出现 |
+| 零件问本体那四份（`context show --json` 295 / `memory ls --json` 204 / `rule ls --json` 212 / `self show --json` 201ms） | 串行 941ms → 并行 359ms | 并行是零件侧改的，本体这边一行没动 |
+
+「一次零件答话 ≈ 两次进程启动」这条要补一句**乘法**：零件内部再问本体几份，就是几份进程启动，
+而且这些启动全压在同一个 `parts.deadline` 底下。互不依赖的取数得零件自己并行起来——串行的
+零件会把「建议」整段吃掉，屏上看到的是零件"没答话"，其实是它答得太慢。
+
 ## 5. 已知代价
 
 - **2N 次进程启动**：N 个零件最多 `describe` N 次 + `capture` N 次。Windows 上这是主要成本。
 - **期限到了会丢**：`parts.deadline` 是总期限，压到 300ms 量级会连正常零件一起丢；注入那边
-  丢的那件进 `dropped[{ name, reason: 'deadline' }]`，并出 `! ` 说明。
+  丢的那件进 `dropped[{ name, reason: 'deadline' }]`，并出 `! ` 说明。2026-11-21 实测过一个
+  真踩：串行取数的 `agent-man-yuQue` 无参要 1.3–1.6s，连跑 5 次 5 次全被丢——期限没毛病，
+  是零件该提速（改并行后 0.57–0.68s，5/5 答上来）。
 - **建议段一屏只有一条**：零件答的再多，屏上也就一条；想更宽就调 `inject.parts`（注入）或
   `inject.situation`（CLI）。
 - **关掉就是全关**：`parts.inject = false` 之后连「谁没答上来」都记不进那一次注入——这是有意的
@@ -153,3 +173,7 @@ agent-man-yuQue sync              # 真写；随后再跑一次应该报「没�
   给个上限，得给 `sense` 传 deadline（注入侧已经这么做）。
 - **建议段有门控**：不到 v≥65 且 e≥76 就不显示建议。屏上没零件答话，不代表零件没跑，可能只是
   被门控丢了——`context sense --json` 能看到答上来的原文。
+- **先看 `dropped` 再怀疑门控**：`context sense --json` 里 `dropped[{ name, reason }]` 是硬证据，
+  `reason: 'deadline'` 是零件太慢（`src/parts/sense.mjs:97`），`reason: 'budget'` 是装不下
+  （`src/parts/sense.mjs:113`）。前者要那个零件提速——别调大期限，期限是总账，一调每个人每一步
+  都跟着等；后者才是调 `inject.parts` / `inject.situation` 的事。
