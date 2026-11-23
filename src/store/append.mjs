@@ -8,16 +8,61 @@ export function appendJsonl(file, obj) {
   if (typeof line !== 'string') {
     throw new Error(`记录序列化失败：JSON.stringify 返回了 ${typeof line}（多半是传了函数或 undefined）`)
   }
+  // 追加前先看一眼末字节：末行没换行的文件（手写的、或上次写到一半崩了）直接追加，
+  // 新行会粘在旧行尾巴上——一次 append 同时毁掉旧记录和新记录，两条都读不出来。先补个 \n。
+  // 并发时两个写者可能各补一个：多出来的空行 readJsonl 当空行跳过，不伤任何一条记录。
+  const tail = tailOf(file)
+  let bad = null
   const fd = fs.openSync(file, 'a')
   try {
-    fs.writeSync(fd, `${line}\n`)
+    fs.writeSync(fd, `${tail.nl === false ? '\n' : ''}${line}\n`)
     fs.fsyncSync(fd)
+  } catch (e) {
+    bad = e
   } finally {
     fs.closeSync(fd)
+  }
+  if (bad) {
+    rollback(file, tail)
+    throw bad
   }
   // 只 fsync 不够：盘上说写了、文件里没有的事故真发生过，所以读回来核一遍。
   assertLanded(file, obj, line)
   return obj
+}
+
+// 追加前的那一眼：文件在不在、多长、末字节是不是换行。只读一个字节，不把整份读进内存。
+// 读到的一半（existed 且 nl === false）说明上一个写者留下了没有收尾的半行。
+function tailOf(file) {
+  let fd = -1
+  try {
+    fd = fs.openSync(file, 'r')
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { existed: false, size: 0, nl: true }
+    throw e
+  }
+  try {
+    const size = fs.fstatSync(fd).size
+    if (size <= 0) return { existed: true, size, nl: true }
+    const one = Buffer.alloc(1)
+    const got = fs.readSync(fd, one, 0, 1, size - 1)
+    return { existed: true, size, nl: got === 1 && one[0] === 0x0a }
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+// 写失败时把文件切回追加前的大小：留着半行，下次追加就又要靠 tailOf 兜一次，
+// 而且一行坏在两个写者之间——等于把一次写失败扩散成两条坏行。
+// 按路径切而不对句柄 ftruncate：Windows 上对以 'a'/'a+' 打开的句柄 ftruncate 直接 EPERM（实测）。
+// 回滚自己失败不盖住原始错误：那个错更要紧，盘上剩的半行由 doctor 的坏行检查如实报出来。
+function rollback(file, tail) {
+  try {
+    if (!tail.existed) fs.rmSync(file, { force: true })
+    else fs.truncateSync(file, tail.size)
+  } catch {
+    // 见上：原始错误优先。
+  }
 }
 
 // 按 id 找自己那一行，而不是只看最后一行：并发追加时最后一行可能是别人的，

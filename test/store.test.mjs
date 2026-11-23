@@ -81,6 +81,51 @@ test('坏行跳过并计数，空行不算记录，没有的分片当空读', ()
   assert.deepEqual(readJsonl(eventsFile(dir, new Date(1999, 0, 1).getTime())), { items: [], bad: 0 })
 })
 
+test('末行没有换行的 jsonl 追加时先补一个换行，旧行不被粘成一行', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const ts = new Date(2026, 10, 13, 21, 40).getTime()
+  const file = eventsFile(dir, ts)
+  const old = { id: 'e-1', at: ts, text: '旧' }
+  // 手写的分片，或上次写到一半崩掉的那种：最后一条记录后面没有换行。
+  fs.writeFileSync(file, JSON.stringify(old))
+
+  appendJsonl(file, { id: 'e-2', at: ts + 1000, text: '新' })
+
+  const raw = fs.readFileSync(file, 'utf8')
+  assert.ok(raw.startsWith(`${JSON.stringify(old)}\n`), '旧行要先补齐换行，不能和新行粘在一起')
+  const back = readJsonl(file)
+  assert.equal(back.bad, 0, '补过换行之后两条都得是合法记录')
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'])
+})
+
+test('追加写失败要回滚：写了一半的尾巴切回追加前的大小', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const file = eventsFile(dir, new Date(2026, 10, 13, 21, 40).getTime())
+  // 末行故意不带换行：补的换行和正文得一起被切掉，回滚才算真回滚。
+  const before = '{"id":"e-1","at":1,"text":"旧"}'
+  fs.writeFileSync(file, before)
+
+  const real = fs.writeSync
+  fs.writeSync = (fd, text) => {
+    real.call(fs, fd, String(text).slice(0, 6))
+    throw new Error('模拟磁盘写一半就崩')
+  }
+  try {
+    assert.throws(() => appendJsonl(file, { id: 'e-2', at: 2, text: '新' }), /模拟磁盘写一半就崩/)
+  } finally {
+    fs.writeSync = real
+  }
+
+  assert.equal(fs.readFileSync(file, 'utf8'), before, '半行必须切掉：留着它下次追加就又要粘连')
+  // 回滚之后这个分片仍然可用，读得回旧行、也接得上新行。
+  appendJsonl(file, { id: 'e-3', at: 3, text: '后来的' })
+  const back = readJsonl(file)
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-3'])
+  assert.equal(back.bad, 0)
+})
+
 test('writeAtomic 覆盖写不留 .tmp，读到的永远是整份新内容', async () => {
   const dir = tempDir()
   const file = path.join(dir, 'meta.json')
