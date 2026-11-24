@@ -479,6 +479,20 @@ test('插件建议在 v 与 e 没到口子时一条都不上屏，但每条都�
   assert.match(gone[0].why, /v≥65 且 e≥76/)
 })
 
+test('两个零件都答了话、情绪又没到口子：只记一条"丢"，不许刷两句一模一样的', async () => {
+  const home = newHome()
+  await affectSet(home, { axis: 'v', value: 50, why: '用例：普通', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 60, why: '用例：普通', at: T - HOUR })
+  const parts = [
+    { name: '天气', text: '要下雨' },
+    { name: '语雀', text: '与本体一致' },
+  ]
+  const scene = situation(home, { now: T, parts })
+  assert.deepEqual(scene.suggest, [])
+  const gone = scene.dropped.filter((one) => one.reason === 'affect')
+  assert.equal(gone.length, 1, '情绪门槛是整段的门，记一条就够')
+  assert.match(gone[0].why, /2 条零件答话都没上屏/)
+})
 test('同一处境只把 v 抬过口子：唯一的差别就是那一条建议上不上屏', async () => {
   const home = newHome()
   await affectSet(home, { axis: 'v', value: 64, why: '用例：差一分', at: T - HOUR })

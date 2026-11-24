@@ -564,8 +564,9 @@ SOUL_SOUL_MAX 200  SOUL_DIALOGUE_MAX 200  SOUL_USER_MAX 400
 第二个口子的料从哪来：PATH 上零件的答话（§8 的聚合模式，`parts.sense` 拿回来的 `lines`）。
 处境屏把它排成最后一段「建议」，**最多 `SUGGEST_MAX` 条**，行尾带零件名字（读者得知道这话是哪只眼睛看到的）。
 门槛 `v ≥ AFFECT_ACTIVE_V` 且 `e ≥ AFFECT_ACTIVE_E`；不到门槛时一条都不上屏，
-但每条都进 `dropped[{section:'建议', reason:'affect', why:'此刻 v=… e=…'}]`——
-"屏上没有建议"和"零件都没答话"是两件事，账上不能混。
+但要进 `dropped[{section:'建议', reason:'affect', why:'此刻 v=… e=…（N 条零件答话都没上屏）'}]`——
+"屏上没有建议"和"零件都没答话"是两件事，账上不能混。门槛是**整段**的门，所以账上记**一条**、
+把被挡下几条写在话里：两个零件都答话时逐条记会刷出两句一模一样的「丢」，读起来像 bug。
 建议行跟日程、便条、最弱的三条抢同一份处境预算，装不下记 `reason:'budget'`。
 
 每个口子都要有测试：同一处境、只改 v，输出必须只有"带不带那条建议"这一处差异（`test/mind.test.mjs` 里逐字比过）。
