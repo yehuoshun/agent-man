@@ -10,7 +10,7 @@ import {
 } from '../src/host/index.mjs'
 import { situation } from '../src/mind/index.mjs'
 import { renderScreen } from '../src/view/index.mjs'
-import { build as buildSoul, current as currentSoul } from '../src/soul/index.mjs'
+import { build as buildSoul, current as currentSoul, knobsOf } from '../src/soul/index.mjs'
 import { home as homeOf } from '../src/store/index.mjs'
 import { extractNeedles, lastUserText, makeSearch } from './search.mjs'
 
@@ -226,8 +226,9 @@ function situationBlock(deps, at, warnings, partLines = []) {
   try {
     // 预算给两笔之和（处境 550 + 零件 120）：零件答话只进「建议」一段，装不下就由 mind
     // 记 dropped{reason:'budget'}，处境正文照发——丢的是建议，不是处境。
+    // 旋钮一起递下去（§14.9）：建议段出不出的最后一票在卡的 drive 上。
     const scene = situation(homeDir, {
-      now: at, cfg, parts: lines, budget: situationBudget(cfg),
+      now: at, cfg, parts: lines, budget: situationBudget(cfg), knobs: knobsOf(homeDir),
     })
     const body = renderScreen(scene)
       .split('\n')
@@ -245,11 +246,13 @@ function situationBlock(deps, at, warnings, partLines = []) {
 }
 
 // 情绪行：数字只从 affect 的快照里取，宿主这一层连加法都不做（§14.6 的口径）。
+// 预算不传：让 affectLine 用 §14.6 规定的 AFFECT_INJECT_COST（80）。
+// 这里曾经传的是 inject.situation（≈550），于是那条 80 的上限在真机路径上一次都没生效过。
 function moodLine(deps, at, warnings) {
   const { cfg, homeDir } = deps
   try {
     const snap = affectSnapshot(homeDir, { now: at })
-    return affectLine(snap, { visible: cfg.affect.visible, budget: cfg.inject.situation })
+    return affectLine(snap, { visible: cfg.affect.visible })
   } catch (e) {
     warnings.push(`! 情绪快照没读出来（${messageOf(e)}）：这次不带情绪行`)
     return ''

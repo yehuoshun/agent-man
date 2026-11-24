@@ -1,6 +1,7 @@
 // 装配（design §9 / §13）：只把"已经算好的块"拼进预算——不读盘、不问钟、不认识 DSH。
 // 宿主层分两半的理由就在这一行里：取数那半只有实机跑得起来，装配这半必须能被 node --test 钉住。
 import { AFFECT_INJECT_COST, INJECT_BUDGET, cost } from '../core/index.mjs'
+import { reasonOf } from '../affect/index.mjs'
 
 // 总装次序固定（design §9：自我 → 处境 → 旧会话回顾）。user 槽位贴在自我后面：
 // §15 把它从自我里单列出来（100 cost），但 design 没写它排第几，按"称呼紧跟着身份"放第二。
@@ -97,10 +98,15 @@ export function affectLine(snapshot, opts = {}) {
   const stims = Array.isArray(snap.transient) ? snap.transient.length : 0
   const tags = [mood, `${stims} 条刺激`].filter((one) => one !== '').join(' · ')
   const line = tags === '' ? head : `${head} · ${tags}`
+  // §14.9：注入块里的情绪行永远附 why（触发它的那条 kind 与它自己的 why），不许只有形容词——
+  // 一条没有原因的情绪行，读起来就是"我现在心情不好"，那不是状态变量，是台词。
+  const reason = reasonOf(snap.persistent, snap.transient)
+  const withWhy = reason === '' ? line : `${line} · ${reason}`
   // 一句调制规则，取 §14.5 的第二个口子：状态低就只答不问（不主动加戏）。
-  const full = `${line} · v<36 或 e<26 时只答不问`
+  const full = `${withWhy} · v<36 或 e<26 时只答不问`
   if (cost(full) <= cap) return full
-  // 规则那句装不下就只留数字：宁可少一句规则，也不超 §14.6 的 80 cost。
+  // 规则那句装不下就先舍规则、再舍原因：宁可少一句解释，也不超 §14.6 的 80 cost。
+  if (cost(withWhy) <= cap) return withWhy
   if (cost(line) <= cap) return line
   return ''
 }
