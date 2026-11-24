@@ -55,11 +55,54 @@ function fakePart() {
   return dir
 }
 
-async function cli(boxOne, argv) {
+// 慢零件：只在 --describe 上磨蹭。用来证明 `parts.timeout` 真的递到了零件那一层
+// （只递 {budget} 的时候，这一屏会陪它把几百毫秒到几秒全等完）。
+// 磨蹭要写绝对路径：这一屏把 PATH 换成了零件目录，ping / sleep 得自己找得到自己。
+function slowPart() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-slow-'))
+  HOMES.push(dir)
+  const body = '{"name":"slow","desc":"slow part","section":"env","timeout_ms":5000,"side_effects":false}'
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(dir, 'agent-man-slow.cmd'), [
+      '@echo off',
+      '"%SystemRoot%\\System32\\ping.exe" -n 6 127.0.0.1 >nul',
+      `echo ${body}`,
+      '',
+    ].join('\r\n'))
+  } else {
+    const file = path.join(dir, 'agent-man-slow')
+    fs.writeFileSync(file, ['#!/bin/sh', '/bin/sleep 5', `echo '${body}'`, ''].join('\n'))
+    fs.chmodSync(file, 0o755)
+  }
+  return dir
+}
+
+// 盘上有没有出现过这几个字：护栏要证明的是"一个字节都没落下"，不是"退了个 2"。
+function grepHome(dir, needle) {
+  const hit = []
+  const walk = (at) => {
+    for (const one of fs.readdirSync(at, { withFileTypes: true })) {
+      const file = path.join(at, one.name)
+      if (one.isDirectory()) walk(file)
+      else if (fs.readFileSync(file, 'utf8').includes(needle)) hit.push(file)
+    }
+  }
+  if (fs.existsSync(dir)) walk(dir)
+  return hit
+}
+
+// 换掉 PATH 让零件只有一个：cmd 垫片另外还要 ComSpec / SystemRoot 才起得来。
+function usePart(one, dir) {
+  one.env.PATH = dir
+  if (process.env.ComSpec) one.env.ComSpec = process.env.ComSpec
+  if (process.env.SystemRoot) one.env.SystemRoot = process.env.SystemRoot
+}
+
+async function cli(boxOne, argv, extraEnv = {}) {
   const out = []
   const err = []
   const code = await main(argv, {
-    env: boxOne.env,
+    env: { ...boxOne.env, ...extraEnv },
     out: (line) => out.push(line),
     err: (line) => err.push(line),
     now: () => boxOne.now,
@@ -664,6 +707,74 @@ test('affect set 的屏显写清改了哪个轴、改到多少，不出现 undef
   assert.equal(got.code, 0)
   assert.match(got.out, /^已记下手动覆盖 v=90 {2}v=90 /)
   assert.doesNotMatch(got.out, /undefined|\[object Object\]/)
+})
+
+// 零件反调的护栏（design §8）：capture() 给子进程盖了哨兵，写入路径必须认它——
+// 否则零件能把结论、规矩、自我块真写进本体（实测零件里 `rule add` 退 0 还落了盘）。
+const PART_CALL = { AGENT_MAN_PART_CALL: '1' }
+
+test('零件带着哨兵反调：写结论/规矩/自我块一律退 2，说清它只能写情景层，且一个字都没落盘', async () => {
+  const one = box()
+  const tries = [
+    ['memory add', ['memory', 'add', '零件想下的结论甲', '--key', 'k1', '--why', '它觉得自己懂了']],
+    ['rule add', ['rule', 'add', '零件想立的规矩乙', '--why', '它觉得自己该管']],
+    ['self append', ['self', 'append', '零件想写的自我块丙']],
+    ['note add', ['note', 'add', '零件想留的念丁', '--trigger', '下次问它']],
+    ['plan add', ['plan', 'add', '零件想排的日程戊', '--at', '明天 9:00']],
+  ]
+  for (const [name, argv] of tries) {
+    const got = await cli(one, argv, PART_CALL)
+    assert.equal(got.code, 2, `${name} 该退 2，实际 ${got.code}：${got.out}${got.err}`)
+    assert.match(got.err, /零件只能写情景层（event add --src tool:<名字>），不许写结论\/规矩\/自我块/)
+    assert.equal(got.out, '', `${name} 不该往 stdout 上说话`)
+  }
+  for (const word of ['结论甲', '规矩乙', '自我块丙', '念丁', '日程戊']) {
+    assert.deepEqual(grepHome(one.dir, word), [], `「${word}」落在盘上了：护栏只挡住了一半`)
+  }
+})
+
+test('零件带着哨兵记情景是放行的，但必须署 tool:<名字>：不许冒充人的话', async () => {
+  const one = box()
+  const ok = await cli(one, ['event', 'add', '零件看见外面下雨了', '--src', 'tool:fake'], PART_CALL)
+  assert.equal(ok.code, 0, `零件记情景该成功：${ok.err}`)
+  const rows = readJsonl(eventsFile(one.dir))
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].src.ref, 'fake')
+  const bad = await cli(one, ['event', 'add', '零件假装是用户说的'], PART_CALL)
+  assert.equal(bad.code, 2)
+  assert.match(bad.err, /记情景要署上零件自己的名字/)
+  assert.equal(readJsonl(eventsFile(one.dir)).length, 1, '被拦下的那条不许落盘')
+})
+
+// 零件配置要真接上（design §8 / §16）：`parts.*` 的四个数与账本都得递进 sense，
+// 否则 `config set parts.timeout 200` 形同虚设，连续失败也攒不出冷却。
+test('config set parts.timeout 生效：慢零件的 --describe 按 200ms 判超时，不陪它跑完', async () => {
+  const one = box()
+  usePart(one, slowPart())
+  fs.writeFileSync(path.join(one.dir, 'config.json'), '{"version":1,"parts":{"timeout":200}}\n')
+  const at = Date.now()
+  const got = await cli(one, ['context', 'sense'])
+  const spent = Date.now() - at
+  assert.equal(got.code, 0)
+  assert.match(got.err, /! 零件 slow 没出声：slow 的 --describe 超时（超过 200ms 没有回话）/)
+  assert.ok(spent < 3000, `200ms 的超时不该等这么久：实测 ${spent}ms`)
+})
+
+test('冷却账本当回事：meta.json 里记着连续失败，第 N 次连问都不问', async () => {
+  const one = box()
+  usePart(one, fakePart())
+  ensure(one.dir)
+  fs.writeFileSync(metaFile(one.dir),
+    `${JSON.stringify({ parts: { fake: { fail: 3, until: one.now + 60000 } } })}\n`)
+  const at = Date.now()
+  const got = await cli(one, ['context', 'sense', '--json'])
+  const spent = Date.now() - at
+  assert.equal(got.code, 0)
+  const rows = JSON.parse(got.out)
+  assert.deepEqual(rows.lines, [])
+  assert.equal(rows.dropped[0].reason, 'cooldown')
+  assert.equal(rows.dropped[0].why, 'fake 连续失败 3 次，这次不问（冷却到下一次会话）')
+  assert.ok(spent < 2000, `冷却中的零件不该再 spawn：实测 ${spent}ms`)
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。

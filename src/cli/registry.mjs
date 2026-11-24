@@ -163,6 +163,21 @@ function guard(handler) {
   }
 }
 
+// 零件反调的护栏（design §8）：capture() 给子进程盖了哨兵（core/config.mjs 的 PART_CALL_ENV=1），
+// 可写入路径一直没看它——实测零件里 `rule add` 退 0、规矩真落盘了。哨兵因此由写入路径自己认：
+// 零件只能写情景层（`event add --src tool:<名字>`），结论 / 规矩 / 自我块都是本体的判断。
+// 环境变量只从门（main.mjs）递进来，这里只读 ctx.env，不自己摸进程环境。
+function inPartCall(ctx) {
+  return ctx.env?.[config.PART_CALL_ENV] === '1'
+}
+
+// "不许"之后必须还有一句"那怎么办"，否则零件作者只能猜。
+function noPartWrites(ctx) {
+  if (!inPartCall(ctx)) return
+  throw new Error('零件只能写情景层（event add --src tool:<名字>），不许写结论/规矩/自我块' +
+    `——${ctx.name ?? '这条命令'} 不接零件调用`)
+}
+
 // 命令行只有两种形状：`--名字 值` 和 `--开关`。不认识的名字当场报——
 // 悄悄忽略一个 --jsno，等于让人以为自己拿到了 JSON。
 function split(argv, { names = [], bools = [] } = {}) {
@@ -345,8 +360,13 @@ async function eventAdd(ctx) {
     src: srcOf(arg(flags, 'src')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   }
+  // 零件那一路唯一能落盘的东西就是情景层，而且必须署自己的名字：不署名的"发生过的事"
+  // 与人的话混在一起，日后就再也分不出谁看到的（design §8）。
+  if (inPartCall(ctx) && entry.src.origin !== 'tool') {
+    throw new Error('零件只能写情景层（event add --src tool:<名字>）：记情景要署上零件自己的名字')
+  }
   const got = await memory.eventAdd(entry, { home: dir, now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
-  if (on(flags, 'json')) jsonOut(ctx, got)
+if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const cues = entry.cues.length > 0 ? `，cue ${entry.cues.join('、')}` : ''
     ctx.out(`已记下 ${got.id}（imp ${entry.imp}${cues}）\n`)
@@ -426,6 +446,7 @@ function sayEvents(ctx, flags, got) {
 // ── 语义层：memory ─────────────────────────────────────────────────────────
 
 async function memoryAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['key', 'from', 'imp', 'at'], bools: ['json'] })
   const fact = words.join(' ').trim()
   if (!fact) {
@@ -545,6 +566,7 @@ function memoryShow(ctx) {
 }
 
 async function memoryRevise(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['imp', 'from'], bools: ['json'] })
   const [id, ...rest] = words
   const fact = rest.join(' ').trim()
@@ -570,6 +592,7 @@ async function memoryRevise(ctx) {
 // ── 前瞻层：note / plan ────────────────────────────────────────────────────
 
 async function noteAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, {
     names: ['trigger', 'ttl', 'at'],
     bools: ['json'],
@@ -639,6 +662,7 @@ function noteDrop(ctx) {
 }
 
 async function planAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['at'], bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man plan add "<要做的事>" --at "<什么时候>"')
@@ -699,6 +723,7 @@ function planDrop(ctx) {
 
 // 规矩：正文与理由都必填；要替代谁就点名 supersedes，旧行逐字不动、只是不再生效。
 async function ruleAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, {
     names: ['why', 'supersedes'],
     bools: ['json'],
@@ -759,6 +784,7 @@ function selfShow(ctx) {
 }
 
 async function selfSet(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['id'], bools: ['json'] })
   if (arg(flags, 'id') !== undefined) {
     throw new Error('--id 这一版没接：自我块是整份覆盖（setSelf），没有按块替换（design §4：不分块）')
@@ -772,6 +798,7 @@ async function selfSet(ctx) {
 }
 
 async function selfAppend(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man self append "<一段话>"（段首自动补今天的日期）')
@@ -794,14 +821,27 @@ async function selfAppend(ctx) {
 // 2) parts.inject=false：配置层面整体关掉零件——这个键本该在这儿生效，不能只有宿主那一侧认。
 // 说明只走 stderr：`--json` 的 stdout 必须仍然恰好一行合法 JSON。
 async function senseParts(ctx, cfg, budget) {
-  const nested = ctx.env?.[config.PART_CALL_ENV] === '1'
-  if (cfg.parts.inject !== false && !nested) return parts.sense(ctx.env, { budget })
-  ctx.err(nested
-    ? `! 零件在零件里：这次不问零件（${config.PART_CALL_ENV}=1，防无限套娃）\n`
-    : '! 零件注入已关（parts.inject=false）：这次不问零件\n')
-  // 传 parts: [] 而不是干脆不调用：sense 的账目形状（lines/used/budget/warnings/dropped/failures）
-  // 是下游唯一的输入形状，空零件也走同一条路，宁可多一次空转也不让两个出口分叉。
-  return parts.sense(ctx.env, { budget, parts: [] })
+  if (cfg.parts.inject === false || inPartCall(ctx)) {
+    ctx.err(inPartCall(ctx)
+      ? `! 零件在零件里：这次不问零件（${config.PART_CALL_ENV}=1，防无限套娃）\n`
+      : '! 零件注入已关（parts.inject=false）：这次不问零件\n')
+    // 传 parts: [] 而不是干脆不调用：sense 的账目形状（lines/used/budget/warnings/dropped/failures）
+    // 是下游唯一的输入形状，空零件也走同一条路，宁可多一次空转也不让两个出口分叉。
+    return parts.sense(ctx.env, { budget, parts: [] })
+  }
+  // `parts.*` 的四个数与账本在这儿才真生效：以前只递了 `{budget}`，于是
+  // `config set parts.timeout 200` 形同虚设（实测照样跑四秒），连续失败也攒不出冷却（没有账本）。
+  // 接法与 dsh 的 askParts 同款；不给 deadline——命令行这一屏没人赶时间，串行问到底
+  // （deadline 是"首步注入赶在人开口之前"那件事，不是这一屏的）。
+  return parts.sense(ctx.env, {
+    budget,
+    timeout: cfg.parts.timeout,
+    timeoutMax: cfg.parts.timeoutMax,
+    stdoutMax: cfg.parts.stdoutMax,
+    failLimit: cfg.parts.failLimit,
+    ledger: parts.openLedger(homeOf(ctx)),
+    now: ctx.now,
+  })
 }
 
 // 处境屏（design §6：裸 `agent-man` 就是它）。mind 算"此刻站在哪一段日子里"，view 排成一屏，
