@@ -327,15 +327,62 @@ test('额度用尽后剩下的示范组一组一条记账，不许悄悄消失',
 
 test('一条来源都没有时，整张卡都是推断的要说出口（但不拒绝）', async () => {
   await inHome(async (home) => {
+    // 四栏每一段都带标记、card.json 里也没有 knobs——四栏 provenance 于是全是 inferred，
+    // 这才是"整张卡都是推断的"该有的样子（§13.1）。
+    const mark = ' <!-- inferred -->'
     writeCard(home, '没来源', {
       ...BASE,
-      'card.json': '{"name":"没来源","knobs":{"warm":0,"drive":0,"sharp":0}}\n',
+      'identity.md': `我是小满，做运维出身，现在替你盯代码和线上。${mark}\n`,
+      'soul.md': `句子短。先结论，再一句理由。${mark}\n不铺垫、不总结。${mark}\n`,
+      'dialogue.md': `<START>${mark}\n你: 这个报错怎么修${mark}\n我: 把日志第 12 行贴全。${mark}\n`
+        + `<START>${mark}\n你: 你上次说的方案跑不通${mark}\n我: 跑不通的是哪一步。${mark}\n`,
+      'card.json': '{"name":"没来源"}\n',
     })
+    const card = read(home, '没来源')
+    assert.deepEqual([card.provenance.identity, card.provenance.soul,
+      card.provenance.dialogue, card.provenance.knobs], ['inferred', 'inferred', 'inferred', 'inferred'])
     const got = check(home, '没来源')
     assert.equal(got.ok, true, '没有 source 不算校验失败：推断不是罪，装作原文才是')
     assert.ok(got.warnings.some((text) => text.includes('整张卡都是推断的')))
     assert.ok(got.warnings.every((text) => text.startsWith('! ')), '警告要能一眼认出')
-    assert.equal(read(home, '没来源').source, null)
+    assert.equal(card.source, null)
+  })
+})
+
+test('四栏 provenance 都标着来自原文时，不吃"整张卡都是推断的"这条假告警', async () => {
+  await inHome(async (home) => {
+    // 与上一条唯一的差别：md 里一个 <!-- inferred --> 都没有。raw.source 同样缺失，
+    // 但四栏每栏都标着 source——这不是"整张卡都是推断的"，报警就是冤枉。
+    writeCard(home, '没写来源', {
+      ...BASE,
+      'card.json': '{"name":"没写来源","knobs":{"warm":0,"drive":0,"sharp":0}}\n',
+    })
+    const card = read(home, '没写来源')
+    assert.equal(card.source, null, '仍然是一条 source 都没有')
+    assert.deepEqual([card.provenance.identity, card.provenance.soul,
+      card.provenance.dialogue, card.provenance.knobs], ['source', 'source', 'source', 'source'])
+    const got = check(home, '没写来源')
+    assert.equal(got.ok, true)
+    assert.ok(!got.warnings.some((text) => text.includes('整张卡都是推断的')), got.warnings.join(' / '))
+  })
+})
+
+test('注入的每一行都带来源标记：推断的 ~、人工补的 *、原文的不带', async () => {
+  await inHome(async (home) => {
+    writeCard(home, '带标记', {
+      ...BASE,
+      'soul.md': '句子短。 <!-- inferred -->\n不铺垫、不总结。\n',
+      // 人补过的段落在 sections 里记 manual（§13.1）：优先级最高，标 *。
+      'card.json': '{"name":"带标记","knobs":{"warm":0,"drive":0,"sharp":0},'
+        + '"source":"手写示例","provenance":{"sections":{"soul.第 2 段":"manual"}}}\n',
+    })
+    const block = build(home, { name: '带标记', now: T })
+    assert.equal(block.marks.length, block.lines.length, '标记要与屏上的行一一对应')
+    const said = block.lines.findIndex((line) => line.includes('句子短'))
+    const rest = block.lines.findIndex((line) => line.includes('不铺垫'))
+    assert.equal(block.marks[said], '~', '推断的段要能一眼认出')
+    assert.equal(block.marks[rest], '*', '人工补过的段要比重更高一级')
+    assert.equal(block.inferred.length, 1, '账上只有一处推断：* 那段是补的，不是猜的')
   })
 })
 

@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { SOUL_DIALOGUE_MAX, SOUL_IDENTITY_MAX, SOUL_SOUL_MAX, cost } from '../core/index.mjs'
 import { appendJsonl, readJson, readJsonl, writeAtomic } from '../store/index.mjs'
-import { dir } from './store.mjs'
+import { current, dir } from './store.mjs'
 
 const CARD = 'card.json'
 const LORE = 'lore.jsonl'
@@ -108,7 +108,7 @@ export function load(home, name) {
     dialogue: cols.dialogue.text,
     lore: lore.items,
     loreBad: lore.bad,
-    knobs: knobsOf(raw),
+    knobs: readKnobs(raw),
     knobsRaw: isPlain(raw.knobs) ? raw.knobs : null,
     provenance: provenanceOf(raw, cols),
     source: sourceOf(raw),
@@ -130,6 +130,19 @@ export function read(home, name) {
     knobs: card.knobs,
     provenance: card.provenance,
     source: card.source,
+  }
+}
+
+// 当前这张卡的三个旋钮（§13 / §14.9）。缺卡、卡读不懂、没写 knobs 一律 0（中性）：
+// "没有卡"不能读成"很主动"，也不能读成"很冷淡"——没表态就是没表态。
+// 这一轮只有 drive 真的接了线（建议段出不出），warm / sharp 仍然只上屏给人看。
+export function knobsOf(home, name) {
+  try {
+    const wanted = typeof name === 'string' && name !== '' ? name : current(home).name
+    return { ...load(home, wanted).knobs }
+  } catch (e) {
+    // 读不到卡不是这一层的事（soul check / show 会说清），这里只要一个中性值。
+    return { warm: 0, drive: 0, sharp: 0 }
   }
 }
 
@@ -188,7 +201,7 @@ export function check(home, name) {
   // 一条来源都没有时才给强警告——推断不是罪，装作原文才是。
   if (card.cardBroken) warnings.push(`! ${CARD} 读不懂：当成没有 card.json 处理（knobs 全 0、source 为空）`)
   if (card.loreBad > 0) warnings.push(`! ${LORE} 里有 ${card.loreBad} 行读不懂：已跳过，修好之前这几条不在注入里`)
-  if (card.source === null) warnings.push('! 整张卡都是推断的，行为可能不像原文')
+  if (noSource(card)) warnings.push('! 整张卡都是推断的，行为可能不像原文')
 
   return { ok: errors.length === 0, errors, warnings, inferred: card.inferred }
 }
@@ -227,7 +240,7 @@ export async function importCard(home, file) {
 
   const stored = {
     ...cc,
-    knobs: knobsOf(cc),
+    knobs: readKnobs(cc),
     source,
     provenance: importedProvenance({ identity, soul, dialogue, knobs: cc.knobs }),
   }
@@ -292,7 +305,7 @@ function loreItem(rec) {
 
 // 旋钮：缺省 0，越界或非整数也归 0——read() 永远给上层三个能用的数，
 // "这个值不合法"由 check 说，不靠 read 返回 NaN 让上游自己发现。
-function knobsOf(raw) {
+function readKnobs(raw) {
   const src = isPlain(raw.knobs) ? raw.knobs : {}
   const out = {}
   for (const key of KNOBS) out[key] = knobOf(src[key])
@@ -326,14 +339,23 @@ function provenanceOf(raw, cols) {
   return out
 }
 
-// 来源：一串字（URL / 语料名）或一串字组成的数组。一条都没有就是 null——
-// check 靠这个 null 说"整张卡都是推断的"。
+// 来源：一串字（URL / 语料名）或一串字组成的数组。一条都没有就是 null。
 function sourceOf(raw) {
   const value = raw.source
   if (typeof value === 'string' && value.trim() !== '') return value.trim()
   if (!Array.isArray(value)) return null
   const items = value.filter((one) => typeof one === 'string' && one.trim() !== '')
   return items.length === 0 ? null : items.map((one) => one.trim()).join(' / ')
+}
+
+// "整张卡都是推断的" = 一条 source 都没有（§13.1）：raw.source 空，而且四栏 provenance 里
+// 也没有任何一栏落在 source / manual 上。只判 raw.source === null 会把"四栏 provenance
+// 全是 source"的卡一起冤枉——那是假告警：这卡每栏都标着来自原文。
+function noSource(card) {
+  if (card.source !== null) return false
+  const prov = isPlain(card.provenance) ? card.provenance : {}
+  const keys = ['identity', 'soul', 'dialogue', 'knobs']
+  return !keys.some((key) => prov[key] === 'source' || prov[key] === 'manual')
 }
 
 function importedProvenance(parts) {
