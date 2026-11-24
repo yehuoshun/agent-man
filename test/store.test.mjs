@@ -244,6 +244,31 @@ test('listShards 按自然日/自然月粗筛，结果按时间升序', () => {
   assert.throws(() => listShards(dir, 'zzz'), /未知的分片类型/)
 })
 
+test('日界平移后凌晨的分片照样查得到：分片边界跟 dayKey 走，不跟自然日走', () => {
+  const dir = tempDir()
+  ensure(dir)
+  // 凌晨 1 点、日界 4 点：这条事件住在"前一天"那一片里。
+  const at = new Date(2026, 10, 13, 1, 0).getTime()
+  const file = eventsFile(dir, at, { dayStart: 4 })
+  assert.equal(path.basename(file), '2026-11-12.jsonl')
+  appendJsonl(file, { id: 'e-1', at })
+
+  const from = new Date(2026, 10, 13, 0, 30).getTime()
+  const to = new Date(2026, 10, 13, 2, 0).getTime()
+  // 不传 dayStart 就是自然日口径：这一片 11-13 00:00 就结束了，问 00:30 之后什么都拿不到——
+  // 凌晨的事件从此静默消失，报都不报一句。
+  assert.deepEqual(names(listShards(dir, 'events', { from, to })), [])
+  assert.deepEqual(names(listShards(dir, 'events', { from, to, dayStart: 4 })), ['2026-11-12.jsonl'])
+  // 配置里存的是 HH:MM，两种写法得是同一个日界。
+  assert.deepEqual(names(listShards(dir, 'events', { from, to, dayStart: '04:00' })), ['2026-11-12.jsonl'])
+  // 半开区间照旧：日界 04:00 本身已经算新的一天，那一片到此为止。
+  const four = new Date(2026, 10, 13, 4, 0).getTime()
+  assert.deepEqual(names(listShards(dir, 'events', { from: four, to: four + 3600000, dayStart: 4 })), [])
+  // 问得再早也仍然拿得到：这一片从 11-12 04:00 起。
+  const early = new Date(2026, 10, 12, 5, 0).getTime()
+  assert.deepEqual(names(listShards(dir, 'events', { from: early, dayStart: 4 })), ['2026-11-12.jsonl'])
+})
+
 test('eventsFile 的日界只能由 dayStart 决定，stateFile 按月', () => {
   const dir = tempDir()
   const three = new Date(2026, 10, 13, 3, 0).getTime()
