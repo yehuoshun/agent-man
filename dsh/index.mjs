@@ -112,6 +112,15 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
   const asking = cfg.parts.inject === false ? null : askParts(deps.env, {
     budget: cfg.inject.parts,
     deadline: cfg.parts.deadline,
+    // 四个 parts 配置键以前是死键（可读可校验、却没有任何读者）：期限、上限、截断预算、
+    // 冷却门槛都从这里进 sense，才和 `config set parts.timeout` 那一屏说的是一件事。
+    timeout: cfg.parts.timeout,
+    timeoutMax: cfg.parts.timeoutMax,
+    stdoutMax: cfg.parts.stdoutMax,
+    failLimit: cfg.parts.failLimit,
+    // 冷却账住 meta.json（§4），所以要把 home 给下去；给不了就只在这次进程里记，不落盘。
+    home: homeOf(deps.env),
+    now: at,
   })
 
   let recalled = ''

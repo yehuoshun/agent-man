@@ -123,9 +123,12 @@ function sink(cap) {
 // 上限要夹在真正计时的地方，不能只夹 --describe 回包里那个数：§8 说的是"骨架强制超时"，
 // 那对零件自己报的数、对调用方随手给的数都得成立。0 / NaN / 负数不当成"立刻超时"，
 // 退回默认值——1ms 的超时是个没人想要的答案。
-function deadline(ms) {
-  if (!Number.isFinite(ms) || ms <= 0) return PART_TIMEOUT
-  return Math.min(ms, PART_TIMEOUT_MAX)
+// max 默认是 §10 的上限；传它就是让 `parts.timeoutMax` 这个配置键真的有用（之前它只是
+// 一个可读可校验、却没有任何读者的死键）。
+function deadline(ms, max = PART_TIMEOUT_MAX) {
+  const cap = Number.isFinite(max) && max > 0 ? max : PART_TIMEOUT_MAX
+  if (!Number.isFinite(ms) || ms <= 0) return Math.min(PART_TIMEOUT, cap)
+  return Math.min(ms, cap)
 }
 
 // 契约（§8）的四个退出码各自成一个 status：0 成功、64 参数错、69 依赖缺失、75 超时。
@@ -176,8 +179,9 @@ export function capture(part, opts = {}, legacyEnv) {
   // 放在合并之后覆盖：调用方给的 env 里若已经有同名键，也必须是我们这一层说了算。
   const childEnv = { ...env, [config.PART_CALL_ENV]: '1' }
   const args = (Array.isArray(o.args) ? o.args : []).map(String)
-  const timeout = deadline(o.timeout)
-  const limit = Number.isFinite(o.limit) && o.limit >= 0 ? o.limit : PART_STDOUT_MAX
+  const timeout = deadline(o.timeout, o.timeoutMax)
+  // stdout 上限也走调用方给的数（`parts.stdoutMax`），没给才用 §10 的默认：之前这个键同样没人读。
+  const limit = Number.isFinite(o.limit) && o.limit > 0 ? o.limit : PART_STDOUT_MAX
   const out = sink(limit)
   const err = sink(limit)
 

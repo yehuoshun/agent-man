@@ -485,9 +485,12 @@ test('零件答话装不进 inject.parts 时整条丢并出声，装得下的照
   const deps = fakeDeps(['a', 'b'], { out: () => ascii(100) })
   const got = await askParts({}, { budget: 40, deadline: 500, deps })
   assert.deepEqual(got.lines.map((one) => one.name), ['a'])
-  assert.deepEqual(got.dropped, [{ name: 'b', reason: 'budget' }])
+  assert.equal(got.dropped.length, 1)
+  assert.equal(got.dropped[0].name, 'b')
+  assert.equal(got.dropped[0].reason, 'budget')
   assert.ok(got.used <= 40, `装下的部分 ${got.used} 超过预算 40`)
-  assert.match(got.warnings.join('\n'), /! b 的答话装不进注入的零件预算 40/u)
+  // 注入这一侧只有 warnings 会上屏，所以 sense 记的那句 why 必须在这里变成一行 `! `。
+  assert.match(got.warnings.join('\n'), /! b 的答话要 .*，装不进零件预算 40/u)
 })
 
 test('askParts 把期限透给每个零件，而不是各给一份 PART_TIMEOUT', async () => {
