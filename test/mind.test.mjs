@@ -493,6 +493,18 @@ test('两个零件都答了话、情绪又没到口子：只记一条"丢"，不
   assert.equal(gone.length, 1, '情绪门槛是整段的门，记一条就够')
   assert.match(gone[0].why, /2 条零件答话都没上屏/)
 })
+test('没上屏的理由里情绪只留一位小数：61.9999599518972 这种尾巴不是精度', async () => {
+  const home = newHome()
+  // 一小时前设在 62/62，到此刻衰减出小数尾巴，正好走"两个门都没到"那条分支。
+  await affectSet(home, { axis: 'v', value: 62, why: '用例：差一点', at: T - HOUR })
+  await affectSet(home, { axis: 'e', value: 62, why: '用例：差一点', at: T - HOUR })
+  const scene = situation(home, { now: T, parts: [{ name: '天气', text: '要下雨' }] })
+  const gone = scene.dropped.filter((one) => one.reason === 'affect')
+  assert.equal(gone.length, 1)
+  assert.equal(/\d\.\d{2,}/.test(gone[0].why), false, `理由里有浮点尾巴：${gone[0].why}`)
+  assert.match(gone[0].why, /v=\d+(\.\d)? e=\d+(\.\d)?，/)
+})
+
 test('同一处境只把 v 抬过口子：唯一的差别就是那一条建议上不上屏', async () => {
   const home = newHome()
   await affectSet(home, { axis: 'v', value: 64, why: '用例：差一分', at: T - HOUR })

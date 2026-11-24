@@ -161,7 +161,8 @@ function assemble(asked, budget, limit, stdoutMax) {
     if (one.r.truncated) warnings.push(`! ${name} 的输出超过 ${stdoutMax} 字节，已截断`)
   }
 
-  return { lines, used, budget, warnings, dropped, failures }
+  // used 是 cost 累加出来的浮点数，一位小数就够：尾巴上一长串 9 不是精度，是噪声
+  return { lines, used: Math.round(used * 10) / 10, budget, warnings, dropped, failures }
 }
 
 // 环境变量对象由调用方给：结构用例只许 core/config.mjs 与 cli/main.mjs 自己去摸它。
