@@ -55,11 +55,54 @@ function fakePart() {
   return dir
 }
 
-async function cli(boxOne, argv) {
+// 慢零件：只在 --describe 上磨蹭。用来证明 `parts.timeout` 真的递到了零件那一层
+// （只递 {budget} 的时候，这一屏会陪它把几百毫秒到几秒全等完）。
+// 磨蹭要写绝对路径：这一屏把 PATH 换成了零件目录，ping / sleep 得自己找得到自己。
+function slowPart() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-slow-'))
+  HOMES.push(dir)
+  const body = '{"name":"slow","desc":"slow part","section":"env","timeout_ms":5000,"side_effects":false}'
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(dir, 'agent-man-slow.cmd'), [
+      '@echo off',
+      '"%SystemRoot%\\System32\\ping.exe" -n 6 127.0.0.1 >nul',
+      `echo ${body}`,
+      '',
+    ].join('\r\n'))
+  } else {
+    const file = path.join(dir, 'agent-man-slow')
+    fs.writeFileSync(file, ['#!/bin/sh', '/bin/sleep 5', `echo '${body}'`, ''].join('\n'))
+    fs.chmodSync(file, 0o755)
+  }
+  return dir
+}
+
+// 盘上有没有出现过这几个字：护栏要证明的是"一个字节都没落下"，不是"退了个 2"。
+function grepHome(dir, needle) {
+  const hit = []
+  const walk = (at) => {
+    for (const one of fs.readdirSync(at, { withFileTypes: true })) {
+      const file = path.join(at, one.name)
+      if (one.isDirectory()) walk(file)
+      else if (fs.readFileSync(file, 'utf8').includes(needle)) hit.push(file)
+    }
+  }
+  if (fs.existsSync(dir)) walk(dir)
+  return hit
+}
+
+// 换掉 PATH 让零件只有一个：cmd 垫片另外还要 ComSpec / SystemRoot 才起得来。
+function usePart(one, dir) {
+  one.env.PATH = dir
+  if (process.env.ComSpec) one.env.ComSpec = process.env.ComSpec
+  if (process.env.SystemRoot) one.env.SystemRoot = process.env.SystemRoot
+}
+
+async function cli(boxOne, argv, extraEnv = {}) {
   const out = []
   const err = []
   const code = await main(argv, {
-    env: boxOne.env,
+    env: { ...boxOne.env, ...extraEnv },
     out: (line) => out.push(line),
     err: (line) => err.push(line),
     now: () => boxOne.now,
@@ -121,6 +164,48 @@ test('--help 列出的每一项都能被命令表解析到（帮里不许有打�
     assert.doesNotMatch(tried.err, /没有这个命令|不认识的用法/, `帮助里的 ${words.join(' ')} 打不通`)
   }
   assert.ok(seen.size >= 12, `帮助只解析出 ${seen.size} 条命令`)
+})
+
+test('--help 不漏项：8 个别名、裸资源=ls、读命令的开关、还没接的开关都写着', async () => {
+  const one = box()
+  const got = await cli(one, ['--help'])
+  assert.equal(got.code, 0)
+
+  // 别名短一点，但用户看帮助得知道有这一条。
+  for (const name of ['log', 'remember', 'leave', 'digest', 'cue', 'find', 'show', 'look']) {
+    assert.match(got.out, new RegExp(`${name}=`), `帮助里漏了别名 ${name}`)
+  }
+  // 裸资源 = ls：这条规矩不写，用户只能靠猜。
+  assert.match(got.out, /资源不带动作就是 ls/)
+  // 每个读命令真认的开关，帮助里都得有。
+  for (const flag of ['--all', '--live', '--key', '--no-mood', '--dry-run', '--at']) {
+    assert.ok(got.out.includes(flag), `帮助里漏了 ${flag}`)
+  }
+  // affect set 是两个位置参数，写成单参数会把人教错。
+  assert.match(got.out, /affect set <轴> <数值>/)
+  // §16 里明确退 2 的开关，帮助也得交代一声，不能让人试了才知道。
+  for (const dead of ['--due', '--imp', '--from 日期..日期', '--id']) {
+    assert.ok(got.out.includes(dead), `§16 里明确退 2 的 ${dead} 没写进"还没接"`)
+  }
+})
+
+test('帮助里的别名不是摆设：8 个都真能跑，一个也不许只剩一行说明', async () => {
+  const one = box()
+  const cases = [
+    ['log', ['她说明天早出门'], 0],
+    ['leave', ['记得喝水', '--trigger', '下次见面'], 0],
+    ['digest', ['--dry-run'], 0],
+    ['find', ['她', '--all'], 0],
+    ['look', ['--json'], 0],
+    ['cue', ['--peek'], null],
+    ['show', ['m-20260101-01', '--json'], 1],
+    ['remember', ['她习惯晚睡', '--key', 'habit'], null],
+  ]
+  for (const [name, argv, want] of cases) {
+    const got = await cli(one, [name, ...argv])
+    assert.doesNotMatch(got.err, /没有这个命令|不认识的用法/, `别名 ${name} 打不通：${got.err}`)
+    if (want !== null) assert.equal(got.code, want, `别名 ${name} 的退出码不对：${got.err}`)
+  }
 })
 
 test('event ls：窗口内的按时间倒序一行一条，窗口外的不出现', async () => {
@@ -231,6 +316,19 @@ test('note add 与 note ls：触发条件写在行里，ttl 与 id 都记下来'
   const listed = await cli(one, ['note', 'ls'])
   assert.equal(listed.code, 0)
   assert.match(listed.out, /记得带伞（等：她出门前）/)
+})
+
+test('note add 缺 --trigger：退出码 2，一个字都不落盘（没有触发条件的便条等于没写）', async () => {
+  const one = box()
+  const got = await cli(one, ['note', 'add', '记得带伞'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! note add 要给 --trigger/)
+  assert.equal(got.out, '')
+  assert.deepEqual(grepHome(one.dir, '记得带伞'), [])
+  // 空白也不算写：`--trigger "   "` 照样是"没有触发条件"。
+  const blank = await cli(one, ['note', 'add', '记得带伞', '--trigger', '   '])
+  assert.equal(blank.code, 2)
+  assert.deepEqual(grepHome(one.dir, '记得带伞'), [], '缺触发条件还是落了盘')
 })
 
 test('note take 递出一次就关闭：第二次退出码 2 而不是再递一遍', async () => {
@@ -431,6 +529,22 @@ test('doctor 的渲染与退出码没被这次接线动过', async () => {
   const got = await cli(one, ['doctor'])
   assert.match(got.out, /^agent-man doctor\n {2}数据目录 {3}/)
   assert.ok(got.code === 0 || got.code === 1)
+})
+
+test('doctor --json 是一行 JSON：不再有"给了开关却当没给"的命令', async () => {
+  const one = box()
+  const got = await cli(one, ['doctor', '--json'])
+  assert.ok(got.code === 0 || got.code === 1)
+  const rows = got.out.trimEnd().split('\n')
+  assert.equal(rows.length, 1, `doctor --json 打了 ${rows.length} 行`)
+  const doc = JSON.parse(rows[0])
+  assert.equal(doc.home, one.dir)
+  assert.ok(Array.isArray(doc.checks))
+  assert.equal(typeof doc.ok, 'boolean')
+  // 读数也得守规矩：不认识的开关照样退 2，不许装作没看见。
+  const bad = await cli(one, ['doctor', '--jsno'])
+  assert.equal(bad.code, 2)
+  assert.match(bad.err, /^! 不认识的开关：--jsno/)
 })
 
 test('event add 真写进当天的分片，并把欠账记上（写过就要读得回来）', async () => {
@@ -646,6 +760,217 @@ test('CLI 写入口的日界读配置：凌晨两点记的事落在前一天', a
   const got = await cli(one, ['event', 'add', '凌晨两点的事'])
   assert.equal(got.code, 0)
   assert.match(got.out, /e-20261113-01/, '号里的日期没按配置的日界算')
+})
+
+// 屏上不许出现 undefined 与 [object Object]：这两个词一出现就是模板取错了字段，
+// 人看到的不是"记下了什么"，而是实现细节漏出来的样子（design §6 的一句人话）。
+test('affect stim 的屏显写清 kind 与四轴增量，不出现 undefined 与 [object Object]', async () => {
+  const one = box()
+  const got = await cli(one, ['affect', 'stim', 'user.praise', '--why', '他说做得好'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^已记下刺激 user\.praise（v\+8 e\+2 t\+3 r\+1） {2}v=\d+/)
+  assert.doesNotMatch(got.out, /undefined|\[object Object\]/)
+})
+
+test('affect set 的屏显写清改了哪个轴、改到多少，不出现 undefined', async () => {
+  const one = box()
+  const got = await cli(one, ['affect', 'set', '愉悦', '90', '--why', '她说这话时笑了'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^已记下手动覆盖 v=90 {2}v=90 /)
+  assert.doesNotMatch(got.out, /undefined|\[object Object\]/)
+})
+
+// 零件反调的护栏（design §8）：capture() 给子进程盖了哨兵，写入路径必须认它——
+// 否则零件能把结论、规矩、自我块真写进本体（实测零件里 `rule add` 退 0 还落了盘）。
+const PART_CALL = { AGENT_MAN_PART_CALL: '1' }
+
+test('不需要写盘时不报警：saved:false 的空理由不是失败，真没落盘才说，且把理由写出来', async () => {
+  const one = box()
+  // 空目录上 clear：峰与标签都没变，这次本来就不用写盘。屏上一句警告都不该有。
+  const quiet = await cli(one, ['affect', 'clear'])
+  assert.equal(quiet.code, 0)
+  assert.equal(quiet.err, '', `不用写盘却报了警：${quiet.err}`)
+
+  // 状态文件读不懂：这时候确实没落盘，理由要原样说出来，不能留「! 没落盘：」后面空着。
+  ensure(path.join(one.dir, 'state'))
+  fs.writeFileSync(metaFile(one.dir), '{这不是 JSON\n')
+  const loud = await cli(one, ['affect', 'clear'])
+  assert.equal(loud.code, 0)
+  assert.match(loud.err, /! 没落盘：状态文件读不懂/)
+  assert.doesNotMatch(loud.err, /没落盘：\s*$/)
+})
+
+test('零件带着哨兵反调：写结论/规矩/自我块一律退 2，说清它只能写情景层，且一个字都没落盘', async () => {
+  const one = box()
+  const tries = [
+    ['memory add', ['memory', 'add', '零件想下的结论甲', '--key', 'k1', '--why', '它觉得自己懂了']],
+    ['rule add', ['rule', 'add', '零件想立的规矩乙', '--why', '它觉得自己该管']],
+    ['self append', ['self', 'append', '零件想写的自我块丙']],
+    ['note add', ['note', 'add', '零件想留的念丁', '--trigger', '下次问它']],
+    ['plan add', ['plan', 'add', '零件想排的日程戊', '--at', '明天 9:00']],
+  ]
+  for (const [name, argv] of tries) {
+    const got = await cli(one, argv, PART_CALL)
+    assert.equal(got.code, 2, `${name} 该退 2，实际 ${got.code}：${got.out}${got.err}`)
+    assert.match(got.err, /零件只能写情景层（event add --src tool:<名字>），不许写结论\/规矩\/自我块/)
+    assert.equal(got.out, '', `${name} 不该往 stdout 上说话`)
+  }
+  for (const word of ['结论甲', '规矩乙', '自我块丙', '念丁', '日程戊']) {
+    assert.deepEqual(grepHome(one.dir, word), [], `「${word}」落在盘上了：护栏只挡住了一半`)
+  }
+})
+
+test('零件带着哨兵记情景是放行的，但必须署 tool:<名字>：不许冒充人的话', async () => {
+  const one = box()
+  const ok = await cli(one, ['event', 'add', '零件看见外面下雨了', '--src', 'tool:fake'], PART_CALL)
+  assert.equal(ok.code, 0, `零件记情景该成功：${ok.err}`)
+  const rows = readJsonl(eventsFile(one.dir, one.now)).items
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].src.ref, 'fake')
+  const bad = await cli(one, ['event', 'add', '零件假装是用户说的'], PART_CALL)
+  assert.equal(bad.code, 2)
+  assert.match(bad.err, /记情景要署上零件自己的名字/)
+  assert.equal(readJsonl(eventsFile(one.dir, one.now)).items.length, 1, '被拦下的那条不许落盘')
+})
+
+// 零件配置要真接上（design §8 / §16）：`parts.*` 的四个数与账本都得递进 sense，
+// 否则 `config set parts.timeout 200` 形同虚设，连续失败也攒不出冷却。
+test('config set parts.timeout 生效：慢零件的 --describe 按 200ms 判超时，不陪它跑完', async () => {
+  const one = box()
+  usePart(one, slowPart())
+  fs.writeFileSync(path.join(one.dir, 'config.json'), '{"version":1,"parts":{"timeout":200}}\n')
+  const at = Date.now()
+  const got = await cli(one, ['context', 'sense'])
+  const spent = Date.now() - at
+  assert.equal(got.code, 0)
+  assert.match(got.err, /! 零件 slow 没出声：slow 的 --describe 超时（超过 200ms 没有回话）/)
+  assert.ok(spent < 3000, `200ms 的超时不该等这么久：实测 ${spent}ms`)
+})
+
+test('冷却账本当回事：meta.json 里记着连续失败，第 N 次连问都不问', async () => {
+  const one = box()
+  usePart(one, fakePart())
+  ensure(one.dir)
+  fs.writeFileSync(metaFile(one.dir),
+    `${JSON.stringify({ parts: { fake: { fail: 3, until: one.now + 60000 } } })}\n`)
+  const at = Date.now()
+  const got = await cli(one, ['context', 'sense', '--json'])
+  const spent = Date.now() - at
+  assert.equal(got.code, 0)
+  const rows = JSON.parse(got.out)
+  assert.deepEqual(rows.lines, [])
+  assert.equal(rows.dropped[0].reason, 'cooldown')
+  assert.equal(rows.dropped[0].why, 'fake 连续失败 3 次，这次不问（冷却到下一次会话）')
+  assert.ok(spent < 2000, `冷却中的零件不该再 spawn：实测 ${spent}ms`)
+})
+
+// 没上屏的理由要照那条记录自己的 why 说：冷却、到期限、没话说、预算不够是四件事，
+// 一律写成"抓取预算已经用完"就是拿一句固定话糊住四种毛病（design §6 不静默、§8）。
+test('零件没上屏的理由照它自己的 why 说：冷却不是"预算用完"，而且只说一遍', async () => {
+  const one = box()
+  usePart(one, fakePart())
+  ensure(one.dir)
+  fs.writeFileSync(metaFile(one.dir),
+    `${JSON.stringify({ parts: { fake: { fail: 3, until: one.now + 60000 } } })}\n`)
+  const got = await cli(one, ['context', 'show'])
+  assert.equal(got.code, 0)
+  assert.match(got.err, /^! 零件 fake 连续失败 3 次，这次不问（冷却到下一次会话）$/m)
+  assert.doesNotMatch(got.err, /抓取预算/)
+  const said = got.err.split('\n').filter((line) => line.includes('fake'))
+  assert.equal(said.length, 1, `同一件事说了 ${said.length} 遍：${got.err}`)
+})
+
+// 查不到就是查不到：退出码不许因为换了个输出格式就变成"成功"（§6 查不到退 1）。
+test('memory show 查不到时退 1：--json 与人类分支同一个退出码', async () => {
+  const one = box()
+  const human = await cli(one, ['memory', 'show', 'm-20260101-01'])
+  assert.equal(human.code, 1)
+  const json = await cli(one, ['memory', 'show', 'm-20260101-01', '--json'])
+  assert.equal(json.code, 1, `--json 分支退 ${json.code}，与人类分支不一致`)
+  assert.equal(JSON.parse(json.out).record, null)
+})
+
+// 灵魂的二级命令跟别的资源同一套：裸 soul 就是 ls，`--json` 在每个子命令上都认（§6）。
+// 卡怎么解析归 src/soul，这里只锁"命令面"这一层：名字、开关、退出码。
+const SOUL_CARD = {
+  'name.md': '小满。自称"我"。\n',
+  'identity.md': '我是小满，做运维出身，现在替你盯代码和线上。\n',
+  'soul.md': '句子短。先结论，再一句理由。\n',
+  'dialogue.md': '<START>\n你: 这个报错怎么修\n我: 把日志第 12 行贴全。\n'
+    + '<START>\n你: 你上次说的方案跑不通\n我: 跑不通的是哪一步。\n',
+  'card.json': '{"name":"小满","knobs":{"warm":-1,"drive":0,"sharp":1},"source":"手写示例"}\n',
+}
+
+function writeSoulCard(one, name) {
+  const abs = path.join(one.dir, 'soul', name)
+  fs.mkdirSync(abs, { recursive: true })
+  for (const [file, body] of Object.entries(SOUL_CARD)) fs.writeFileSync(path.join(abs, file), body)
+}
+
+test('裸 soul 就是 soul ls：资源无动作时按 ls 走，不许退用法错', async () => {
+  const one = box()
+  const bare = await cli(one, ['soul'])
+  const ls = await cli(one, ['soul', 'ls'])
+  assert.equal(bare.code, 0, `裸 soul 退了 ${bare.code}：${bare.err}`)
+  assert.equal(bare.out, ls.out, '裸 soul 与 soul ls 必须是同一屏')
+  assert.match(bare.out, /还没有灵魂卡/)
+})
+
+test('soul show 不把 --json 当名字：不写名字与写了名字都认这个开关', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  assert.equal((await cli(one, ['soul', 'use', '小满'])).code, 0)
+  const anonymous = await cli(one, ['soul', 'show', '--json'])
+  assert.equal(anonymous.code, 0, `soul show --json 退了 ${anonymous.code}：${anonymous.err}`)
+  const view = JSON.parse(anonymous.out)
+  assert.ok(view.lines.length > 0, 'JSON 里该带上装进去的段')
+  assert.equal(anonymous.out.trim().split('\n').length, 1, '读命令的 --json 恰好一行')
+  const named = await cli(one, ['soul', 'show', '小满', '--json'])
+  assert.equal(named.code, 0)
+  assert.equal(named.out, anonymous.out)
+  const human = await cli(one, ['soul', 'show'])
+  assert.match(human.out, /^灵魂：小满 {2}旋钮 warm -1 \/ drive 0 \/ sharp \+1/)
+})
+
+test('soul show 没写名字又没选卡：说清去 use 哪一张，不再说"还没有灵魂卡"', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  const got = await cli(one, ['soul', 'show'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /还没选中灵魂卡：agent-man soul use <名字>（盘上有：小满）/)
+  assert.doesNotMatch(got.err, /还没有灵魂卡/)
+})
+
+test('soul ls --json 与 soul check --json 都是一行 JSON，不是人类文本', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  assert.equal((await cli(one, ['soul', 'use', '小满'])).code, 0)
+  const ls = await cli(one, ['soul', 'ls', '--json'])
+  assert.equal(ls.code, 0)
+  const doc = JSON.parse(ls.out)
+  assert.equal(doc.current.name, '小满')
+  assert.equal(doc.items[0].name, '小满')
+  const check = await cli(one, ['soul', 'check', '--json'])
+  assert.equal(check.code, 0, `soul check --json 退了 ${check.code}：${check.err}`)
+  assert.equal(JSON.parse(check.out).ok, true)
+})
+
+// 裸 agent-man 是处境屏（§6 唯一一条默认命令）：只给开关也算"没给命令"，
+// 开关照常往那条命令上递，于是 `agent-man --json` 就是 `context show --json`。
+test('agent-man --json 等价于 context show --json：退 0 且恰好一行 JSON', async () => {
+  const one = box()
+  const bare = await cli(one, ['--json'])
+  const full = await cli(one, ['context', 'show', '--json'])
+  assert.equal(bare.code, 0, `agent-man --json 退了 ${bare.code}：${bare.err}`)
+  assert.equal(bare.out, full.out, '两条路必须是同一屏')
+  assert.equal(bare.out.trim().split('\n').length, 1)
+})
+
+test('只给开关时打错的开关照样退 2：理由交给命令自己说，不装作没看见', async () => {
+  const one = box()
+  const got = await cli(one, ['--jsno'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! 不认识的开关：--jsno/)
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。

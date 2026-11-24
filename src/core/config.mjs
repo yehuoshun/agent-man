@@ -292,8 +292,13 @@ export async function run(ctx = {}, argv) {
 
   try {
     if (sub === 'path') {
-      if (rest.length > 0) throw new UsageError(`config path 不带参数（多出 ${rest.join(' ')}）`)
-      out(`${filePath(dir)}\n`)
+      let json = false
+      for (const one of rest) {
+        if (one !== '--json') throw new UsageError(`config path 只认 --json（多出 ${one}）`)
+        json = true
+      }
+      if (json) out(`${JSON.stringify({ path: filePath(dir) })}\n`)
+      else out(`${filePath(dir)}\n`)
       return 0
     }
 
@@ -305,7 +310,8 @@ export async function run(ctx = {}, argv) {
       }
       const rows = flat(load({ env, homeDir: dir, now, warn }))
       if (json) {
-        out(`${JSON.stringify(rows, null, 2)}\n`)
+        // 一行：其余读命令的 --json 都恰好一行，缩进是给人看的、不是给管道的（§6）。
+        out(`${JSON.stringify(rows)}\n`)
         return 0
       }
       out(renderRows(rows, filePath(dir)))
@@ -313,10 +319,16 @@ export async function run(ctx = {}, argv) {
     }
 
     if (sub === 'get') {
-      if (rest.length !== 1) throw new UsageError('用法：agent-man config get <a.b>（例：config get inject.total）')
-      const { clean } = pick(rest[0])
+      const words = rest.filter((one) => one !== '--json')
+      const json = words.length !== rest.length
+      if (words.length !== 1) {
+        throw new UsageError('用法：agent-man config get <a.b> [--json]（例：config get inject.total）')
+      }
+      const { clean } = pick(words[0])
       const cfg = load({ env, homeDir: dir, now, warn })
-      out(`${textValue(clean, valueAt(cfg, clean))}\n`)
+      const value = valueAt(cfg, clean)
+      if (json) out(`${JSON.stringify({ key: clean, value })}\n`)
+      else out(`${textValue(clean, value)}\n`)
       return 0
     }
 
@@ -349,7 +361,8 @@ export async function run(ctx = {}, argv) {
     }
 
     throw new UsageError(sub === undefined
-      ? '用法：agent-man config <show [--json]|get <a.b>|set <a.b> <值>|reset [<a.b>]|path>'
+      ? '用法：agent-man config <show [--json]|get <a.b> [--json]|set <a.b> <值>'
+        + '|reset [<a.b>]|path [--json]>'
       : `未知的子命令：config ${sub}（只认 show / get / set / reset / path）`)
   } catch (e) {
     if (e instanceof UsageError) {

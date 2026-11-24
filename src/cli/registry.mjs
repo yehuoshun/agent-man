@@ -20,9 +20,16 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // config / soul / doctor 自带渲染，原样递 ctx；新接的命令统一过 guard()：门面抛出来的
 // 用法错与数据错变成一行 "! " + 退出码 2，绝不吐栈，也绝不吞掉。
 export const TABLE = new Map([
-  ['doctor', doctor],
+  ['doctor', guard(doctor)],
   ['config', (ctx) => config.run(ctx)],
-  ['soul', soul],
+
+  // 灵魂的二级命令也进表：不走表的话，`--json` 会被当成名字，裸 `soul` 又没有归属（§6 无动作 = ls）。
+  ['soul', guard(soulLs)],
+  ['soul ls', guard(soulLs)],
+  ['soul use', guard(soulUse)],
+  ['soul show', guard(soulShow)],
+  ['soul check', guard(soulCheck)],
+  ['soul import', guard(soulImport)],
 
   // 情景层：只记发生过的事，不改结论。
   ['event', guard(eventLs)],
@@ -131,21 +138,29 @@ export async function plugin(name, args, ctx) {
 // doctor 分两半：七项只读自检住 src/audit/doctor.mjs（它绝不写盘），渲染与退出码在这里。
 // 不合格是"这份数据还不能用"，不是"命令打错了"——所以退 1，不退 2（design §6）。
 export function doctor(ctx) {
+  // 读命令都认 --json（§6）：以前这里根本不解析 argv，`doctor --json` 既不生效也不报错，
+  // 是唯一一条"给了开关却当没给"的命令。
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  noWords(words, 'agent-man doctor [--json]')
   const dir = homeOf(ctx)
   const result = audit.doctor({ home: dir, ctx })
+  const bad = result.checks.filter((one) => !one.ok).length
 
-  ctx.out('agent-man doctor\n')
-  ctx.out(`  数据目录   ${dir}\n`)
-  for (const one of result.checks) {
-    ctx.out(`  ${one.ok ? 'ok' : '!!'} ${one.name}  ${one.detail}\n`)
+  if (on(flags, 'json')) {
+    jsonOut(ctx, { ok: result.ok, home: dir, bad, checks: result.checks })
+  } else {
+    ctx.out('agent-man doctor\n')
+    ctx.out(`  数据目录   ${dir}\n`)
+    for (const one of result.checks) {
+      ctx.out(`  ${one.ok ? 'ok' : '!!'} ${one.name}  ${one.detail}\n`)
+    }
   }
 
   if (!result.ok) {
-    const bad = result.checks.filter((one) => !one.ok).length
     ctx.err(`! ${bad} 项不合格：按上面的提示改，或把 AGENT_MAN_HOME 指到别处\n`)
     return 1
   }
-  ctx.out('  一切就绪\n')
+  if (!on(flags, 'json')) ctx.out('  一切就绪\n')
   return 0
 }
 
@@ -161,6 +176,21 @@ function guard(handler) {
       return 2
     }
   }
+}
+
+// 零件反调的护栏（design §8）：capture() 给子进程盖了哨兵（core/config.mjs 的 PART_CALL_ENV=1），
+// 可写入路径一直没看它——实测零件里 `rule add` 退 0、规矩真落盘了。哨兵因此由写入路径自己认：
+// 零件只能写情景层（`event add --src tool:<名字>`），结论 / 规矩 / 自我块都是本体的判断。
+// 环境变量只从门（main.mjs）递进来，这里只读 ctx.env，不自己摸进程环境。
+function inPartCall(ctx) {
+  return ctx.env?.[config.PART_CALL_ENV] === '1'
+}
+
+// "不许"之后必须还有一句"那怎么办"，否则零件作者只能猜。
+function noPartWrites(ctx) {
+  if (!inPartCall(ctx)) return
+  throw new Error('零件只能写情景层（event add --src tool:<名字>），不许写结论/规矩/自我块' +
+    `——${ctx.name ?? '这条命令'} 不接零件调用`)
 }
 
 // 命令行只有两种形状：`--名字 值` 和 `--开关`。不认识的名字当场报——
@@ -345,8 +375,13 @@ async function eventAdd(ctx) {
     src: srcOf(arg(flags, 'src')),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   }
+  // 零件那一路唯一能落盘的东西就是情景层，而且必须署自己的名字：不署名的"发生过的事"
+  // 与人的话混在一起，日后就再也分不出谁看到的（design §8）。
+  if (inPartCall(ctx) && entry.src.origin !== 'tool') {
+    throw new Error('零件只能写情景层（event add --src tool:<名字>）：记情景要署上零件自己的名字')
+  }
   const got = await memory.eventAdd(entry, { home: dir, now: ctx.now, dayStart: cfgOf(ctx).clock.dayStart })
-  if (on(flags, 'json')) jsonOut(ctx, got)
+if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     const cues = entry.cues.length > 0 ? `，cue ${entry.cues.join('、')}` : ''
     ctx.out(`已记下 ${got.id}（imp ${entry.imp}${cues}）\n`)
@@ -426,6 +461,7 @@ function sayEvents(ctx, flags, got) {
 // ── 语义层：memory ─────────────────────────────────────────────────────────
 
 async function memoryAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['key', 'from', 'imp', 'at'], bools: ['json'] })
   const fact = words.join(' ').trim()
   if (!fact) {
@@ -521,15 +557,18 @@ function memoryShow(ctx) {
   const wanted = words.join(' ').trim()
   if (!wanted) throw new Error('用法：agent-man memory show <id|槽位>')
   const got = memory.show(wanted, { home: homeOf(ctx), now: ctx.now })
+  if (!got.record) {
+    // 查不到就是查不到：两种输出同一个退出码（§6 查不到退 1）。
+    // --json 以前在判空之前就 return 0，脚本据此以为拿到了结论。
+    if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+    else ctx.err(`! 没有这条结论：「${wanted}」（agent-man memory ls 看现在有哪些）\n`)
+    noisy(ctx, got.skipped)
+    return 1
+  }
   if (on(flags, 'json')) {
     ctx.out(`${JSON.stringify(got)}\n`)
     noisy(ctx, got.skipped)
     return 0
-  }
-  if (!got.record) {
-    ctx.err(`! 没有这条结论：「${wanted}」（agent-man memory ls 看现在有哪些）\n`)
-    noisy(ctx, got.skipped)
-    return 1
   }
   const one = got.record
   ctx.out(`${record({ id: one.id, when: rel(one.at, ctx.now), text: one.fact, key: one.key }, 'memory')}\n`)
@@ -545,6 +584,7 @@ function memoryShow(ctx) {
 }
 
 async function memoryRevise(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['imp', 'from'], bools: ['json'] })
   const [id, ...rest] = words
   const fact = rest.join(' ').trim()
@@ -570,6 +610,7 @@ async function memoryRevise(ctx) {
 // ── 前瞻层：note / plan ────────────────────────────────────────────────────
 
 async function noteAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, {
     names: ['trigger', 'ttl', 'at'],
     bools: ['json'],
@@ -578,15 +619,24 @@ async function noteAdd(ctx) {
   if (!text) {
     throw new Error('用法：agent-man note add "<要留的话>" --trigger "<什么时候>" [--ttl 7d]')
   }
+  // --trigger 是必填（design §6 与帮助里都这么写）：便条的意思就是"等到那时候再说"，
+  // 缺了它的便条等于一句话躺在那里永不出现——以前会写空 trigger 落盘，等于静默失效。
+  const trigger = arg(flags, 'trigger')
+  if (!trigger || !String(trigger).trim()) {
+    throw new Error(
+      'note add 要给 --trigger "<什么时候>"：便条的意思就是「等到那时候再说」，' +
+      '缺了它只会静静躺着不出现（写法：--trigger "下次她提加班的时候"）',
+    )
+  }
   const one = await intent.notes.add(homeOf(ctx), {
     text,
-    trigger: arg(flags, 'trigger'),
+    trigger,
     ttl: arg(flags, 'ttl'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
     dayStart: cfgOf(ctx).clock.dayStart,
   })
   if (on(flags, 'json')) jsonOut(ctx, one)
-  else ctx.out(`已留下 ${one.id}（${one.trigger ? `等：${one.trigger}` : '没有触发条件'}）\n`)
+  else ctx.out(`已留下 ${one.id}（等：${one.trigger}）\n`)
   return 0
 }
 
@@ -639,6 +689,7 @@ function noteDrop(ctx) {
 }
 
 async function planAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['at'], bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man plan add "<要做的事>" --at "<什么时候>"')
@@ -699,6 +750,7 @@ function planDrop(ctx) {
 
 // 规矩：正文与理由都必填；要替代谁就点名 supersedes，旧行逐字不动、只是不再生效。
 async function ruleAdd(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, {
     names: ['why', 'supersedes'],
     bools: ['json'],
@@ -759,6 +811,7 @@ function selfShow(ctx) {
 }
 
 async function selfSet(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { names: ['id'], bools: ['json'] })
   if (arg(flags, 'id') !== undefined) {
     throw new Error('--id 这一版没接：自我块是整份覆盖（setSelf），没有按块替换（design §4：不分块）')
@@ -772,6 +825,7 @@ async function selfSet(ctx) {
 }
 
 async function selfAppend(ctx) {
+  noPartWrites(ctx)
   const { words, flags } = split(ctx.rest, { bools: ['json'] })
   const text = words.join(' ').trim()
   if (!text) throw new Error('用法：agent-man self append "<一段话>"（段首自动补今天的日期）')
@@ -794,14 +848,27 @@ async function selfAppend(ctx) {
 // 2) parts.inject=false：配置层面整体关掉零件——这个键本该在这儿生效，不能只有宿主那一侧认。
 // 说明只走 stderr：`--json` 的 stdout 必须仍然恰好一行合法 JSON。
 async function senseParts(ctx, cfg, budget) {
-  const nested = ctx.env?.[config.PART_CALL_ENV] === '1'
-  if (cfg.parts.inject !== false && !nested) return parts.sense(ctx.env, { budget })
-  ctx.err(nested
-    ? `! 零件在零件里：这次不问零件（${config.PART_CALL_ENV}=1，防无限套娃）\n`
-    : '! 零件注入已关（parts.inject=false）：这次不问零件\n')
-  // 传 parts: [] 而不是干脆不调用：sense 的账目形状（lines/used/budget/warnings/dropped/failures）
-  // 是下游唯一的输入形状，空零件也走同一条路，宁可多一次空转也不让两个出口分叉。
-  return parts.sense(ctx.env, { budget, parts: [] })
+  if (cfg.parts.inject === false || inPartCall(ctx)) {
+    ctx.err(inPartCall(ctx)
+      ? `! 零件在零件里：这次不问零件（${config.PART_CALL_ENV}=1，防无限套娃）\n`
+      : '! 零件注入已关（parts.inject=false）：这次不问零件\n')
+    // 传 parts: [] 而不是干脆不调用：sense 的账目形状（lines/used/budget/warnings/dropped/failures）
+    // 是下游唯一的输入形状，空零件也走同一条路，宁可多一次空转也不让两个出口分叉。
+    return parts.sense(ctx.env, { budget, parts: [] })
+  }
+  // `parts.*` 的四个数与账本在这儿才真生效：以前只递了 `{budget}`，于是
+  // `config set parts.timeout 200` 形同虚设（实测照样跑四秒），连续失败也攒不出冷却（没有账本）。
+  // 接法与 dsh 的 askParts 同款；不给 deadline——命令行这一屏没人赶时间，串行问到底
+  // （deadline 是"首步注入赶在人开口之前"那件事，不是这一屏的）。
+  return parts.sense(ctx.env, {
+    budget,
+    timeout: cfg.parts.timeout,
+    timeoutMax: cfg.parts.timeoutMax,
+    stdoutMax: cfg.parts.stdoutMax,
+    failLimit: cfg.parts.failLimit,
+    ledger: parts.openLedger(homeOf(ctx)),
+    now: ctx.now,
+  })
 }
 
 // 处境屏（design §6：裸 `agent-man` 就是它）。mind 算"此刻站在哪一段日子里"，view 排成一屏，
@@ -817,10 +884,12 @@ async function contextShow(ctx) {
   const scene = mind.situation(homeOf(ctx), { now: ctx.now, parts: got })
   if (on(flags, 'json')) jsonOut(ctx, scene)
   else ctx.out(`${renderScreen(scene)}\n`)
-  // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被它的预算挤掉——
+  // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被挤掉——
   // 它们不在 scene.dropped 里，因为那是"屏上装不下"，这是"根本没拿到"。
+  // 每条都自带 why（deadline / cooldown / empty / budget），照它说：
+  // 早先一律写成"抓取预算已经用完"，把冷却、超时、没话说全说成了预算的事。
   for (const one of got.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
-  for (const one of got.dropped) ctx.err(`! 零件 ${one.name} 装不下：抓取预算 ${got.budget} 已经用完\n`)
+  for (const one of got.dropped) ctx.err(`! 零件 ${one.why}\n`)
   for (const one of got.failures) ctx.err(`! 零件 ${one.name} 没出声：${one.why}\n`)
   screenNotes(ctx, scene)
   return 0
@@ -925,10 +994,8 @@ async function contextSense(ctx) {
     if (got.lines.length === 0) ctx.out('（没有可用的零件：PATH 上放 agent-man-<名字> 就能接进来）\n')
   }
   for (const one of got.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
-  if (got.dropped.length > 0) {
-    const names = got.dropped.map((one) => one.name).join('、')
-    ctx.err(`! 装不下：${names}（预算 ${got.budget} 已经用完）\n`)
-  }
+  // 理由照零件那条记录自己的说（冷却 / 期限 / 没话说 / 预算四种都不一样）。
+  for (const one of got.dropped) ctx.err(`! 零件 ${one.why}\n`)
   for (const one of got.failures) ctx.err(`! 零件 ${one.name} 没出声：${one.why}\n`)
   return 0
 }
@@ -1035,6 +1102,13 @@ function moodVisible(ctx, flags) {
   return cfgOf(ctx).affect.visible !== false
 }
 
+// 刺激的四轴增量（design §14.7）：weight 是 `{v,e,t,r}` 的对象，直接拼进模板就是
+// `[object Object]`——四个数各带符号写出来，人一眼能看出这次刺激往哪边推了多少。
+function weightLine(weight) {
+  const one = weight ?? {}
+  return ['v', 'e', 't', 'r'].map((axis) => `${axis}${sign(one[axis])}`).join(' ')
+}
+
 function affectLine(snapshot, visible) {
   const numbers = `v=${Math.round(snapshot.v)} e=${Math.round(snapshot.e)} ` +
     `t=${Math.round(snapshot.t)} r=${Math.round(snapshot.r)}`
@@ -1069,7 +1143,14 @@ async function affectSet(ctx) {
     at: ctx.now,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
-  else ctx.out(`已记下 ${got.item.id}  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  else {
+    // item 是**刺激/覆盖本身**，没有 id（情绪只追加日志，不按条发号）：原来写 `got.item.id`
+    // 就打出"已记下 undefined"。说清改了哪个轴、改到多少、覆盖到什么时候为止，才是这一屏的话。
+    const one = got.item ?? {}
+    const until = Number.isFinite(one.until) ? `，到 ${rel(one.until, ctx.now)} 为止` : ''
+    ctx.out(`已记下手动覆盖 ${one.axis}=${Math.round(Number(one.value) || 0)}${until}  ` +
+      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  }
   landed(ctx, got)
   return 0
 }
@@ -1121,7 +1202,12 @@ async function affectStim(ctx) {
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
-  else ctx.out(`已记下 ${got.item.id}  ${kind}（权重 ${got.weight}）\n`)
+  else {
+    // 一句人话：刺激的 kind、它对四轴的增量、以及记完之后的快照（`got.weight` 是对象，
+    // 拼进模板就是 [object Object]；`got.item` 也没有 id）。
+    ctx.out(`已记下刺激 ${got.item.kind}（${weightLine(got.weight)}）  ` +
+      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  }
   if (got.ignored > 0) {
     ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）\n`)
   }
@@ -1132,29 +1218,20 @@ async function affectStim(ctx) {
 // ── 灵魂（design §13） ─────────────────────────────────────────────────────
 
 // 灵魂：ls / use / show / check / import。卡怎么解析、怎么装进预算都在 src/soul，
-// 这里只把结果排成屏。退出码：说不清就是 2；"卡不成立"也是 2（那不是成功，只是有话说）。
-async function soul(ctx) {
-  const args = ctx.argv.slice(1)
-  const sub = args[0]
-  const argOne = args[1]
+// 这里只把结果排成屏。二级路由跟别的资源同一套：命令名由 resolve() 认、参数由 split() 取，
+// 于是 `--json` 在每个子命令上都认（以前 soul show 不写名字时把 `--json` 当成了名字），
+// 「裸 soul」按 §6 就是 ls。
+// 退出码：说不清就是 2；"卡不成立"也是 2（那不是成功，只是有话说）。
+function soulLs(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  noWords(words, 'agent-man soul ls [--json]（裸 agent-man soul 等同此命令）')
   const dir = homeOf(ctx)
-  try {
-    if (sub === 'ls') return soulLs(ctx, dir)
-    if (sub === 'use') return await soulUse(ctx, dir, argOne)
-    if (sub === 'show') return soulShow(ctx, dir, argOne)
-    if (sub === 'check') return soulCheck(ctx, dir, argOne)
-    if (sub === 'import') return await soulImport(ctx, dir, argOne)
-  } catch (e) {
-    ctx.err(`! ${e && e.message ? e.message : e}\n`)
-    return 2
-  }
-  ctx.err('! 用法：agent-man soul ls | use <名字> | show [名字] | check [名字] | import <卡文件.json>\n')
-  return 2
-}
-
-function soulLs(ctx, dir) {
   const items = soulCards.list(dir)
   const now = soulCards.current(dir)
+  if (on(flags, 'json')) {
+    jsonOut(ctx, { items, current: now })
+    return 0
+  }
   if (items.length === 0) {
     ctx.out('（还没有灵魂卡：agent-man soul import <卡文件.json>）\n')
     return 0
@@ -1167,22 +1244,29 @@ function soulLs(ctx, dir) {
   return 0
 }
 
-async function soulUse(ctx, dir, name) {
-  if (!name) {
-    ctx.err('! 用法：agent-man soul use <名字>\n')
-    return 2
-  }
-  const rec = await soulCards.use(dir, name, { at: ctx.now, by: 'cli' })
-  ctx.out(`已切到 ${rec.name}（记忆与事件一个字节没动）\n`)
+async function soulUse(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const name = words.join(' ').trim()
+  if (!name) throw new Error('用法：agent-man soul use <名字>')
+  const rec = await soulCards.use(homeOf(ctx), name, { at: ctx.now, by: 'cli' })
+  if (on(flags, 'json')) jsonOut(ctx, rec)
+  else ctx.out(`已切到 ${rec.name}（记忆与事件一个字节没动）\n`)
   return 0
 }
 
 // 名字缺省就取当前那张；一张卡都没导入过时 pickName 会把人引到 import，
 // 而不是打"没有这个灵魂：default"。
-function soulShow(ctx, dir, name) {
-  const wanted = pickName(ctx, dir, name)
+function soulShow(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const dir = homeOf(ctx)
+  const wanted = pickName(ctx, dir, words.join(' ').trim() || undefined)
   if (wanted === null) return 2
   const view = soulCards.build(dir, { name: wanted })
+  if (on(flags, 'json')) {
+    // 一行 JSON：与其余读命令同一条规矩（stdout 只放结果，缩进留给屏幕）。
+    jsonOut(ctx, view)
+    return 0
+  }
   const k = view.knobs
   ctx.out(`灵魂：${wanted}  旋钮 warm ${sign(k.warm)} / drive ${sign(k.drive)} / sharp ${sign(k.sharp)}\n`)
   ctx.out(`注入 ${tenth(view.used)}/${tenth(view.cost)}：\n`)
@@ -1197,29 +1281,36 @@ function soulShow(ctx, dir, name) {
   return 0
 }
 
-function soulCheck(ctx, dir, name) {
-  const wanted = pickName(ctx, dir, name)
+function soulCheck(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const dir = homeOf(ctx)
+  const wanted = pickName(ctx, dir, words.join(' ').trim() || undefined)
   if (wanted === null) return 2
   const result = soulCards.check(dir, wanted)
+  const asJson = on(flags, 'json')
+  if (asJson) jsonOut(ctx, result)
   for (const one of result.errors) ctx.err(`! ${one}\n`)
   for (const one of result.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
-  if (result.inferred.length > 0) {
+  if (result.inferred.length > 0 && !asJson) {
     ctx.out(`~ ${result.inferred.length} 处推断待确认（soul show 里带 ~ 的段）\n`)
   }
   if (!result.ok) {
     ctx.err(`! 这张卡还不成立（${result.errors.length} 处）：按上面的提示改\n`)
     return 2
   }
-  ctx.out(`ok ${wanted}\n`)
+  if (!asJson) ctx.out(`ok ${wanted}\n`)
   return 0
 }
 
-async function soulImport(ctx, dir, file) {
-  if (!file) {
-    ctx.err('! 用法：agent-man soul import <卡文件.json（角色卡规范 V2 或 V1）>\n')
-    return 2
+async function soulImport(ctx) {
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  const file = words.join(' ').trim()
+  if (!file) throw new Error('用法：agent-man soul import <卡文件.json（角色卡规范 V2 或 V1）>')
+  const result = await soulCards.importCard(homeOf(ctx), file)
+  if (on(flags, 'json')) {
+    jsonOut(ctx, result)
+    return 0
   }
-  const result = await soulCards.importCard(dir, file)
   ctx.out(`已导入 ${result.name}（${result.files.length} 个文件，往事 ${result.lore} 条）\n`)
   if (result.source) ctx.out(`来源：${result.source}\n`)
   ctx.out(`下一步：agent-man soul check ${result.name}\n`)
@@ -1227,10 +1318,13 @@ async function soulImport(ctx, dir, file) {
 }
 
 // 写了却没落盘（磁盘满、权限、坏扇区）：这正是"静默丢弃"要防的事，必须说出口。
+// 但 `saved:false` 加空理由的意思恰恰相反——快照没变，这次本来就不用写盘。
+// 那不是失败：既不报警，更不能留一行「! 没落盘：」后面空着（读的人会以为坏了）。
 function landed(ctx, got) {
-  if (got && got.saved && got.saved.saved === false) {
-    ctx.err(`! 没落盘：${got.saved.why ?? '写不进去'}\n`)
-  }
+  const saved = got && got.saved
+  if (!saved || saved.saved !== false) return
+  if (!saved.why) return
+  ctx.err(`! 没落盘：${saved.why}\n`)
 }
 
 function sign(value) {
@@ -1243,14 +1337,19 @@ function tenth(value) {
   return Math.round((Number.isFinite(value) ? value : 0) * 10) / 10
 }
 
-// 没说名字就取当前那张。当前是内置 default（还没 import 过任何卡）时别拿"没有这个灵魂：default"
-// 糊人——那句话像是卡被人删了，实际是"你还没导入过"。
+// 没说名字就取当前那张。当前是内置 default 时别拿"没有这个灵魂：default"糊人——
+// 那句话像是卡被人删了，实际是"你还没导入过"。但"卡就在盘上、只是没选"要说成 use，
+// 否则人照着 import 去导，导完还是这一句。
 function pickName(ctx, dir, name) {
   if (name) return name
   const now = soulCards.current(dir)
-  if (now.by === 'builtin') {
+  if (now.by !== 'builtin') return now.name
+  const items = soulCards.list(dir)
+  if (items.length === 0) {
     ctx.err('! 还没有灵魂卡：agent-man soul import <卡文件.json>\n')
-    return null
+  } else {
+    const names = items.map((one) => one.name).join(' / ')
+    ctx.err(`! 还没选中灵魂卡：agent-man soul use <名字>（盘上有：${names}）\n`)
   }
-  return now.name
+  return null
 }

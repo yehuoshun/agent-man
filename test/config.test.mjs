@@ -374,3 +374,33 @@ test('文件没写 version 时提醒一句，但不擅自改文件', async (t) =
   assert.ok(warned.some((msg) => msg.includes('version')), JSON.stringify(warned))
   assert.equal(fs.readFileSync(filePath(dir), 'utf8'), before, 'load 不许回写文件')
 })
+
+// 读命令都认 --json（§6）：get / path 以前把 --json 当成键名或多余参数，退 2 说"用法错"。
+test('config get --json 给一行 {key,value}，不把 --json 当键名', async (t) => {
+  const dir = home(t)
+  const { out, err, ctx } = ctxFor(dir)
+  assert.equal(await config.run(ctx, ['get', 'inject.total', '--json']), 0, `! ${err.join('')}`)
+  assert.equal(out.length, 1, '一个结果只该是一行')
+  assert.equal(out[0].trim().split('\n').length, 1)
+  const doc = JSON.parse(out[0])
+  assert.equal(doc.key, 'inject.total')
+  assert.equal(typeof doc.value, 'number')
+})
+
+test('config path --json 给一行 {path}：与文本模式指同一个文件', async (t) => {
+  const dir = home(t)
+  const { out, ctx } = ctxFor(dir)
+  assert.equal(await config.run(ctx, ['path', '--json']), 0)
+  assert.equal(out.length, 1)
+  assert.deepEqual(JSON.parse(out[0]), { path: filePath(dir) })
+})
+
+// show --json 也是"恰好一行"：缩进是给人看的，不是给管道的（以前是 42 行缩进 JSON）。
+test('config show --json 恰好一行：跟其余读命令同一条规矩', async (t) => {
+  const dir = home(t)
+  const { out, ctx } = ctxFor(dir)
+  assert.equal(await config.run(ctx, ['show', '--json']), 0)
+  assert.equal(out.length, 1)
+  assert.equal(out[0].trim().split('\n').length, 1)
+  assert.deepEqual(Object.keys(JSON.parse(out[0])), Object.keys(config.SCHEMA))
+})
