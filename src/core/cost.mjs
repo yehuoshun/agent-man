@@ -68,15 +68,18 @@ export function cut(s, budget) {
 }
 
 // 换行折成空格：一屏里的每条记录都得能塞进一行，否则 budget 的"行数 × 行宽"白算。
-// max 是码点个数（不是 cost）——这里管的是显示宽度，不是预算。
+// 换行不止 \r\n：U+2028 / U+2029（LINE/PARAGRAPH SEPARATOR）是 JSON 与 JS 里合法、终端里
+// 真断行的硬换行，肉眼还看不见——只认 \r\n 就等于让它们带着断行混进"一行"，行宽算不准。
+// max 是字的个数（不是 cost）——这里管的是显示宽度，所以按字素簇数，不按码点数。
 export function oneLine(s, max) {
-  const text = toText(s).replace(/\s*[\r\n]+\s*/g, ' ')
+  const text = toText(s).replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ')
   if (!Number.isFinite(max) || max <= 0) return text
-  const chars = Array.from(text)
+  const units = []
+  for (const one of SEGMENTER.segment(text)) units.push(one.segment)
   const cap = Math.trunc(max)
-  if (chars.length <= cap) return text
+  if (units.length <= cap) return text
   if (cap < 1) return ''
-  return `${chars.slice(0, cap - 1).join('')}…`
+  return `${units.slice(0, cap - 1).join('')}…`
 }
 
 // design §7 写的是 '。！？；\n'：半角的 ! ? ; 大量出现在命令与路径里，当句末会切在半句话上。

@@ -92,6 +92,17 @@ test('截断只在字素簇边界落刀：load 不下就整簇不切，绝不切
   assert.equal(cut('❤️❤️', 1.5).text, '❤️')
 })
 
+test('U+2028 / U+2029 也算换行：断行看不见，混进一行就会把行宽算错', () => {
+  // 这两种是 JSON 与 JS 里的合法硬换行，肉眼看不见，只认 \r\n 会让它们原样留在"一行"里。
+  assert.equal(oneLine('a\u2028b', 10), 'a b')
+  assert.equal(oneLine('a\u2029b', 10), 'a b')
+  assert.equal(oneLine('a\u2028\u2029b', 10), 'a b')
+  assert.equal(/[\u2028\u2029]/.test(oneLine('a\u2028b\u2029c', 20)), false, '折完不许留下硬换行')
+  // 家族 emoji 按字素簇算一个字：别把它数成 5 个再截半。
+  const three = '👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧'
+  assert.equal(oneLine(three, 2), '👨‍👩‍👧…')
+})
+
 test('换行折成空格；超长截断并补省略号，结果不超 max', () => {
   assert.equal(oneLine('她关了窗\n然后去睡了', 20), '她关了窗 然后去睡了')
   assert.equal(oneLine('a\r\nb', 10), 'a b')
