@@ -619,15 +619,24 @@ async function noteAdd(ctx) {
   if (!text) {
     throw new Error('用法：agent-man note add "<要留的话>" --trigger "<什么时候>" [--ttl 7d]')
   }
+  // --trigger 是必填（design §6 与帮助里都这么写）：便条的意思就是"等到那时候再说"，
+  // 缺了它的便条等于一句话躺在那里永不出现——以前会写空 trigger 落盘，等于静默失效。
+  const trigger = arg(flags, 'trigger')
+  if (!trigger || !String(trigger).trim()) {
+    throw new Error(
+      'note add 要给 --trigger "<什么时候>"：便条的意思就是「等到那时候再说」，' +
+      '缺了它只会静静躺着不出现（写法：--trigger "下次她提加班的时候"）',
+    )
+  }
   const one = await intent.notes.add(homeOf(ctx), {
     text,
-    trigger: arg(flags, 'trigger'),
+    trigger,
     ttl: arg(flags, 'ttl'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
     dayStart: cfgOf(ctx).clock.dayStart,
   })
   if (on(flags, 'json')) jsonOut(ctx, one)
-  else ctx.out(`已留下 ${one.id}（${one.trigger ? `等：${one.trigger}` : '没有触发条件'}）\n`)
+  else ctx.out(`已留下 ${one.id}（等：${one.trigger}）\n`)
   return 0
 }
 
@@ -1309,10 +1318,13 @@ async function soulImport(ctx) {
 }
 
 // 写了却没落盘（磁盘满、权限、坏扇区）：这正是"静默丢弃"要防的事，必须说出口。
+// 但 `saved:false` 加空理由的意思恰恰相反——快照没变，这次本来就不用写盘。
+// 那不是失败：既不报警，更不能留一行「! 没落盘：」后面空着（读的人会以为坏了）。
 function landed(ctx, got) {
-  if (got && got.saved && got.saved.saved === false) {
-    ctx.err(`! 没落盘：${got.saved.why ?? '写不进去'}\n`)
-  }
+  const saved = got && got.saved
+  if (!saved || saved.saved !== false) return
+  if (!saved.why) return
+  ctx.err(`! 没落盘：${saved.why}\n`)
 }
 
 function sign(value) {
@@ -1325,14 +1337,19 @@ function tenth(value) {
   return Math.round((Number.isFinite(value) ? value : 0) * 10) / 10
 }
 
-// 没说名字就取当前那张。当前是内置 default（还没 import 过任何卡）时别拿"没有这个灵魂：default"
-// 糊人——那句话像是卡被人删了，实际是"你还没导入过"。
+// 没说名字就取当前那张。当前是内置 default 时别拿"没有这个灵魂：default"糊人——
+// 那句话像是卡被人删了，实际是"你还没导入过"。但"卡就在盘上、只是没选"要说成 use，
+// 否则人照着 import 去导，导完还是这一句。
 function pickName(ctx, dir, name) {
   if (name) return name
   const now = soulCards.current(dir)
-  if (now.by === 'builtin') {
+  if (now.by !== 'builtin') return now.name
+  const items = soulCards.list(dir)
+  if (items.length === 0) {
     ctx.err('! 还没有灵魂卡：agent-man soul import <卡文件.json>\n')
-    return null
+  } else {
+    const names = items.map((one) => one.name).join(' / ')
+    ctx.err(`! 还没选中灵魂卡：agent-man soul use <名字>（盘上有：${names}）\n`)
   }
-  return now.name
+  return null
 }

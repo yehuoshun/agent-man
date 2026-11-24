@@ -318,6 +318,19 @@ test('note add 与 note ls：触发条件写在行里，ttl 与 id 都记下来'
   assert.match(listed.out, /记得带伞（等：她出门前）/)
 })
 
+test('note add 缺 --trigger：退出码 2，一个字都不落盘（没有触发条件的便条等于没写）', async () => {
+  const one = box()
+  const got = await cli(one, ['note', 'add', '记得带伞'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! note add 要给 --trigger/)
+  assert.equal(got.out, '')
+  assert.deepEqual(grepHome(one.dir, '记得带伞'), [])
+  // 空白也不算写：`--trigger "   "` 照样是"没有触发条件"。
+  const blank = await cli(one, ['note', 'add', '记得带伞', '--trigger', '   '])
+  assert.equal(blank.code, 2)
+  assert.deepEqual(grepHome(one.dir, '记得带伞'), [], '缺触发条件还是落了盘')
+})
+
 test('note take 递出一次就关闭：第二次退出码 2 而不是再递一遍', async () => {
   const one = box()
   const added = await cli(one, ['note', 'add', '记得带伞', '--trigger', '出门', '--json'])
@@ -771,6 +784,22 @@ test('affect set 的屏显写清改了哪个轴、改到多少，不出现 undef
 // 否则零件能把结论、规矩、自我块真写进本体（实测零件里 `rule add` 退 0 还落了盘）。
 const PART_CALL = { AGENT_MAN_PART_CALL: '1' }
 
+test('不需要写盘时不报警：saved:false 的空理由不是失败，真没落盘才说，且把理由写出来', async () => {
+  const one = box()
+  // 空目录上 clear：峰与标签都没变，这次本来就不用写盘。屏上一句警告都不该有。
+  const quiet = await cli(one, ['affect', 'clear'])
+  assert.equal(quiet.code, 0)
+  assert.equal(quiet.err, '', `不用写盘却报了警：${quiet.err}`)
+
+  // 状态文件读不懂：这时候确实没落盘，理由要原样说出来，不能留「! 没落盘：」后面空着。
+  ensure(path.join(one.dir, 'state'))
+  fs.writeFileSync(metaFile(one.dir), '{这不是 JSON\n')
+  const loud = await cli(one, ['affect', 'clear'])
+  assert.equal(loud.code, 0)
+  assert.match(loud.err, /! 没落盘：状态文件读不懂/)
+  assert.doesNotMatch(loud.err, /没落盘：\s*$/)
+})
+
 test('零件带着哨兵反调：写结论/规矩/自我块一律退 2，说清它只能写情景层，且一个字都没落盘', async () => {
   const one = box()
   const tries = [
@@ -901,6 +930,15 @@ test('soul show 不把 --json 当名字：不写名字与写了名字都认这�
   assert.equal(named.out, anonymous.out)
   const human = await cli(one, ['soul', 'show'])
   assert.match(human.out, /^灵魂：小满 {2}旋钮 warm -1 \/ drive 0 \/ sharp \+1/)
+})
+
+test('soul show 没写名字又没选卡：说清去 use 哪一张，不再说"还没有灵魂卡"', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  const got = await cli(one, ['soul', 'show'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /还没选中灵魂卡：agent-man soul use <名字>（盘上有：小满）/)
+  assert.doesNotMatch(got.err, /还没有灵魂卡/)
 })
 
 test('soul ls --json 与 soul check --json 都是一行 JSON，不是人类文本', async () => {
