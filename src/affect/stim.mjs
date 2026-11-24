@@ -3,7 +3,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { AFFECT_NEG_WEIGHT, AFFECT_STIM_PER_HOUR, AFFECT_WEIGHTS, now } from '../core/index.mjs'
+import {
+  AFFECT_BIAS_IMP, AFFECT_NEG_WEIGHT, AFFECT_STIM_PER_HOUR, AFFECT_WEIGHTS, now,
+} from '../core/index.mjs'
 import { appendJsonl, ensure, readJsonl, stateFile } from '../store/index.mjs'
 import { AXIS_NAMES } from './decay.mjs'
 
@@ -19,13 +21,21 @@ const AXIS_SET = new Set(AXIS_NAMES)
 
 // kind → 四轴增量，负向在这里统一乘 AFFECT_NEG_WEIGHT。
 // 乘在读取侧、不乘在 core 表里：权重表只有一份，谁要权重都得走这个函数。
-export function weightOf(kind) {
+// neg = "同一件事发生在另一边"（decisions.md 已批准口径：只让"零轴"那一侧取负）：
+// 表里值为 0 的格翻成 −1（task.done 的 Δr），已有正负号的格原样不动（user.praise 翻不成负向）；
+// 表里写明 free 的行（self.report 的 ±1）只翻那几格。翻出来的 −1 不再乘负向系数：
+// 它不是"更重的负向刺激"，只是把没方向的格指到负侧。
+export function weightOf(kind, { neg = false } = {}) {
   const w = AFFECT_WEIGHTS[kind]
   if (!w) throw new TypeError(`未知的刺激 kind：${String(kind)}（只认 ${KINDS.join(' / ')}）`)
-  const scale = (delta) => (delta < 0 ? delta * AFFECT_NEG_WEIGHT : delta)
-  return Object.freeze({
-    v: scale(w.v), e: scale(w.e), t: scale(w.t), r: scale(w.r),
-  })
+  const free = Array.isArray(w.free) ? w.free : null
+  const one = (axis) => {
+    const delta = w[axis]
+    const flip = free ? free.includes(axis) : delta === 0
+    if (neg && flip) return delta === 0 ? -1 : -delta
+    return delta < 0 ? delta * AFFECT_NEG_WEIGHT : delta
+  }
+  return Object.freeze({ v: one('v'), e: one('e'), t: one('t'), r: one('r') })
 }
 
 function whyOf(input) {
@@ -42,20 +52,27 @@ function bucketOf(at) {
 }
 
 // 记账（design §14.11）：kind + why + at 三样缺一不可，写一行 appendJsonl（open/fsync/读回都归 store）。
-// 配额超出照样落盘（不静默丢），只是回 ignored=true，由调用方报 "! 同类刺激超额"。
+// 配额超出照样落盘（不静默丢），只是回 ignored=true，由调用方报 "! 同类刺激超额未计 N 条"。
+// 行形状照 design §14.13 补齐（tag/v/a/imp/src）：账本要能裸读——op 说明做了什么，tag 是哪一个，
+// v/a/imp 是这一次给各轴的量，src 是谁记的。重放仍只认 kind（表是唯一真源），这几个字段是抄本。
 export function record(homeDir, input = {}) {
   const kind = input.kind
   if (!KIND_SET.has(kind)) throw new TypeError(`未知的刺激 kind：${String(kind)}（只认 ${KINDS.join(' / ')}）`)
   const why = whyOf(input)
   const at = Number.isFinite(input.at) ? input.at : now()
-  // 先看这一小时里同 kind 已经记了几条，再落盘：超额的照写，只是不进计算。
+  const neg = input.neg === true
+  const src = typeof input.src === 'string' && input.src.trim() !== '' ? input.src.trim() : 'cli'
+  // 先看这一小时里同 kind 已经计入几条，再落盘：超额的照写，只是不进计算。
   const used = countedIn(homeDir, kind, at)
-  const item = { op: 'stim', at, kind, why }
+  const w = weightOf(kind, { neg })
+  const item = { op: 'stim', at, kind, tag: kind, v: w.v, a: w.e, imp: AFFECT_BIAS_IMP, src, why }
+  if (neg) item.neg = true
   appendOp(homeDir, item)
-  return { item, counts: used + 1, ignored: used >= AFFECT_STIM_PER_HOUR }
+  return { item, counts: Math.min(used + 1, AFFECT_STIM_PER_HOUR), ignored: used >= AFFECT_STIM_PER_HOUR }
 }
 
-// 这一小时、这个 kind 里已经"计入"的条数（超额的不再增加计数，否则 ignored 会一直涨）。
+// 这一小时、这个 kind 里已经"计入"的条数。口径：counts = 计入权重的条数（§14.7 每小时最多 3 条），
+// 超额行照样落盘但不再计入——到这里就封顶，否则 ignored 会一直涨、counts 会说"计了 7 条"。
 function countedIn(homeDir, kind, at) {
   const bucket = bucketOf(at)
   let used = 0
@@ -66,6 +83,7 @@ function countedIn(homeDir, kind, at) {
       if (!Number.isFinite(rec.at) || bucketOf(rec.at) !== bucket) continue
       if (rec.at > at) continue
       used += 1
+      if (used >= AFFECT_STIM_PER_HOUR) return used
     }
   }
   return used
@@ -119,7 +137,10 @@ function asOp(rec) {
   if (rec.op === 'stim') {
     if (!KIND_SET.has(rec.kind)) return null
     if (typeof rec.why !== 'string' || rec.why.trim() === '') return null
-    return { op: 'stim', at: rec.at, kind: rec.kind, why: rec.why }
+    // neg 必须带过去：重放要按翻过的符号算，不然"取负"只在写盘那一刻成立、读侧又变回正的。
+    const one = { op: 'stim', at: rec.at, kind: rec.kind, why: rec.why }
+    if (rec.neg === true) one.neg = true
+    return one
   }
   return null
 }
