@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { set as affectSet } from '../src/affect/index.mjs'
+import { AFFECT_STIM_PER_HOUR } from '../src/core/index.mjs'
 import { main } from '../src/cli/index.mjs'
 import { plans } from '../src/intent/index.mjs'
 import * as memory from '../src/memory/index.mjs'
@@ -977,4 +978,94 @@ test('只给开关时打错的开关照样退 2：理由交给命令自己说，
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('灵魂卡 drive ≤ −1 一律不主动：建议段整段不出，账上写清是 drive 拦的', async () => {
+  const one = box()
+  one.env.PATH = fakePart()
+  if (process.env.ComSpec) one.env.ComSpec = process.env.ComSpec
+  if (process.env.SystemRoot) one.env.SystemRoot = process.env.SystemRoot
+  const abs = path.join(one.dir, 'soul', '冷面')
+  fs.mkdirSync(abs, { recursive: true })
+  const files = {
+    ...SOUL_CARD,
+    'card.json': '{"name":"冷面","knobs":{"warm":0,"drive":-2,"sharp":0},"source":"用例"}\n',
+  }
+  for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(abs, file), body)
+  assert.equal((await cli(one, ['soul', 'use', '冷面'])).code, 0)
+  // 情绪抬到满格：除了 drive 没有别的门拦着。
+  await affectSet(one.dir, { axis: 'v', value: 90, why: '用例：高兴', at: one.now - 60 * 60 * 1000 })
+  await affectSet(one.dir, { axis: 'e', value: 90, why: '用例：有劲', at: one.now - 60 * 60 * 1000 })
+  const quietOne = await cli(one, ['context', 'show'])
+  assert.equal(quietOne.code, 0)
+  assert.equal(quietOne.out.includes('建议'), false, 'drive ≤ −1 时建议段整段不出')
+  assert.match(quietOne.err, /! 建议 丢：这张卡的 drive=-2，一律不主动/)
+})
+
+test('灵魂卡 drive ≥ +1 只看愉悦：v 过 50 就允许建议段，不必精力也满格', async () => {
+  const one = box()
+  one.env.PATH = fakePart()
+  if (process.env.ComSpec) one.env.ComSpec = process.env.ComSpec
+  if (process.env.SystemRoot) one.env.SystemRoot = process.env.SystemRoot
+  const abs = path.join(one.dir, 'soul', '话多')
+  fs.mkdirSync(abs, { recursive: true })
+  const files = {
+    ...SOUL_CARD,
+    'card.json': '{"name":"话多","knobs":{"warm":0,"drive":2,"sharp":0},"source":"用例"}\n',
+  }
+  for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(abs, file), body)
+  assert.equal((await cli(one, ['soul', 'use', '话多'])).code, 0)
+  // 基线 e=60 < 76：drive=0 时这一屏是不出建议的（上面那条用例钉着），drive=+2 时才出。
+  const eager = await cli(one, ['context', 'show'])
+  assert.equal(eager.code, 0)
+  assert.match(eager.out, /\n\n建议\n  · rain outside（fake）\n$/)
+})
+
+test('情绪行的隐藏只有一个口径：--no-mood 与 affect.visible=false 都让整行不出现', async () => {
+  const one = box()
+  const shown = await cli(one, ['affect', 'show'])
+  assert.match(shown.out, /^v=\d+ e=\d+ t=\d+ r=\d+ · \S+ · \d+ 条刺激/)
+  const flag = await cli(one, ['affect', 'show', '--no-mood'])
+  assert.equal(flag.code, 0)
+  assert.equal(flag.out.trim(), '', '--no-mood 是整行不出现，不是只藏标签')
+  assert.equal((await cli(one, ['config', 'set', 'affect.visible', 'false'])).code, 0)
+  const hidden = await cli(one, ['affect', 'show'])
+  assert.equal(hidden.code, 0)
+  assert.equal(hidden.out.trim(), '', 'affect.visible=false 也是整行不出现')
+  // 判定不变：隐藏只影响渲染，四轴与标签照旧算。
+  const numbers = JSON.parse((await cli(one, ['affect', 'show', '--json'])).out)
+  assert.deepEqual([Math.round(numbers.v), Math.round(numbers.e)], [50, 60])
+  assert.equal(numbers.mood, '平淡')
+})
+
+test('affect stim 第 4 次超额：说清已计入几条，不把布尔当数字打印', async () => {
+  const one = box()
+  for (let i = 0; i < AFFECT_STIM_PER_HOUR; i += 1) {
+    const ok = await cli(one, ['affect', 'stim', 'task.fail', '--why', `用例：第 ${i + 1} 次`])
+    assert.equal(ok.code, 0, ok.err)
+    assert.doesNotMatch(ok.err, /条同类刺激超额未计/)
+  }
+  const over = await cli(one, ['affect', 'stim', 'task.fail', '--why', '用例：第 4 次'])
+  assert.equal(over.code, 0)
+  assert.match(over.err, new RegExp(`! 同类刺激这一小时已计入 ${AFFECT_STIM_PER_HOUR} 条`))
+  assert.doesNotMatch(over.err, /true 条/, 'ignored 是布尔，不是计数')
+})
+
+test('soul show 把推断的段标 ~、人工补过的段标 *，与末行的「~ N 处推断」对得上', async () => {
+  const one = box()
+  const abs = path.join(one.dir, 'soul', '带标记')
+  fs.mkdirSync(abs, { recursive: true })
+  const files = {
+    ...SOUL_CARD,
+    'soul.md': '句子短。 <!-- inferred -->\n不铺垫、不总结。\n',
+    'card.json': '{"name":"带标记","knobs":{"warm":0,"drive":0,"sharp":0},"source":"用例",'
+      + '"provenance":{"sections":{"soul.第 2 段":"manual"}}}\n',
+  }
+  for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(abs, file), body)
+  assert.equal((await cli(one, ['soul', 'use', '带标记'])).code, 0)
+  const got = await cli(one, ['soul', 'show'])
+  assert.equal(got.code, 0, got.err)
+  assert.match(got.out, /\n {2}~ \[说话\] 句子短。/)
+  assert.match(got.out, /\n {2}\* 不铺垫、不总结。/)
+  assert.match(got.out, /\n~ 1 处推断/)
 })

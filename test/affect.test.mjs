@@ -141,14 +141,20 @@ test('死区：两轴都贴着基线就当作没变，标签不刷新', () => {
 
 test('五段与持久情绪都用表上的词，而且每一条都带原因', () => {
   assert.deepEqual([90, 40, 0, -30, -80].map(respectBand), ['敬重', '认可', '中性', '不以为然', '厌恶'])
-  const dislike = persistent({ t: 40, r: -45 })
+  // 分界只有一处：§14.4 的"厌恶"档是 r ≤ −60，respectBand 与 persistent 必须说同一句话。
+  // （这里原来按错值写死成 −45 = 厌恶，与 respectBand(−45) = 不以为然 自相矛盾。）
+  assert.equal(respectBand(-45), '不以为然')
+  assert.equal(persistent({ t: 40, r: -45 }).kind, null)
+  assert.equal(respectBand(-60), '厌恶')
+  const dislike = persistent({ t: 40, r: -65 })
   assert.equal(dislike.kind, '厌恶')
-  assert.ok(dislike.why.includes('-45'))
-  assert.equal(persistent({ t: 60, r: -45 }).kind, '轻蔑')
+  assert.ok(dislike.why.includes('-65'))
+  assert.ok(dislike.why.includes('−60'))
+  assert.equal(persistent({ t: 60, r: -65 }).kind, '轻蔑')
   assert.equal(persistent({ t: 20, r: 0 }).kind, '失望')
   assert.equal(persistent({ t: 70, r: 0 }).kind, null)
   // 厌恶那一行必须说得出原因（design §14.4：不许静默记仇），空 why 不合格。
-  for (const one of [dislike, persistent({ t: 60, r: -45 }), persistent({ t: 20, r: 0 })]) {
+  for (const one of [dislike, persistent({ t: 60, r: -65 }), persistent({ t: 20, r: 0 })]) {
     assert.ok(typeof one.why === 'string' && one.why.length > 0)
   }
 })
@@ -377,5 +383,110 @@ test('标签只在越过 3 分才换：从高一档回落，压着边界时还�
     // 死区里怎么抖都还是原来那个词（±3 之外才算变化）。
     assert.equal(AFFECT_HYST, 3)
     assert.equal(moodOf(52, 58, '轻松'), '轻松')
+  })
+})
+
+test('厌恶出现时显示行必带原因：持久情绪与它那句 why 一起进快照', async () => {
+  await inHome(async (home) => {
+    await set(home, { axis: 'r', value: -80, why: '尊重 -80（连续两次承诺未兑现）', at: T })
+    const snap = snapshot(home, { now: T })
+    assert.deepEqual(snap.persistent, {
+      kind: '厌弃',
+      why: '尊重 -80（≤ −70）且信任 40（< 50）',
+    })
+    // 数字与标签照旧，但原因必须真的说出口——不许静默记仇。
+    const said = snap.why.join('\n')
+    assert.ok(said.includes('厌弃'), said)
+    assert.ok(said.includes('≤ −70'), said)
+    assert.ok(said.includes('信任 40'), said)
+  })
+})
+
+test('同类刺激超额的那几条不算进 counts：counts 是计入权重的条数', async () => {
+  await inHome(async (home) => {
+    const out = []
+    for (let i = 0; i < AFFECT_STIM_PER_HOUR + 2; i += 1) {
+      out.push(await stim(home, { kind: 'task.fail', why: `第 ${i + 1} 次`, at: T + i * 1000 }))
+    }
+    assert.deepEqual(out.map((one) => one.counts), [1, 2, 3, 3, 3], '超额的不加进计数')
+    assert.deepEqual(out.map((one) => one.ignored), [false, false, false, true, true])
+    // 口径对得上账：counts 的末值 = 真的被算进去的条数。
+    assert.equal(snapshot(home, { now: T + 5 * 1000 }).ignored, 2)
+  })
+})
+
+test('--neg 只翻权重表里的零轴：user.praise 翻不动，task.done 的 r 才翻成负', () => {
+  const plain = weightOf('user.praise')
+  const flipped = weightOf('user.praise', { neg: true })
+  assert.deepEqual(flipped, plain, '表里已经有方向的格原样不动，正负不会被一句话翻过来')
+  assert.equal(weightOf('task.done').r, 0)
+  assert.equal(weightOf('task.done', { neg: true }).r, -1, '零轴那一侧才翻得动')
+  assert.equal(weightOf('task.done', { neg: true }).v, 6, '非零轴不跟着翻')
+})
+
+test('self.report 的 ±1：--neg 时 v/e 取负，t/r 仍是 0', () => {
+  assert.deepEqual(weightOf('self.report'), { v: 1, e: 1, t: 0, r: 0 })
+  assert.deepEqual(weightOf('self.report', { neg: true }), { v: -1, e: -1, t: 0, r: 0 })
+  // 表里写明哪些轴是自由的：没写 free 的 kind 不会去翻非零轴。
+  assert.equal(Object.hasOwn(weightOf('task.done'), 'free'), false)
+})
+
+test('--neg 落盘时把 neg 记在该行上：重放读回来仍是负向那一条', async () => {
+  await inHome(async (home) => {
+    const got = await stim(home, { kind: 'task.done', why: '别人做成了，与我无关', neg: true, at: T })
+    assert.equal(got.item.neg, true)
+    assert.equal(got.weight.r, -1)
+    const rows = list(home, { from: 0, to: T + 1 })
+    assert.equal(rows.items.at(-1).neg, true, '日志行要留下这一笔，重放才翻得动')
+    const snap = snapshot(home, { now: T })
+    assert.ok(snap.r < AFFECT_BASE.r, `r=${snap.r} 应当被这条负向零轴拽下来`)
+  })
+})
+
+test('峰值显示成「信任 43（最高 71）」，而且只有真涨过才写括号', async () => {
+  await inHome(async (home) => {
+    // 从没涨过：基线就是最高的，不该装作"到过高处"。
+    const fresh = snapshot(home, { now: T })
+    assert.ok(!fresh.why.some((one) => one.includes('最高')), fresh.why.join(' / '))
+    await stim(home, { kind: 'promise.kept', why: '守了承诺', at: T })
+    const raised = snapshot(home, { now: T })
+    // 现值就是峰值的时候没有"最高"好说：括号只在现值低于峰值时才有信息。
+    assert.ok(!raised.why.some((one) => one.includes('最高')), raised.why.join(' / '))
+    // 衰减之后再读：现值和峰值都在括号里分得清。
+    const later = snapshot(home, { now: T + 200 * 24 * HOUR })
+    const low = later.why.find((one) => one.includes('最高'))
+    assert.ok(low, later.why.join(' / '))
+    assert.match(low, /^信任 [\d.]+（最高 [\d.]+）/, low)
+    assert.ok(later.t < raised.peaks.trust, '现价掉下来了，括号里那个数才是到过的高度')
+  })
+})
+
+test('手动覆盖期间的刺激要标出来：账上不能装作那段时间没有人推过', async () => {
+  await inHome(async (home) => {
+    await set(home, { axis: 'v', value: 80, for: 2 * HOUR, why: '演练', at: T })
+    await stim(home, { kind: 'task.fail', why: '覆盖期间又跌了一跤', at: T + HOUR })
+    const snap = snapshot(home, { now: T + HOUR })
+    assert.equal(snap.v, 80, '覆盖期间值以手动为准')
+    assert.equal(snap.overridden, 1, '这一条刺激记在覆盖期间')
+    const said = snap.why.join('\n')
+    assert.ok(said.includes('手动覆盖期间'), said)
+    assert.ok(said.includes('1 条'), said)
+  })
+})
+
+test('now 早于首条刺激时 mood 用基线标签：不借 meta 里那份未来快照的判定', async () => {
+  await inHome(async (home) => {
+    const base = moodOf(AFFECT_BASE.v, AFFECT_BASE.e)
+    for (let i = 0; i < 5; i += 1) {
+      await stim(home, { kind: 'task.fail', why: `第 ${i + 1} 次垮`, at: T + i * 1000 })
+    }
+    // 写刺激时会顺手把那一刻的标签记进 meta.json。
+    const atT = snapshot(home, { now: T + 4 * 1000 })
+    assert.notEqual(atT.mood, base, '先把标签推离基线，否则这条用例证明不了什么')
+    // 回到首条刺激之前：数字是基线，标签也必须是基线的那个词。
+    const before = snapshot(home, { now: T - 5 * HOUR })
+    assert.deepEqual([before.v, before.e], [AFFECT_BASE.v, AFFECT_BASE.e])
+    assert.equal(before.mood, base, '报"未来那次快照"的标签等于把后来的事提前算上')
+    assert.equal(persistent({ t: before.t, r: before.r }).kind, null)
   })
 })

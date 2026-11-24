@@ -7,6 +7,7 @@ import { SECTION_ITEMS_MAX, clock, dayKey, oneLine } from '../core/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
 import * as memory from '../memory/index.mjs'
 import { debt, situation } from '../mind/index.mjs'
+import { knobsOf } from '../soul/index.mjs'
 import { renderScreen } from '../view/index.mjs'
 
 // 写：只有这六项。多一项"自由文本入口"就等于绕开结论的证据要求。
@@ -192,8 +193,11 @@ const LOOK_RULES = new Map([
     need: [],
     hint: '',
     // 处境屏 = mind 的快照 + view 的排版。这里只接线，一个数字都不算——
-    // 算在这层，屏上错了没人查得到。
-    run: (a, ctx) => renderScreen(situation(ctx.home, { now: ctx.now })),
+    // 算在这层，屏上错了没人查得到。旋钮照 §14.9 递下去（建议段由卡的 drive 定）。
+    run: (a, ctx) => renderScreen(situation(ctx.home, {
+      now: ctx.now,
+      knobs: knobsOf(ctx.home),
+    })),
   }],
   ['event find', {
     need: ['query'],

@@ -2,8 +2,8 @@
 // 这一层只把数据摆成渲染层要的形状（design §4）：日程的 due → {when, left, late} 只在这里
 // 映射一次，view 那头一个 Date 都不碰；预算也只在这里砍，砍掉的都留着为什么。
 import {
-  AFFECT_ACTIVE_E, AFFECT_ACTIVE_V, INJECT_BUDGET, SECTION_ITEMS_MAX, SUGGEST_MAX, WEAKEST_MAX,
-  clock, config, dayKey, now, rel,
+  AFFECT_ACTIVE_E, AFFECT_ACTIVE_V, AFFECT_DRIVE_V, INJECT_BUDGET, SECTION_ITEMS_MAX, SUGGEST_MAX,
+  WEAKEST_MAX, clock, config, dayKey, now, rel,
 } from '../core/index.mjs'
 import { snapshot as affectOf } from '../affect/index.mjs'
 import { notes, plans } from '../intent/index.mjs'
@@ -108,24 +108,27 @@ export function situation(homeDir, options = {}) {
   const noteLines = fill('便条', noteRows, SECTION_ITEMS_MAX)
   const weakLines = fill('最弱的三条', weakRows, WEAKEST_MAX)
 
-  // 插件建议（design §8 的聚合模式 + §14.5 的第二个口子）：零件答的话最多上屏一条，
-  // 而且只有 v 与 e 都够高时才给这个机会。情绪不到就不提——但要记进 dropped，
-  // 免得"屏上没有建议"被读成"零件都没答话"。
+  // 插件建议（design §8 的聚合模式 + §14.5 的第二个口子）：零件答的话最多上屏一条。
+  // 出不出的门槛先由灵魂卡的 drive 旋钮说（§14.9，本轮只接 drive；warm / sharp 不参与比较）：
+  // drive ≤ −1 一律不主动（整段不出，记 reason:'drive'）；
+  // drive ≥ +1 只要 v ≥ AFFECT_DRIVE_V 就允许（这张卡本来就爱开口，不必满电）；
+  // drive = 0（没卡、或卡上写 0）沿用 §14.5 的 v ≥ 65 且 e ≥ 76。
   //
   // 情绪门槛是**整段**的门，不是每条一条的门：两个零件答话时逐条判会刷出两句一模一样的
-  // "丢"，读起来像 bug。所以不 eager 就整段记一条，把被挡下几条写在话里。
+  // "丢"，读起来像 bug。所以不 eager 就整段记一条，把被挡下几条写在话里——
+  // 免得"屏上没有建议"被读成"零件都没答话"。
   const partLines = linesOf(call.parts)
   const suggestLines = []
   if (partLines.length > 0) {
     const feel = call.affect ?? affectOf(home, { now: at })
-    const eager = feel.v >= AFFECT_ACTIVE_V && feel.e >= AFFECT_ACTIVE_E
+    const drive = driveOf(call.knobs)
+    const eager = openTo(drive, feel)
     if (!eager) {
       dropped.push({
         id: null,
         section: '建议',
-        reason: 'affect',
-        why: `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，` +
-          `不主动提建议（${partLines.length} 条零件答话都没上屏）`,
+        reason: drive <= -1 ? 'drive' : 'affect',
+        why: holdWhy(drive, feel) + `（${partLines.length} 条零件答话都没上屏）`,
       })
     }
     for (const row of eager ? partLines : []) {
@@ -225,4 +228,25 @@ function budgetOf(cfg) {
   if (Number.isFinite(inject.situation)) return inject.situation
   if (Number.isFinite(inject.total)) return inject.total
   return INJECT_BUDGET
+}
+
+// 卡上的 drive（§14.9）：只收 −2..+2 的整数，别的（缺席、越界、非整数）都当 0（中性）。
+// 这一层不认识灵魂卡，只认识这个数——读卡是 caller 的事，读错了别在这里兜。
+function driveOf(knobs) {
+  const one = knobs && typeof knobs === 'object' ? knobs.drive : null
+  return Number.isInteger(one) ? one : 0
+}
+
+// 主动性门槛：drive 只能收紧或放松"要不要主动提一句"，改不了情绪判定本身。
+function openTo(drive, feel) {
+  if (drive <= -1) return false
+  if (drive >= 1) return feel.v >= AFFECT_DRIVE_V
+  return feel.v >= AFFECT_ACTIVE_V && feel.e >= AFFECT_ACTIVE_E
+}
+
+// 没上屏的理由要说清是哪一个门拦的：drive 拦的别写成"情绪不到"（那是另一个门）。
+function holdWhy(drive, feel) {
+  if (drive <= -1) return `丢：这张卡的 drive=${drive}，一律不主动（§14.9）`
+  if (drive >= 1) return `丢：此刻 v=${feel.v}，不到 v≥${AFFECT_DRIVE_V}（drive=${drive} 只看愉悦）`
+  return `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，不主动提建议`
 }

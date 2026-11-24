@@ -103,6 +103,9 @@ export const AFFECT_BIAS_IMP = 0 // 记账权重修正：0=关（design §14.12�
 // 将来调其中一个时不该顺手把另一个也动了。
 export const AFFECT_ACTIVE_V = 65 // 分
 export const AFFECT_ACTIVE_E = 76 // 分
+// drive ≥ +1 的卡门槛降到这一条（§14.9：「drive >= +1 且 v >= 50 才允许主动提一句」）：
+// 爱开口的卡不必满电，只看当下心里舒不舒服；drive 0 仍走上面那对阈值。
+export const AFFECT_DRIVE_V = 50 // 分
 
 // §14.5 说的是"多带一条"：建议段最多一条。给成常数，是为了让"一条"这件事有名字，
 // 而不是散在屏渲染与处境计算两处的字面量 1。
@@ -113,6 +116,8 @@ export const AFFECT_BASE = Object.freeze({ v: 50, e: 60, t: 40, r: 0 })
 
 // 刺激权重表（design §14.7）。调用方只传 kind，不许传权重。
 // 每个 kind：{v, e, t, r} 的增量；负向 kind 由 AFFECT_NEG_WEIGHT 统一加权，不在这里预先乘。
+// free 是"表里画的是 ±1、没有既定方向"的那几格（只有 self.report），`affect stim --neg` 才翻得动；
+// 没有 free 的行照 decisions.md 的口径只翻"值为 0"的轴——所以 user.praise 永远变不成负向刺激。
 export const AFFECT_WEIGHTS = Object.freeze({
   'task.done': { v: 6, e: -4, t: 1, r: 0 },
   'task.rework': { v: -5, e: -4, t: 0, r: 0 },
@@ -123,7 +128,8 @@ export const AFFECT_WEIGHTS = Object.freeze({
   'promise.kept': { v: 10, e: 0, t: 5, r: 2 },
   'promise.overdue': { v: -10, e: -2, t: -8, r: -4 },
   'return.after-gap': { v: 5, e: 10, t: 0, r: 0 },
-  'self.report': { v: 1, e: 1, t: 0, r: 0 }, // ±1：agent 自报最容易表演，权重压到最小
+  // ±1：agent 自报最容易表演，权重压到最小。v/e 是 ±（做得好还是砸了由 --neg 定），t/r 恒 0。
+  'self.report': { v: 1, e: 1, t: 0, r: 0, free: ['v', 'e'] },
 })
 
 // —— 灵魂（design §13）——

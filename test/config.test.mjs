@@ -235,15 +235,35 @@ test('set 写时长时存人写的原文，load 之后才是毫秒', async (t) =
   assert.equal(config.flat(config.load({ env: {}, homeDir: dir }))['cue.minGap'], 2700000)
 })
 
-test('时长键接受 8h / 60d / 数字 ms 三种写法', (t) => {
+test('时长键接受 8h / 30d / 数字 ms 三种写法', (t) => {
   const dir = home(t)
-  for (const [key, text, ms] of [['moodHalf', '8h', 28800000], ['trustHalf', '60d', 5184000000],
-    ['energyHalf', '600000', 600000], ['moodHalf', '90m', 5400000]]) {
-    writeConfig(dir, { version: 1, affect: { [key]: text } })
-    assert.equal(config.load({ env: {}, homeDir: dir }).affect[key], ms, `${text} 应当读成 ${ms}`)
+  for (const [text, ms] of [['8h', 28800000], ['30d', 2592000000],
+    ['600000', 600000], ['90m', 5400000]]) {
+    writeConfig(dir, { version: 1, cue: { minGap: text } })
+    assert.equal(config.load({ env: {}, homeDir: dir }).cue.minGap, ms, `${text} 应当读成 ${ms}`)
   }
-  writeConfig(dir, { version: 1, affect: { moodHalf: 7200000 } })
-  assert.equal(config.load({ env: {}, homeDir: dir }).affect.moodHalf, 7200000, '文件里直接写数字 ms')
+  writeConfig(dir, { version: 1, cue: { minGap: 7200000 } })
+  assert.equal(config.load({ env: {}, homeDir: dir }).cue.minGap, 7200000, '文件里直接写数字 ms')
+})
+
+test('情绪半衰期这类常数不开放成配置键：写了要退 2', async (t) => {
+  const dir = home(t)
+  for (const key of ['moodHalf', 'energyHalf', 'trustHalf', 'respectHalf', 'biasImp']) {
+    writeConfig(dir, { version: 1, affect: { [key]: '8h' } })
+    assert.throws(() => config.load({ env: {}, homeDir: dir }), (err) => {
+      assert.equal(err.code, 2, `${key} 不该是配置键`)
+      assert.ok(err.message.includes(`affect.${key}`), '要说清是哪一条不对')
+      assert.ok(err.message.includes('未知的配置键'), '要说清是"根本没有这个键"，不是"值不合法"')
+      return true
+    })
+  }
+  // 写配置这条路会顺手给一次位置提示（load 只看白名单，不给"是不是 xxx"）：
+  // 拼错一个字母时指到最近的键名，差值太大就不猜。
+  await assert.rejects(() => config.setKey(dir, 'affect.visibl', false), (err) => {
+    assert.equal(err.code, 2)
+    assert.ok(err.message.includes('affect.visible'), '拼错的键要给就近的键名')
+    return true
+  })
 })
 
 test('原子写不留 .tmp，落盘内容能被 load 原样读回', async (t) => {

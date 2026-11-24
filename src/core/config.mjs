@@ -7,8 +7,7 @@ import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import {
-  AFFECT_BIAS_IMP, AFFECT_ENERGY_HALF, AFFECT_MOOD_HALF, AFFECT_RESPECT_HALF,
-  AFFECT_TRUST_HALF, CUE_MIN_GAP, DEBT_STALE, DEBT_SUM_IMP, DEBT_UNREFLECTED,
+  CUE_MIN_GAP, DEBT_STALE, DEBT_SUM_IMP, DEBT_UNREFLECTED,
   DEFAULT_WINDOW_DAYS, DIGEST_BUDGET, INJECT_BUDGET, MIN_KEEP_COST, MIN_KEEP_RATIO,
   PART_DEADLINE, PART_FAIL_LIMIT, PART_STDOUT_MAX, PART_TIMEOUT, PART_TIMEOUT_MAX,
   PARTS_INJECT_COST, QUIET, SOUL_INJECT_COST, SOUL_USER_COST,
@@ -78,12 +77,11 @@ export const SCHEMA = {
   'cue.respectQuiet': { type: 'bool', default: true },
 
   'affect.visible': { type: 'bool', default: true },
-  // §14.12 只说 0=关，没给范围；取 0..3 与卡旋钮同一量级，别让人一次把账记歪。
-  'affect.biasImp': { type: 'number', min: 0, max: 3, default: AFFECT_BIAS_IMP },
-  'affect.moodHalf': { type: 'span', min: MINUTE, max: 30 * DAY, default: AFFECT_MOOD_HALF },
-  'affect.energyHalf': { type: 'span', min: MINUTE, max: 30 * DAY, default: AFFECT_ENERGY_HALF },
-  'affect.trustHalf': { type: 'span', min: HOUR, max: 365 * DAY, default: AFFECT_TRUST_HALF },
-  'affect.respectHalf': { type: 'span', min: HOUR, max: 365 * DAY, default: AFFECT_RESPECT_HALF },
+  // 这里曾经还有 affect.biasImp 与 affect.moodHalf / energyHalf / trustHalf / respectHalf。
+  // 五个键可读可校验，但全仓没有一个读者：半衰期与 bias 在 §14.7 / §14.12 里是常数，
+  // 而 §15 明令"常数不可配"。留着就是假开关——改了配置的人以为调过了，实际什么都没发生。
+  // 所以删掉：改这五个键现在会退 2，并提示就近的键名（affect.visible）。
+  // 真要调衰减，那是改 design 与 core/const.mjs 的事，不是改配置的事。
 
   'soul.current': { type: 'string', max: 64, default: DEFAULT_SOUL },
   'soul.injectOrder': { type: 'list', of: 'slot', len: SOUL_SLOTS.length, default: [...SOUL_SLOTS] },

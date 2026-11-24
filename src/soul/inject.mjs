@@ -47,6 +47,7 @@ export function build(home, opts = {}) {
   const plan = planOf(card, markSetOf(card))
 
   const lines = []
+  const marks = []
   const slots = { identity: [], soul: [], dialogue: [], lore: [] }
   const tagged = new Set()
   const dropped = []
@@ -76,12 +77,17 @@ export function build(home, opts = {}) {
 
     slots[unit.slot] = slotLines
     lines.push(line)
+    marks.push(markOf(card, unit))
     tagged.add(unit.col)
     if (unit.inferred) inferred.push({ file: unit.file, section: unit.section })
   }
 
   return {
     lines,
+    // 与 lines 一一对应的显示标记（'' / '~' / '*'）：只给屏用，注入不带上（§13.1）。
+    // soul show 靠它把"~ N 处推断"落到实处——末行说有几处推断、上面却一个标记都没有，
+    // 是同一屏里的两句互相打脸。
+    marks,
     // cost 报的是"这一屏的预算"，不是"用了多少"：调用方拿两个数才知道还剩多少余地。
     cost: budget,
     used: cost(lines.join(SEP)),
@@ -89,6 +95,17 @@ export function build(home, opts = {}) {
     inferred,
     knobs: { ...card.knobs },
   }
+}
+
+// 这一行该带什么标记（§13.1）：推断的 ~，人补的 *，原文来的不加：
+// 逐段优先（provenance.sections），没写就按整栏（provenance[col]）。
+function markOf(card, unit) {
+  const prov = card.provenance && typeof card.provenance === 'object' ? card.provenance : {}
+  const sections = prov.sections && typeof prov.sections === 'object' ? prov.sections : {}
+  const one = sections[`${unit.col}.${unit.section}`] ?? prov[unit.col]
+  if (one === 'inferred') return '~'
+  if (one === 'manual') return '*'
+  return ''
 }
 
 // 单位清单：一个单位 = 一行 = 一段 / 一条往事 / 一组示范。顺序就是装填顺序。

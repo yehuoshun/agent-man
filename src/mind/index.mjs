@@ -21,7 +21,14 @@ export function brief(homeDir, options = {}) {
   const warnings = []
   const cfg = input.cfg ?? config.load({ homeDir: home, now: at, warn: (m) => warnings.push(m) })
   const debts = input.debts ?? debtState(home, { now: at, cfg })
-  const scene = situation(home, { now: at, budget: input.budget, cfg, debts, parts: input.parts })
+  const scene = situation(home, {
+    now: at,
+    budget: input.budget,
+    cfg,
+    debts,
+    parts: input.parts,
+    knobs: input.knobs,
+  })
   const verdict = judge(home, {
     now: at,
     cfg,
