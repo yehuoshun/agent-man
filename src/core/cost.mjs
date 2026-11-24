@@ -2,8 +2,7 @@
 // 混排时按字符数记会高估英文、低估中文，"注入那一屏 1000 cost"就成了假数（design §5）。
 import { COST_ASCII, COST_WIDE } from './const.mjs'
 
-// 宽度 1 的字符区间。用一张表一次判完，比逐段 if 好读；不做字素分段——
-// 预算不需要那么精确，组合符号多算半个也无伤大雅。
+// 宽度 1 的字符区间。用一张表一次判完，比逐段 if 好读。
 const WIDE_RANGES = [
   '\u1100-\u115F', // 谚文字母
   '\u2E80-\u303E', // CJK 部首与符号（含句号、书名号这类全角标点）
@@ -22,12 +21,16 @@ const WIDE_RANGES = [
 ]
 const WIDE = new RegExp(`[${WIDE_RANGES.join('')}]`, 'u')
 
-// 按码点累加：'🙂'.length 是 2，逐 UTF-16 单元算会把它记成两个半角，
-// 一个 emoji 的成本就凭空翻倍。for...of 按码点走，正好。
+// 计价单位是"字素簇"，不是码点：'👨‍👩‍👧' 是 5 个码点、1 个字，'❤️' 是 2 个码点、1 个字。
+// 按码点收，一家三口要收 3.56 个字，预算表整段失真；cut 还会切在 ZWJ 中间，
+// 屏幕上留下半个家庭。Intl.Segmenter 是 node 自带的 ICU（Node ≥16），仍是零依赖。
+const SEGMENTER = new Intl.Segmenter('zh', { granularity: 'grapheme' })
+
+// 按簇累加：'🙂'.length 是 2，逐 UTF-16 单元算会把它记成两个半角。
 export function cost(s) {
   const text = toText(s)
   let used = 0
-  for (const ch of text) used += weightOf(ch)
+  for (const one of SEGMENTER.segment(text)) used += weightOf(one.segment)
   return used
 }
 
@@ -44,14 +47,15 @@ export function cut(s, budget) {
 
   // 一遍扫到"刚好装得下"的最长前缀。这里不用 cost() 复核：used 与 cost() 是同一次累加，
   // 结果逐位相同，而前缀切法能保证任意更短的前缀只会更小。
+  // 走字素簇而不是码点：刀必须落在簇边界上，否则切得出半个 emoji。
   let used = 0
   let end = 0
   let idx = 0
-  for (const ch of text) {
-    const w = weightOf(ch)
+  for (const one of SEGMENTER.segment(text)) {
+    const w = weightOf(one.segment)
     if (used + w > cap) break
     used += w
-    idx += ch.length
+    idx += one.segment.length
     end = idx
   }
 
@@ -97,8 +101,11 @@ function lastEnd(text, re) {
   return end
 }
 
-function weightOf(ch) {
-  return WIDE.test(ch) ? COST_WIDE : COST_ASCII
+// 一个簇算一个字：簇里任一码点属 WIDE 就按 1 记——ZWJ、变体选择符、肤色修饰符
+// 都是"同一个字的零件"，不该各自收费。
+function weightOf(cluster) {
+  for (const ch of cluster) if (WIDE.test(ch)) return COST_WIDE
+  return COST_ASCII
 }
 
 function toText(s) {

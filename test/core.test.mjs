@@ -67,6 +67,31 @@ test('非有限预算不是"0 预算"：Infinity 就是不截断，NaN 与负数
   assert.deepEqual(cut(text, 0), cut(text, NaN))
 })
 
+test('emoji 按字素簇算一个字：一家三口不是 3.56 个字，爱心带变体符也不是 1.28', () => {
+  // '👨‍👩‍👧' 是 5 个码点（3 个 emoji + 2 个 ZWJ）、1 个字；
+  // '❤️' 是 2 个码点（心 + 变体选择符）、1 个字。按码点收费，预算表整段失真。
+  assert.equal(Array.from('👨‍👩‍👧').length, 5)
+  assert.equal(cost('👨‍👩‍👧'), 1)
+  assert.equal(Array.from('❤️').length, 2)
+  assert.equal(cost('❤️'), 1)
+  // 纯 ASCII 与中文不吃这一套：一个簇就是一个字，数字照旧。
+  assert.ok(near(cost('abc'), 0.84))
+  assert.equal(cost('中文'), 2)
+  assert.equal(cost('中文🙂'), 3)
+})
+
+test('截断只在字素簇边界落刀：load 不下就整簇不切，绝不切出半个 emoji', () => {
+  const two = '👨‍👩‍👧👨‍👩‍👧'
+  assert.equal(cost(two), 2)
+  const r = cut(two, 1.5)
+  assert.equal(r.cut, true)
+  assert.equal(r.text, '👨‍👩‍👧', '装得下 1 个就切 1 个；切在 ZWJ 中间会留下半个家庭')
+  assert.ok(cost(r.text) <= 1.5)
+  // 一个都装不下就切空，而不是切出半个簇。
+  assert.equal(cut(two, 0.5).text, '')
+  assert.equal(cut('❤️❤️', 1.5).text, '❤️')
+})
+
 test('换行折成空格；超长截断并补省略号，结果不超 max', () => {
   assert.equal(oneLine('她关了窗\n然后去睡了', 20), '她关了窗 然后去睡了')
   assert.equal(oneLine('a\r\nb', 10), 'a b')
