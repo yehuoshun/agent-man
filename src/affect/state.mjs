@@ -22,8 +22,12 @@ export function snapshot(homeDir, { now: nowTs = now(), prev } = {}) {
   const values = state.values
   // 滞回要拿"上一格"比：优先用调用方给的 prev（同一次会话里上一次的标签），
   // 否则用 meta 里存的上一个标签——重启进程也不该在边界上来回跳。
-  const before = typeof prev === 'string' ? prev : stored.mood
+  // 但那只在"上一次快照确实更早"时成立：`now` 早于首条刺激（回放更早的时间）时，
+  // meta 里那个标签来自未来，借来就会报出那一刻还没发生的判定（§14.8：时间只解释一次）。
+  const before = typeof prev === 'string' ? prev : fromFuture(stored, at) ? null : stored.mood
   const mood = moodOf(values.v, values.e, before)
+  const feel = persistent({ t: values.t, r: values.r })
+  const live = transient(got.items.filter((one) => one.op === 'stim'), at)
   return {
     at,
     v: values.v,
@@ -32,15 +36,24 @@ export function snapshot(homeDir, { now: nowTs = now(), prev } = {}) {
     r: values.r,
     mood,
     band: respectBand(values.r),
-    persistent: persistent({ t: values.t, r: values.r }),
-    transient: transient(got.items.filter((one) => one.op === 'stim'), at),
+    persistent: feel,
+    transient: live,
     peaks: peaksOf(stored.peaks, values, at),
     by: state.manual.length > 0 ? 'manual' : 'auto',
     until: state.until,
-    why: explain({ state, values, mood, stored, ignored: state.ignored, skipped: got.skipped }),
+    why: explain({
+      state, values, mood, stored, feel,
+      ignored: state.ignored, skipped: got.skipped,
+    }),
+    overridden: state.overridden,
     ignored: state.ignored,
     skipped: got.skipped,
   }
+}
+
+// meta 里的快照时刻比 now 还晚 = 这一次在回放更早的时间：标签不许借未来那次的判定。
+function fromFuture(stored, at) {
+  return Number.isFinite(stored.at) && stored.at > at
 }
 
 // design §7 的表里叫 read(home, now)；简报叫 snapshot。同一个函数，两个名字。
@@ -91,7 +104,7 @@ export async function stim(homeDir, input = {}) {
   const saved = await syncPeaks(homeDir, snap)
   return {
     item: done.item,
-    weight: weightOf(done.item.kind),
+    weight: weightOf(done.item.kind, { neg: done.item.neg === true }),
     counts: done.counts,
     ignored: done.ignored,
     snapshot: snap,
@@ -109,6 +122,7 @@ function replay(ops, nowTs) {
   const quota = new Map()
   let started = false
   let ignored = 0
+  let overridden = 0
 
   // 推进到 to，顺带处理"override 到期"：到期那刻以 override 值为新起点继续衰减（不弹回自动值）。
   const advance = (to) => {
@@ -146,6 +160,9 @@ function replay(ops, nowTs) {
       over[op.axis] = { value: clampAxis(op.axis, op.value), until: op.until, why: op.why, at: op.at }
       continue
     }
+    // 记在手动覆盖期间的那条刺激要标出来（§14.14.3 / §14.13）：那段时间各轴的数由覆盖决定，
+    // 这条刺激一条值都没改。回放时数出来——日志行本身永不改写，标记只活在读侧。
+    if (AXIS_NAMES.some((a) => over[a] !== null)) overridden += 1
     // 同类每小时配额：超额照记（日志里在），但不算进数值，也不更新"主因"。
     const key = `${Math.floor(op.at / HOUR)}|${op.kind}`
     const used = quota.get(key) ?? 0
@@ -154,7 +171,7 @@ function replay(ops, nowTs) {
       continue
     }
     quota.set(key, used + 1)
-    const w = weightOf(op.kind)
+    const w = weightOf(op.kind, { neg: op.neg === true })
     for (const a of AXIS_NAMES) {
       const delta = w[a]
       if (delta === 0) continue
@@ -177,7 +194,7 @@ function replay(ops, nowTs) {
   // 几根轴同时被手动改过时，"到期"取最早的那个：先说最先失效的那条。
   const deadlines = manual.map((a) => over[a].until)
   const until = deadlines.length === 0 || deadlines.includes(null) ? null : Math.min(...deadlines)
-  return { values, manual, until, ignored, best, over }
+  return { values, manual, until, ignored, overridden, best, over }
 }
 
 // 偏移本身也得待在量程里：不然 override 到期后 agg 会把值顶出 [0,100] 再被 clamp，白丢信息。
@@ -187,8 +204,13 @@ function clampOffset(axis, offset) {
 }
 
 // 归因（design §14.11 第三条：必须可解释）：每条 why 都指向真实的 kind、真实的值。
-function explain({ state, values, mood, stored, ignored, skipped }) {
+function explain({ state, values, mood, stored, feel, ignored, skipped }) {
   const out = []
+  // 持久情绪先说（§14.4 末 / §14.8）：厌恶、厌弃、轻蔑、失望是"关系"的判定，
+  // 比某一根轴的数更要紧。算出来却不上屏就是静默记仇——这是本节明令禁止的。
+  if (feel && typeof feel.kind === 'string' && feel.kind !== '') {
+    out.push(`持久情绪「${feel.kind}」：${feel.why}`)
+  }
   for (const a of state.manual) {
     const o = state.over[a]
     const tail = o.until === null ? '不会自动恢复' : '到期后从这个值继续衰减'
@@ -207,16 +229,21 @@ function explain({ state, values, mood, stored, ignored, skipped }) {
     if (line) out.push(line)
   }
   if (!quiet && out.length === 0) out.push(`没变：四轴都贴着基线（${mood}）`)
+  // 峰值（§14.14.2）：写成「信任 43（最高 71）」——现在的值与走过的最高点同句，
+  // 别人才看得出"掉下来了但曾经到过"。没涨过就不写括号（见下）。
   const high = []
-  if (stored.peaks.trust > AXES.t.base && stored.peaks.trust > values.t) {
-    high.push(`${AXIS_TEXT.t}最高到过 ${fmt(stored.peaks.trust)}`)
-  }
-  if (stored.peaks.respect > AXES.r.base && stored.peaks.respect > values.r) {
-    high.push(`${AXIS_TEXT.r}最高到过 ${fmt(stored.peaks.respect)}`)
+  for (const axis of ['t', 'r']) {
+    const peak = axis === 't' ? stored.peaks.trust : stored.peaks.respect
+    // 只有真涨过才配括号：从没涨过时峰值就是基线，把"最高 40"印出来是编出来的荣誉。
+    if (!Number.isFinite(peak) || peak <= AXES[axis].base || peak <= values[axis]) continue
+    high.push(`${AXIS_TEXT[axis]} ${fmt(values[axis])}（最高 ${fmt(peak)}）`)
   }
   if (high.length > 0) out.push(`${high.join('、')}：走过的路不随衰减抹掉`)
   if (stored.mood && stored.mood !== mood) {
     out.push(`标签从「${stored.mood}」换到「${mood}」（越界 ${AFFECT_HYST} 分才换）`)
+  }
+  if (state.overridden > 0) {
+    out.push(`另有 ${state.overridden} 条刺激记在手动覆盖期间（标 overridden）：那段时间的值以覆盖为准`)
   }
   if (ignored > 0) out.push(`另有 ${ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）`)
   if (skipped > 0) out.push(`跳过 ${skipped} 行读不懂的日志`)
@@ -283,12 +310,13 @@ function pickPeaks(raw) {
 // 状态文件里 affect 那一段（水位与冷却记录跟别的模块共用一个文件，只改自己这一格）。
 function loadMeta(homeDir, at) {
   const doc = readJson(metaFile(homeDir))
-  if (doc === null) return { doc: null, bad: false, peaks: emptyPeaks(), mood: null }
-  if (doc.__bad === true) return { doc: null, bad: true, peaks: emptyPeaks(), mood: null }
+  if (doc === null) return { doc: null, bad: false, at: null, peaks: emptyPeaks(), mood: null }
+  if (doc.__bad === true) return { doc: null, bad: true, at: null, peaks: emptyPeaks(), mood: null }
   const affect = doc && typeof doc.affect === 'object' && doc.affect !== null ? doc.affect : {}
   return {
     doc,
     bad: false,
+    at: Number.isFinite(affect.at) ? affect.at : null,
     peaks: pickPeaks(affect.peaks),
     mood: typeof affect.mood === 'string' ? affect.mood : null,
   }

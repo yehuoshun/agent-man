@@ -85,24 +85,41 @@ export function respectBand(r) {
 // 持久情绪（design §14.4）：由尊重轴推出，随 r 恢复而退。
 // 厌恶/轻蔑两行的条件与用词照 design 逐字；厌弃 是"厌恶"的更重一档（r 掉到 −70 以下），
 // 失望 是 design §14.4 第三行（信任低、尊重仍正常）。每一条都带 why——透明，不许静默记仇。
+// 分界与 respectBand() 同源：design §14.4 的"厌恶"档就是 r ≤ −60，两处不许各写一套
+// （写错过一次：这里曾是 −40，于是 respectBand(−45) 说"不以为然"、这里说"厌恶"，同一份状态两个名字）。
 export function persistent({ t, r } = {}) {
   const trust = Number.isFinite(t) ? t : AFFECT_BASE.t
   const respect = Number.isFinite(r) ? r : AFFECT_BASE.r
   const show = (x) => String(Math.round(x * 10) / 10)
-  if (respect <= -40) {
+  if (respect <= -60) {
     if (trust < 50) {
       if (respect <= -70) {
         return { kind: '厌弃', why: `尊重 ${show(respect)}（≤ −70）且信任 ${show(trust)}（< 50）` }
       }
-      return { kind: '厌恶', why: `尊重 ${show(respect)}（≤ −40）且信任 ${show(trust)}（< 50）` }
+      return { kind: '厌恶', why: `尊重 ${show(respect)}（≤ −60）且信任 ${show(trust)}（< 50）` }
     }
-    const why = `尊重 ${show(respect)}（≤ −40）但信任 ${show(trust)}（≥ 50）：认可能力，不认可人品`
+    const why = `尊重 ${show(respect)}（≤ −60）但信任 ${show(trust)}（≥ 50）：认可能力，不认可人品`
     return { kind: '轻蔑', why }
   }
   if (trust <= 30) {
     return { kind: '失望', why: `信任 ${show(trust)}（≤ 30），尊重仍正常：随兑现恢复` }
   }
   return { kind: null, why: '' }
+}
+
+// 一行原因（design §14.4 末 / §14.8 / §14.9）：持久情绪优先，其次最近那条刺激。
+// "厌恶出现时显示行必带原因"与"注入块里的情绪行永远附 why"是同一句话的两个门，
+// 所以这句措辞收在一处——CLI 与宿主各自拼一份，迟早会有一边漏掉原因。
+// 两级都给不出原因就返回空串：那说明此刻真没发生什么，别现编一个理由。
+export function reasonOf(feel, live) {
+  const kind = feel && typeof feel.kind === 'string' ? feel.kind.trim() : ''
+  const whyOfFeel = feel && typeof feel.why === 'string' ? feel.why.trim() : ''
+  if (kind !== '') return whyOfFeel === '' ? `${kind}` : `${kind}：${whyOfFeel}`
+  const last = Array.isArray(live) && live.length > 0 ? live[0] : null
+  const one = last && typeof last.kind === 'string' ? last.kind.trim() : ''
+  if (one === '') return ''
+  const why = typeof last.why === 'string' ? last.why.trim() : ''
+  return why === '' ? `${one}` : `${one}：${why}`
 }
 
 // 瞬时情绪（design §14.3）：只活 45 分钟，最多 3 条，不进网格、不改长期轴。

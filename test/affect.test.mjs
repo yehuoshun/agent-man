@@ -141,14 +141,20 @@ test('死区：两轴都贴着基线就当作没变，标签不刷新', () => {
 
 test('五段与持久情绪都用表上的词，而且每一条都带原因', () => {
   assert.deepEqual([90, 40, 0, -30, -80].map(respectBand), ['敬重', '认可', '中性', '不以为然', '厌恶'])
-  const dislike = persistent({ t: 40, r: -45 })
+  // 分界只有一处：§14.4 的"厌恶"档是 r ≤ −60，respectBand 与 persistent 必须说同一句话。
+  // （这里原来按错值写死成 −45 = 厌恶，与 respectBand(−45) = 不以为然 自相矛盾。）
+  assert.equal(respectBand(-45), '不以为然')
+  assert.equal(persistent({ t: 40, r: -45 }).kind, null)
+  assert.equal(respectBand(-60), '厌恶')
+  const dislike = persistent({ t: 40, r: -65 })
   assert.equal(dislike.kind, '厌恶')
-  assert.ok(dislike.why.includes('-45'))
-  assert.equal(persistent({ t: 60, r: -45 }).kind, '轻蔑')
+  assert.ok(dislike.why.includes('-65'))
+  assert.ok(dislike.why.includes('−60'))
+  assert.equal(persistent({ t: 60, r: -65 }).kind, '轻蔑')
   assert.equal(persistent({ t: 20, r: 0 }).kind, '失望')
   assert.equal(persistent({ t: 70, r: 0 }).kind, null)
   // 厌恶那一行必须说得出原因（design §14.4：不许静默记仇），空 why 不合格。
-  for (const one of [dislike, persistent({ t: 60, r: -45 }), persistent({ t: 20, r: 0 })]) {
+  for (const one of [dislike, persistent({ t: 60, r: -65 }), persistent({ t: 20, r: 0 })]) {
     assert.ok(typeof one.why === 'string' && one.why.length > 0)
   }
 })
