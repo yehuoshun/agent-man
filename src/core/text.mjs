@@ -95,3 +95,10 @@ function toSet(x) {
   if (!Array.isArray(x)) return new Set()
   return new Set(x.filter((t) => typeof t === 'string' && t !== ''))
 }
+
+// BOM 是文件头的编码标记，不是内容：记事本另存、PowerShell 5.1 的重定向都会写它。
+// 带着 U+FEFF 去 JSON.parse 一定失败，于是整份配置/记忆被当成"文件在、内容坏了"——
+// 修的是解析口径，不是让人手动去删 BOM。读文件的三个地方（配置、JSON、JSONL）走同一个函数。
+export function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}

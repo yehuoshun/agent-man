@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { stripBom } from '../core/index.mjs'
+
 // 写 JSONL 只有这一条路（AGENTS 五）：open → write → fsync → close，然后读回自己那一行。
 // 少了 fsync，进程/断电一崩，那一行就只在页缓存里——"写过了"变成一句自我安慰。
 export function appendJsonl(file, obj) {
@@ -87,10 +89,7 @@ export function assertLanded(file, obj, line = JSON.stringify(obj)) {
 
 // BOM 是文件头的编码标记，不是这一行的内容。记事本另存过的文件、被 PowerShell 5.1 重定向写过的
 // 文件都带它；带着 U+FEFF 去 JSON.parse 一定失败，于是整份记忆的第一行被当成坏行丢掉——
-// 修的是解析口径，不是让人手动去删 BOM。
-function stripBom(text) {
-  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
-}
+// 修的是解析口径，不是让人手动去删 BOM。判定口径收在 core/text.mjs，配置与 JSON 读同一份。
 
 // 坏行跳过并计数，不抛：一行坏掉不该让整份记忆消失，但也不能装作没发生——
 // bad 由调用方用 "! " 报出来（AGENTS 五）。
@@ -194,7 +193,7 @@ export function readJson(file) {
     throw e
   }
   try {
-    return JSON.parse(raw)
+    return JSON.parse(stripBom(raw))
   } catch {
     return { __bad: true }
   }

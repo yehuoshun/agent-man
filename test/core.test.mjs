@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { clock, cost, cut, dayKey, jaccard, oneLine, parseWhen, rel, tokens } from '../src/core/index.mjs'
+import {
+  clock, cost, cut, dayKey, jaccard, oneLine, parseWhen, rel, stripBom, tokens,
+} from '../src/core/index.mjs'
 
 // 成本是浮点累加（0.28 不是二进制精确数），比较一律给容差；
 // 断言"不超预算"时必须真跑 cost()，不能只信 cut() 返回的布尔（AGENTS 六）。
@@ -215,4 +217,13 @@ test('两边都空时相似度为 0：给 1 会让空记录排到最前', () => 
   assert.equal(jaccard([], []), 0)
   assert.equal(jaccard('关了窗', ''), 0)
   assert.ok(near(jaccard(['关了'], ['关了', '窗户']), 1 / 2))
+})
+
+test('stripBom 只剥文件头那一个 U+FEFF：正文里的零宽字符不是 BOM', () => {
+  // BOM 是编码标记，只在文件第一个字符的位置才有意义；中间出现的 U+FEFF 是内容（零宽不换行空格），
+  // 一律剥掉会悄悄改动正文——那是篡改，不是容错。
+  assert.equal(stripBom('\uFEFF{"a":1}'), '{"a":1}')
+  assert.equal(stripBom('a\uFEFFb'), 'a\uFEFFb')
+  assert.equal(stripBom(''), '')
+  assert.equal(stripBom('{"a":1}'), '{"a":1}')
 })
