@@ -174,7 +174,8 @@ function checkIds(dir) {
   if (wrong.length === 0) return { ok: true, detail: `${names.length} 个已发号` }
   const shown = wrong.slice(0, 5)
   const rest = wrong.length - shown.length
-  return { ok: false, detail: `state/ids/ 有 ${wrong.length} 处不对：${shown.join('；')}${rest > 0 ? `；另有 ${rest} 处` : ''}` }
+  const more = rest > 0 ? `；另有 ${rest} 处` : ''
+  return { ok: false, detail: `state/ids/ 有 ${wrong.length} 处不对：${shown.join('；')}${more}` }
 }
 
 // 残留 .tmp：writeAtomic 在改名失败时留着整份新内容等下一次重试覆盖，那是设计（295 行），

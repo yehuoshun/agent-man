@@ -328,7 +328,8 @@ test('config.json 有一个键不对：配置这项报红，并把键名带进�
     // 键名要出现在正文里：只说"配置有 1 处不对"等于让人自己去猜。
     assert.match(one.detail, /clock\.dayStart/)
     // 改好之后这一项就得绿回来，否则它只是个恒红的摆设。
-    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ version: 1, clock: { dayStart: '04:00' } }))
+    const good = { version: 1, clock: { dayStart: '04:00' } }
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(good))
     assert.equal(check(doctor({ home }), '配置').ok, true)
   })
 })
