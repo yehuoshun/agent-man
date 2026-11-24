@@ -244,9 +244,14 @@ function openTo(drive, feel) {
   return feel.v >= AFFECT_ACTIVE_V && feel.e >= AFFECT_ACTIVE_E
 }
 
+// 情绪轴是算出来的浮点数，屏上只留一位小数（`61.9999599518972` 这种尾巴没人看得懂）
+function show(x) {
+  return String(Math.round(Number(x) * 10) / 10)
+}
+
 // 没上屏的理由要说清是哪一个门拦的：drive 拦的别写成"情绪不到"（那是另一个门）。
 function holdWhy(drive, feel) {
   if (drive <= -1) return `丢：这张卡的 drive=${drive}，一律不主动（§14.9）`
-  if (drive >= 1) return `丢：此刻 v=${feel.v}，不到 v≥${AFFECT_DRIVE_V}（drive=${drive} 只看愉悦）`
-  return `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，不主动提建议`
+  if (drive >= 1) return `丢：此刻 v=${show(feel.v)}，不到 v≥${AFFECT_DRIVE_V}（drive=${drive} 只看愉悦）`
+  return `丢：此刻 v=${show(feel.v)} e=${show(feel.e)}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，不主动提建议`
 }

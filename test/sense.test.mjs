@@ -264,7 +264,10 @@ test('连续失败到上限就摘掉：下一屏连问都不问，但账上要�
   const seen = []
   const r = await sense({}, {
     parts: [part('bad')],
-    deps: { describe: async (p) => { seen.push(p.name); return { ok: false, why: 'x' } }, capture: async () => ({}) },
+    deps: {
+      describe: async (p) => { seen.push(p.name); return { ok: false, why: 'x' } },
+      capture: async () => ({}),
+    },
     ledger: book,
     now: 1000,
   })
@@ -294,4 +297,16 @@ test('冷却到某个时刻的账照样认：until 没到就先不问', async ()
   assert.equal(r.dropped[0].reason, 'cooldown')
   const again = await sense({}, { parts: [part('slow')], deps: deps(), ledger: book, now: 6000 })
   assert.deepEqual(again.lines.map((one) => one.name), ['slow'], '过了 until 就该再问一次')
+})
+
+test('used 只报一位小数：账本是给人看的，不是给浮点误差看的', async () => {
+  const parts = [{ name: '天气', file: 'x', timeout_ms: 100 }]
+  const said = { status: 'ok', code: 0, out: '要下雨', err: '', truncated: false }
+  const deps = {
+    describe: async () => ({ ok: true, name: '天气', timeout_ms: 100 }),
+    capture: async () => said,
+  }
+  const got = await sense({}, { budget: 550, parts, deps })
+  assert.equal(got.used, Math.round(got.used * 10) / 10)
+  assert.equal(/\d\.\d{2,}/.test(String(got.used)), false, `used=${got.used}`)
 })
