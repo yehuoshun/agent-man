@@ -81,15 +81,19 @@ export function scan(env = process.env) {
 
 // 契约要求 --describe 五个字段齐全（§8）。少一个就说明这个零件还没按契约实现，
 // 拿它去拼处境只会拼出 undefined——现在就说"不可用"比以后在屏上露馅便宜。
-function missingField(data) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return '一个对象'
-  if (typeof data.name !== 'string' || !data.name) return 'name'
-  if (typeof data.desc !== 'string') return 'desc'
-  if (typeof data.section !== 'string') return 'section'
+// 返回的是一整句"缺什么、该长什么样"，调用方直接接在名字后面；之前非对象也套"缺 一个对象"
+// 的模板，读起来像是少了一个叫"一个对象"的字段。
+function whyMissing(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return '回的 --describe 不是一个对象'
+  if (typeof data.name !== 'string' || !data.name) return '缺 name（要非空字符串）'
+  if (typeof data.desc !== 'string') return '缺 desc（要字符串）'
+  if (typeof data.section !== 'string') return '缺 section（要字符串）'
   if (typeof data.timeout_ms !== 'number' || !Number.isFinite(data.timeout_ms) || data.timeout_ms <= 0) {
-    return 'timeout_ms'
+    return '缺 timeout_ms（要大于 0 的数字）'
   }
-  if (!('side_effects' in data)) return 'side_effects'
+  // side_effects 必须是布尔：`"no"`、`[]`、`0` 都能通过"键在不在"的检查，而这一栏是要拿去做
+  // 判断的（有副作用的零件不该被无脑问），含糊的值比缺更危险。
+  if (typeof data.side_effects !== 'boolean') return 'side_effects 要写 true 或 false'
   return null
 }
 
@@ -104,16 +108,21 @@ function whyNot(r, name) {
 }
 
 // 问零件自己是谁。不可用一律 {ok:false, why}，不抛——一个零件坏了不该把整屏拖死。
-// timeout_ms 夹到 30 秒上限（§8）：零件自己报的数不可信，夹在这里比让每个调用方各夹一遍
-// 可靠；原值也留在 declared_timeout_ms 里，免得夹了不说。
-export async function describe(part, { timeout = PART_TIMEOUT, env = process.env } = {}) {
+// timeout_ms 夹到上限（§8，默认 30 秒、可由 `parts.timeoutMax` 收窄）：零件自己报的数不可信，
+// 夹在这里比让每个调用方各夹一遍可靠；原值也留在 declared_timeout_ms 里，免得夹了不说。
+export async function describe(part, opts = {}) {
+  const o = opts ?? {}
+  const env = o.env ?? process.env
+  const timeout = pickMs(o.timeout, PART_TIMEOUT)
+  const max = pickMs(o.timeoutMax, PART_TIMEOUT_MAX)
+  const stdoutMax = pickMs(o.stdoutMax, PART_STDOUT_MAX)
   const name = part?.name ?? path.basename(String(part?.file ?? ''))
-  const r = await capture(part, { args: ['--describe'], timeout, env })
+  const r = await capture(part, { args: ['--describe'], timeout, env, timeoutMax: max, limit: stdoutMax })
   if (r.status !== 'ok') return { ok: false, why: whyNot(r, name) }
   // 截断之后剩下的 JSON 一定是坏的。说"不是 JSON"是在怪零件写错了格式，实际是我们的
   // 8KB 预算把它切掉了——把它做的事说错，就没人想到去看那句 truncated。
   if (r.truncated) {
-    return { ok: false, why: `${name} 的 --describe 超过 ${PART_STDOUT_MAX} 字节被截断` }
+    return { ok: false, why: `${name} 的 --describe 超过 ${stdoutMax} 字节被截断` }
   }
   let data
   try {
@@ -121,15 +130,21 @@ export async function describe(part, { timeout = PART_TIMEOUT, env = process.env
   } catch {
     return { ok: false, why: `${name} 的 --describe 输出不是 JSON` }
   }
-  const bad = missingField(data)
-  if (bad) return { ok: false, why: `${name} 的 --describe 缺 ${bad}` }
+  const bad = whyMissing(data)
+  if (bad) return { ok: false, why: `${name} 的 --describe ${bad}` }
   return {
     ok: true,
     name: data.name,
     desc: data.desc,
     section: data.section,
-    timeout_ms: Math.min(data.timeout_ms, PART_TIMEOUT_MAX),
+    timeout_ms: Math.min(data.timeout_ms, max),
     declared_timeout_ms: data.timeout_ms,
     side_effects: data.side_effects,
   }
 }
+
+// 毫秒/字节这类上限：非有限数或 ≤0 就用默认，别让 0 变成"立刻超时"或"一个字节都不收"。
+function pickMs(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+

@@ -45,7 +45,13 @@ const WRITE_SCHEMA = Object.freeze({
     // 多写的关键字它不认（真值仍由下面的 checkImp 卡）。
     imp: { type: 'integer', description: '重要度 0–3 的整数' },
     cues: { type: 'array', items: { type: 'string' }, description: 'event add 的线索词' },
-    src: { type: 'string', description: 'event add 的来源：user / tool:<名字> / self' },
+    // 来源不让调用方填：工具层写死成 tool:<工具名>，见下面 event add 的 run（§4 src.origin）。
+    src: { type: 'string', description: 'event add 的来源，由工具层写死成 tool:<工具名>，传别的会被拒' },
+    supersedes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'rule add 要替代的旧规矩 id（数组）',
+    },
     ttl: { type: 'string', description: 'note add 的有效期：7d / 12h' },
     at: { type: 'number', description: '记录时刻（epoch ms）；不给就是当下' },
   }),
@@ -84,8 +90,14 @@ const WRITE_RULES = new Map([
     hint: 'event add 要 text：一句"发生了什么"，不写评价',
     // 情景是唯一一条不经结论的写入路径，插件也只能走它（§8）：这里直接用记忆门面。
     run: async (a, ctx) => {
+      // 来源写死成 tool:<工具名>：工具替人说话，等于伪造证据链的第一环（§4 src.origin）。
+      const src = `tool:${ctx.tool}`
+      if (a.src !== undefined && String(a.src).trim() !== src) {
+        const got = oneLine(a.src).trim()
+        throw new Error(`src 由工具层写死成 ${src}：工具不能替人说话（拿到的是「${got}」）`)
+      }
       const out = await memory.eventAdd(
-        { ...pick(a, ['text', 'imp', 'cues', 'src']), at: atOf(a, ctx) },
+        { ...pick(a, ['text', 'imp', 'cues']), src, at: atOf(a, ctx) },
         { home: ctx.home, now: ctx.now, dayStart: ctx.dayStart },
       )
       // 欠账是"该巩固了"的唯一计数器（§14.9）：记了情景不记账，门槛就永远到不了。
@@ -244,10 +256,18 @@ export async function callTool(name, args, ctx = {}) {
     const bad = rule.check(input)
     if (bad) return fail(bad)
   }
-  const badImp = checkImp(input.imp)
-  if (badImp) return fail(badImp)
+  // imp 只属于写入口：读工具没有这个键，在这里校验它只会报一句用不上的错。
+  if (rules === WRITE_RULES) {
+    const badImp = checkImp(input.imp)
+    if (badImp) return fail(badImp)
+  }
 
-  const where = { home: ctx.home, now: Number.isFinite(ctx.now) ? ctx.now : undefined, env: ctx.env }
+  const where = {
+    home: ctx.home,
+    now: Number.isFinite(ctx.now) ? ctx.now : undefined,
+    env: ctx.env,
+    tool: name,
+  }
   if (typeof where.home !== 'string' || where.home === '') {
     return fail('没有数据目录（home）：宿主没把 home 递进来，写下去会落到不知道哪儿')
   }

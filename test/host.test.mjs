@@ -15,6 +15,7 @@ import {
   situationBudget,
 } from '../src/host/index.mjs'
 import { debt } from '../src/mind/index.mjs'
+import * as memory from '../src/memory/index.mjs'
 import { use as useSoul } from '../src/soul/index.mjs'
 import { apply } from '../dsh/index.mjs'
 
@@ -246,6 +247,43 @@ test('note add 走 intent 门面写成便条', async () => {
     assert.equal(typeof out, 'string')
     assert.match(out, /^已记下便条 n-\d{8}-\d{2}/)
   })
+})
+
+test('工具写的 event 一律记成 tool:<工具名>：不许替人说话', async () => {
+  await inHome(async (home) => {
+    await callTool('agent_man', { action: 'event add', text: '模型说今天写完了宿主层' }, { home, now: T })
+    const got = memory.events(home, {})
+    assert.equal(got.items.length, 1)
+    // 来源是证据链的第一环：工具层自己写，工具自己都不知道人到底说没说这句话。
+    assert.deepEqual(got.items[0].src, { origin: 'tool', ref: 'agent_man' })
+
+    // 传别的就在写下去之前拦住：悄悄改掉比报错更坏（AGENTS 二·2）。
+    const bad = await callTool('agent_man',
+      { action: 'event add', text: '冒充用户口吻', src: 'user' }, { home, now: T })
+    assert.equal(bad.ok, false)
+    assert.match(bad.error, /src 由工具层写死成 tool:agent_man/)
+    assert.equal(memory.events(home, {}).items.length, 1, '被拒的调用不许落盘')
+  })
+})
+
+test('读工具不碰 imp：这件事只归写入口', async () => {
+  await inHome(async (home) => {
+    // imp 是写入口的字段。读工具上带着它（真机 DSH 会按 schema 先挡），
+    // 但工具层自己不能再报一句「imp 只能是 0–3」——那句话指错了键，也指错了人。
+    const out = await callTool('agent_man_look', { action: 'context show', imp: 9 }, { home, now: T })
+    assert.equal(typeof out, 'string')
+    assert.match(out, /^agent-man · /)
+  })
+})
+
+test('写 schema 里认 supersedes：规矩能替代旧条，而不是只增不减', async () => {
+  const write = TOOLS.find((one) => one.name === 'agent_man')
+  const { properties } = write.inputSchema
+  // schema 写 additionalProperties: false 之后，真机 DSH 会先把未声明的键挡下来：
+  // run 里读了 supersedes，schema 里却不认，等于这条替代路径在真机上永远走不到。
+  assert.deepEqual(properties.supersedes.type, 'array')
+  assert.deepEqual(properties.supersedes.items, { type: 'string' })
+  assert.match(properties.src.description, /tool:<工具名>/)
 })
 
 test('apply 在假 ctx 上不抛：挂 agent/created、注册两个工具', async () => {
@@ -485,9 +523,12 @@ test('零件答话装不进 inject.parts 时整条丢并出声，装得下的照
   const deps = fakeDeps(['a', 'b'], { out: () => ascii(100) })
   const got = await askParts({}, { budget: 40, deadline: 500, deps })
   assert.deepEqual(got.lines.map((one) => one.name), ['a'])
-  assert.deepEqual(got.dropped, [{ name: 'b', reason: 'budget' }])
+  assert.equal(got.dropped.length, 1)
+  assert.equal(got.dropped[0].name, 'b')
+  assert.equal(got.dropped[0].reason, 'budget')
   assert.ok(got.used <= 40, `装下的部分 ${got.used} 超过预算 40`)
-  assert.match(got.warnings.join('\n'), /! b 的答话装不进注入的零件预算 40/u)
+  // 注入这一侧只有 warnings 会上屏，所以 sense 记的那句 why 必须在这里变成一行 `! `。
+  assert.match(got.warnings.join('\n'), /! b 的答话要 .*，装不进零件预算 40/u)
 })
 
 test('askParts 把期限透给每个零件，而不是各给一份 PART_TIMEOUT', async () => {

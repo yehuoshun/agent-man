@@ -205,6 +205,21 @@ test('capture 把 64/75/69 分别折成 usage/timeout/missing，其它非零码�
   assert.deepEqual([d.status, d.code], ['ok', 0])
 })
 
+test('零件根本没起来判 missing，不冤枉成「崩了」；cmd.exe 的报错也要读成人话', winOnly('POSIX 上没有 cmd.exe 这一层'), async () => {
+  const dir = tmp()
+  const file = path.join(dir, 'agent-man-nostart.cmd')
+  // .cmd 里那行解释器根本不存在：死的是 cmd.exe，退出码一律 1——
+  // 光看退出码，这与"零件跑起来以后自己崩了"一模一样。
+  fs.writeFileSync(file, '@agent-man-no-such-exe-xyz --describe\r\n', 'utf8')
+  const r = await capture({ name: 'nostart', file })
+  assert.equal(r.code, 1)
+  assert.equal(r.status, 'missing', '它压根没跑起来，不是跑起来以后崩了')
+  assert.match(r.why, /起不来/)
+  // cmd.exe 用系统 OEM 代码页写中文，按 UTF-8 读只会是一串 U+FFFD：得退回 GBK 再解一次。
+  assert.match(r.err, /不是内部或外部命令/)
+  assert.equal(r.err.includes('\ufffd'), false, 'stderr 还是乱码：GBK 没解出来')
+})
+
 test('capture 把调用方要的超时夹在 30 秒上限内，不许零件把调用方拴住', async () => {
   const dir = tmp()
   const file = makePart(dir, 'quick', 'process.exit(0)')

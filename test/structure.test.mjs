@@ -145,11 +145,27 @@ function srcFiles(dir = path.join(ROOT, 'src'), acc = []) {
   return acc
 }
 
-test('src/ 里只有 core/config.mjs 与 cli/main.mjs 能摸 process.env，配置只经 load({env}) 进来', () => {
-  // 两个豁免：config.mjs 是环境变量映射的唯一住处；cli/main.mjs 是入口，由它把 process.env
-  // 递给 load。除此之外谁自己读环境变量，就等于绕开了优先级与校验。
-  const allowed = new Set(['src/core/config.mjs', 'src/cli/main.mjs'])
-  const files = srcFiles().map(rel)
+// 只扫 src/ 是不够的：`dsh/` 与 `bin/` 一样是跑起来能碰环境的代码，绕开它们的规约等于没有规约。
+// 用例目录（test/）不在其中：那里写 `AGENT_MAN_*` 与 `process.env` 是在**造**环境，不是在读环境。
+function runtimeFiles() {
+  return [
+    ...srcFiles(path.join(ROOT, 'src')),
+    ...srcFiles(path.join(ROOT, 'dsh')),
+    ...srcFiles(path.join(ROOT, 'bin')),
+  ].map(rel)
+}
+
+test('全仓只有两个门与 core/config.mjs 能摸 process.env，配置只经 load({env}) 进来', () => {
+  // 环境变量只许从"门"进来：两个命令行壳（bin/ 与 cli/main.mjs 都是把 process.env 递给
+  // load 的那一行）与 DSH 宿主入口，外加 core/config.mjs——它是环境变量映射的唯一住处。
+  // 除此之外谁自己读环境变量，就等于绕开了优先级与校验。
+  const allowed = new Set([
+    'src/core/config.mjs',
+    'src/cli/main.mjs',
+    'dsh/index.mjs',
+    'bin/agent-man.mjs',
+  ])
+  const files = runtimeFiles()
   assert.ok(files.length > 10, `只扫到 ${files.length} 个文件：用例在假绿`)
   const bad = files.filter((from) => !allowed.has(from) && !ENV_DEBT.has(from)
     && fs.readFileSync(path.join(ROOT, from), 'utf8').includes(ENV_READ))
@@ -158,7 +174,7 @@ test('src/ 里只有 core/config.mjs 与 cli/main.mjs 能摸 process.env，配�
 
 test('config.json / meta.json 的字面路径与 AGENT_MAN_ 前缀各只有一个出处', () => {
   const owners = new Set(['src/store/paths.mjs', 'src/core/config.mjs'])
-  const files = srcFiles().map(rel)
+  const files = runtimeFiles()
   assert.ok(files.length > 10, `只扫到 ${files.length} 个文件：用例在假绿`)
   const badName = []
   for (const from of files) {

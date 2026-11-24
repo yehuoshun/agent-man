@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { sense } from '../src/parts/index.mjs'
-import { cost, LINE_OVERHEAD, PART_STDOUT_MAX } from '../src/core/index.mjs'
+import { cost, LINE_OVERHEAD, PART_FAIL_LIMIT, PART_STDOUT_MAX, PART_TIMEOUT } from '../src/core/index.mjs'
 
 const part = (name) => ({ name, file: `C:/fake/agent-man-${name}` })
 
@@ -25,18 +25,22 @@ test('零件按预算装，装不下的进 dropped 并写明是预算', async ()
   const depsOf = deps({ run: { a: { status: 'ok', out: wide, err: '', truncated: false } } })
   const r = await sense({}, { budget: 100, parts: [part('a'), part('b')], deps: depsOf })
   assert.deepEqual(r.lines.map((one) => one.name), ['b'])
-  assert.deepEqual(r.dropped, [{ name: 'a', reason: 'budget' }])
+  assert.equal(r.dropped.length, 1)
+  assert.equal(r.dropped[0].name, 'a')
+  assert.equal(r.dropped[0].reason, 'budget')
+  assert.match(r.dropped[0].why, /装不进零件预算 100/) // 记账要带一句人话，谁上屏都有的说
   assert.ok(r.used + cost(wide) + LINE_OVERHEAD > r.budget)
 })
 
-test('--describe 不可用的零件只出一条警告，不拖死别的零件', async () => {
+test('--describe 不可用的零件只出一条账，不拖死别的零件，也不双份', async () => {
   const r = await sense({}, {
     parts: [part('bad'), part('good')],
     deps: deps({ desc: { bad: { ok: false, why: 'bad 的 --describe 崩了（退出码 1）' } } }),
   })
   assert.deepEqual(r.lines.map((one) => one.name), ['good'])
-  assert.deepEqual(r.warnings, ['! bad 的 --describe 崩了（退出码 1）'])
-  assert.deepEqual(r.failures.map((one) => one.name), ['bad'])
+  // 同一件事只许记一处：sense 出账（failures），上屏那一层负责出话。
+  assert.deepEqual(r.warnings, [])
+  assert.deepEqual(r.failures, [{ name: 'bad', why: 'bad 的 --describe 崩了（退出码 1）' }])
 })
 
 test('超时与起不来都算这一次没答上来，且说清是什么', async () => {
@@ -56,7 +60,8 @@ test('被截断的输出照用，但要留一条 ! 警告', async () => {
     deps: deps({ run: { loud: { status: 'ok', out: '答话', err: '', truncated: true } } }),
   })
   assert.deepEqual(r.lines.map((one) => one.text), ['答话'])
-  assert.deepEqual(r.warnings, [`! loud 的输出超过 ${PART_STDOUT_MAX / 1024}KB，已截断`])
+  // 说的是"字节"与真正生效的上限：说成 8KB 而实际由 parts.stdoutMax 收窄过，就是把自己做的事说错。
+  assert.deepEqual(r.warnings, [`! loud 的输出超过 ${PART_STDOUT_MAX} 字节，已截断`])
 })
 
 test('多行输出折成一行：一屏里一个零件只占一行', async () => {
@@ -73,7 +78,10 @@ test('只在 stderr 说了话的零件不进结果，但也不静默', async () 
     deps: deps({ run: { mute: { status: 'ok', out: '', err: '什么都没有\n', truncated: false } } }),
   })
   assert.deepEqual(r.lines, [])
-  assert.deepEqual(r.warnings, ['! mute 只在 stderr 说了话，没有结果'])
+  assert.deepEqual(r.warnings, [])
+  assert.equal(r.dropped.length, 1)
+  assert.equal(r.dropped[0].reason, 'empty')
+  assert.match(r.dropped[0].why, /只在 stderr 说了话，没有结果/)
 })
 
 // 下面几条锁的是"给了 deadline"这条路：注入那一侧唯一的时延保险，坏了就是首步被拖死。
@@ -106,12 +114,12 @@ test('给了 deadline 就并行问，输出顺序仍是零件的顺序', async (
 })
 
 test('不给 deadline 时仍然串行，顺序就是传进来的顺序', async () => {
-  const descKeys = []
+  const descMs = []
   let inFlight = 0
   let peak = 0
   const single = {
     describe: async (p, o) => {
-      descKeys.push(Object.keys(o).join(','))
+      descMs.push(o.timeout)
       return { ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 1000, side_effects: false }
     },
     capture: async (p) => {
@@ -125,7 +133,7 @@ test('不给 deadline 时仍然串行，顺序就是传进来的顺序', async (
   const r = await sense({}, { parts: [part('a'), part('b'), part('c')], deps: single })
   assert.equal(peak, 1, '不给 deadline 就该一个一个问（CLI 那一屏的老行为）')
   assert.deepEqual(r.lines.map((line) => line.name), ['a', 'b', 'c'])
-  assert.deepEqual(descKeys, ['env', 'env', 'env'], '串行时 describe 只传 env，不带 timeout')
+  assert.deepEqual(descMs, [PART_TIMEOUT, PART_TIMEOUT, PART_TIMEOUT], '不限期时 describe 拿到默认期限')
 })
 
 test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来的照收', async () => {
@@ -159,9 +167,12 @@ test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来
   const got = waits.find((one) => one.name === 'slow')
   assert.ok(got.timeout > 0 && got.timeout <= 60, `capture 拿到的 timeout 是 ${got.timeout}`)
   assert.deepEqual(r.lines.map((one) => one.name), ['fast'])
-  assert.deepEqual(r.dropped, [{ name: 'slow', reason: 'deadline' }])
+  assert.equal(r.dropped.length, 1)
+  assert.equal(r.dropped[0].name, 'slow')
+  assert.equal(r.dropped[0].reason, 'deadline')
+  assert.match(r.dropped[0].why, /到 60ms 的期限还没答上来/)
   assert.deepEqual(r.failures, [], '期限用完是我们没等，不该记进"零件不行"')
-  assert.match(r.warnings.join('\n'), /! slow 到 60ms 的期限还没答上来/)
+  assert.deepEqual(r.warnings, [], '同一件事只记一处：上屏那一层读 dropped 就够了')
 })
 
 // 0 是"一个都不等"，不是"不设上限"：后一种读法会让改小配置反而更慢，
@@ -169,6 +180,99 @@ test('到 deadline 没答上来的零件记 deadline 并说出来，已答上来
 test('deadline 为 0 表示一个零件都不等，全记 deadline', async () => {
   const r = await sense({}, { parts: [part('a')], deps: deps(), deadline: 0 })
   assert.deepEqual(r.lines, [])
-  assert.deepEqual(r.dropped, [{ name: 'a', reason: 'deadline' }])
-  assert.match(r.warnings.join('\n'), /! a 到 0ms 的期限还没答上来/)
+  assert.equal(r.dropped.length, 1)
+  assert.equal(r.dropped[0].reason, 'deadline')
+  assert.match(r.dropped[0].why, /到 0ms 的期限还没答上来/)
+})
+
+// 下面几条锁的是这次接上的两条线：配置里的 parts.* 真的管用，连续失败真的会摘掉零件。
+
+// 四个 parts 键以前是死键：能 config get 到、能 config set 进去、谁都不读。现在一路传到
+// describe / capture，锁住"配置说的"和"实际做的"是同一件事。
+test('parts.* 这四个配置键一路传到 describe 与 capture，不再有死键', async () => {
+  const seenDesc = []
+  const seenCap = []
+  const spy = {
+    describe: async (p, o) => {
+      seenDesc.push(o)
+      return { ok: true, name: p.name, desc: '', section: '环境', timeout_ms: 1000, side_effects: false }
+    },
+    capture: async (p, o) => {
+      seenCap.push(o)
+      return { status: 'ok', code: 0, out: '答话', err: '', truncated: false }
+    },
+  }
+  await sense({}, {
+    parts: [part('a')],
+    deps: spy,
+    timeout: 200,
+    timeoutMax: 1000,
+    stdoutMax: 512,
+    failLimit: 2,
+  })
+  assert.deepEqual([seenDesc[0].timeout, seenDesc[0].timeoutMax, seenDesc[0].stdoutMax], [200, 1000, 512])
+  assert.deepEqual([seenCap[0].timeoutMax, seenCap[0].limit], [1000, 512])
+})
+
+// 账本只认三个函数，所以冷却可以拿一本假账测：不必为了测一句"这次不问"去碰磁盘。
+function fakeLedger(seed = {}) {
+  const book = { ...seed }
+  return {
+    book,
+    get: (name) => book[name] ?? null,
+    mark: async (name, entry) => { book[name] = entry },
+    reset: async (name) => { book[name] = { fail: 0, until: null } },
+  }
+}
+
+test('连续失败到上限就摘掉：下一屏连问都不问，但账上要说明它被摘了', async () => {
+  const book = fakeLedger()
+  let asked = 0
+  const bad = {
+    describe: async () => ({ ok: false, why: 'bad 的 --describe 崩了（退出码 1）' }),
+    capture: async () => {
+      asked += 1
+      return { status: 'ok', code: 0, out: '', err: '', truncated: false }
+    },
+  }
+  for (let i = 0; i < PART_FAIL_LIMIT; i += 1) {
+    await sense({}, { parts: [part('bad')], deps: bad, ledger: book, now: 1000 })
+  }
+  assert.equal(asked, 0, '--describe 就崩了的零件不该再被 capture')
+  assert.equal(book.book.bad.fail, PART_FAIL_LIMIT)
+
+  // 第 N+1 屏：问都不问，直接记进 dropped，理由写清是冷却。
+  const seen = []
+  const r = await sense({}, {
+    parts: [part('bad')],
+    deps: { describe: async (p) => { seen.push(p.name); return { ok: false, why: 'x' } }, capture: async () => ({}) },
+    ledger: book,
+    now: 1000,
+  })
+  assert.deepEqual(seen, [], '冷却中的零件连 --describe 都不该起进程')
+  assert.deepEqual(r.lines, [])
+  assert.equal(r.dropped[0].reason, 'cooldown')
+  assert.match(r.dropped[0].why, /连续失败 3 次/)
+  assert.deepEqual(r.warnings, [])
+})
+
+test('中间答上来一次就从头数：连续说的是"连着"', async () => {
+  const book = fakeLedger({ flaky: { fail: PART_FAIL_LIMIT - 1, until: null } })
+  const r = await sense({}, { parts: [part('flaky')], deps: deps(), ledger: book, now: 1000 })
+  assert.deepEqual(r.lines.map((one) => one.name), ['flaky'])
+  assert.deepEqual(book.book.flaky, { fail: 0, until: null })
+})
+
+test('冷却到某个时刻的账照样认：until 没到就先不问', async () => {
+  const book = fakeLedger({ slow: { fail: 1, until: 5000 } })
+  const r = await sense({}, {
+    parts: [part('slow')],
+    deps: deps(),
+    ledger: book,
+    now: 4000,
+  })
+  assert.deepEqual(r.lines, [])
+  assert.equal(r.dropped[0].reason, 'cooldown')
+  const again = await sense({}, { parts: [part('slow')], deps: deps(), ledger: book, now: 6000 })
+  assert.deepEqual(again.lines.map((one) => one.name), ['slow'], '过了 until 就该再问一次')
 })
