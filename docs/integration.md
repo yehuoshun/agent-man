@@ -146,6 +146,24 @@ DSH 每一步注入（dsh/index.mjs）
 而且这些启动全压在同一个 `parts.deadline` 底下。互不依赖的取数得零件自己并行起来——串行的
 零件会把「建议」整段吃掉，屏上看到的是零件"没答话"，其实是它答得太慢。
 
+### 2026-11-24 联调复测（两个零件：`yuQue` 语雀 + `gateway` 网关）
+
+这一轮把四个零件相关的洞补完之后（期限/上限/冷却接线、`.cmd` 垫片、零件反调护栏、BOM），
+在同一条工装里重测（`tmp/am-int/int.mjs`，九项全 PASS）：
+
+| 场景 | 实测 | 备注 |
+|---|---|---|
+| `parts.scan` | `gateway@…gateway.cmd`、`yuQue@…yuQue.cmd` | 两个都要 `.cmd` 垫片；只有 `.mjs` 在 Windows 上发现不到 |
+| `parts.describe` | 两个都 `ok:true`，`timeout_ms:5000` | 五字段齐全、`side_effects` 是布尔 |
+| `parts.sense(env,{deadline:1200})`，两个零件 | 632ms，`used=47.32` | `lines` 两条、`dropped`/`failures` 都空 |
+| `agent-man context sense --json` | 恰好一行合法 JSON | |
+| 直通 `agent-man yuQue bogus` | 退出码 64 原样透传 | 直通不过 sense、不盖哨兵 |
+| 零件反调 `agent-man rule add …` | 退出码 2、库里没多一条 | 哨兵在写入路径上拦，只有 `event add --src tool:<名字>` 放行 |
+| 坏零件连续 3 次失败后 | `dropped=[{name:'bad',reason:'cooldown',…}]`，不再 spawn | 文案「冷却 30 分钟，到点自动再试一次」 |
+| `parts.timeout=200` + 慢零件（睡 3s） | 整条命令 1311ms | 配置说等 200ms 就连零件自报的 5000ms 一起掐 |
+
+结论：**一次 CLI 屏带两个零件 ≈0.6s**，都在 `parts.deadline`（1200ms）以内；成本还是"每个零件
+两次进程启动"，没有变。
 ## 5. 已知代价
 
 - **2N 次进程启动**：N 个零件最多 `describe` N 次 + `capture` N 次。Windows 上这是主要成本。
