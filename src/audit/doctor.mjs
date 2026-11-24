@@ -4,12 +4,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { RULE_LIMIT, SELF_MAX } from '../core/index.mjs'
+import { RULE_LIMIT, SELF_MAX, config } from '../core/index.mjs'
 import * as memory from '../memory/index.mjs'
-import { VERSION, checkHome, readJson } from '../store/index.mjs'
+import { VERSION, checkHome, readJson, readJsonl } from '../store/index.mjs'
 
 // 分片只有一个层级（design §3：不许加目录层级）：events/<天>.jsonl 与 state/*.jsonl，
-// 外加两个单独的 memory.jsonl / rules.jsonl。id 抢号落在 state/ids/ 且不带 .jsonl 后缀。
+// 外加两个单独的 memory.jsonl / rules.jsonl。id 抢号落在 state/ids/ 且不带 .jsonl 后缀，
+// 所以它不在逐行扫描里，另有一项「发号文件」盯着。
 const JSONL_DIRS = ['events', 'state']
 const JSONL_FILES = ['memory.jsonl', 'rules.jsonl']
 
@@ -21,8 +22,11 @@ export function doctor({ home, ctx } = {}) {
   const checks = [
     guard('数据目录', () => checkDir(dir)),
     guard('schema 版本', () => checkSchema(dir)),
+    guard('配置', () => checkConfig(dir, ctx)),
     guard('分片坏行', () => checkBadLines(dir, scanned)),
     guard('memory 收口副本', () => checkClosure(dir, scanned)),
+    guard('发号文件', () => checkIds(dir)),
+    guard('残留 .tmp', () => checkTmp(dir)),
     guard('meta.json 冷却记录', () => checkParts(dir)),
     guard('self.md 预算', () => checkSelf(dir)),
     guard('rules 活条数', () => checkRules(dir, scanned)),
@@ -67,6 +71,27 @@ function checkSchema(dir) {
   return { ok: false, detail: state.why }
 }
 
+// 配置（design §15）：坏的 config.json 会让每条命令当场退 2，但那时人已经在命令里撞了墙。
+// doctor 提前把"哪个键不对"说出来。判定交给 core/config 的 load——它是唯一一份白名单与校验，
+// 这里再抄一份，两份迟早对不上（doctor 说没问题、命令照旧退 2 才是最坏的体检报告）。
+// 环境变量只从 ctx.env 取：doctor 不自己摸进程环境（AGENTS 一，配置只经 load({env}) 进来）。
+function checkConfig(dir, ctx) {
+  const warned = []
+  const env = ctx && ctx.env && typeof ctx.env === 'object' ? ctx.env : {}
+  try {
+    config.load({ env, homeDir: dir, warn: (msg) => warned.push(msg) })
+  } catch (e) {
+    return { ok: false, detail: `${messageOf(e)}（改回合法 JSON 或 config reset，别猜着改）` }
+  }
+  if (warned.length === 0) {
+    return { ok: true, detail: '没有配置文件就是全默认；有的话键与值都对得上' }
+  }
+  // 提醒不算不合格：load 的契约是 warnings 走 "! "、errors 才退 2。但也不许咽掉。
+  const shown = warned.slice(0, 3).join('；')
+  const rest = warned.length - Math.min(warned.length, 3)
+  return { ok: true, detail: `可用，但有 ${warned.length} 条提醒：${shown}${rest > 0 ? `；另有 ${rest} 条` : ''}` }
+}
+
 function jsonlFiles(dir) {
   const files = []
   for (const sub of JSONL_DIRS) {
@@ -82,41 +107,29 @@ function jsonlFiles(dir) {
       if (name.endsWith('.jsonl')) files.push(path.join(at, name))
     }
   }
-  for (const name of JSONL_FILES) files.push(path.join(dir, name))
+  for (const name of JSONL_FILES) {
+    const file = path.join(dir, name)
+    // 没写过的文件不算是"一个文件"：空数据目录上还报"共 2 个文件逐行可解析"，
+    // 会让人以为这里已经有数据了（AGENTS 二·2：不装作有）。
+    if (fs.statSync(file, { throwIfNoEntry: false }) === undefined) continue
+    files.push(file)
+  }
   return files
 }
 
-// 逐行读一个分片。这里用 fs 直读而不是 store 的 readJsonl：坏行清单要的是"哪个文件第几行"，
-// readJsonl 只回一个计数；而且这一路只读、不写，不违反"读命令不写盘"。
+// 逐行读一个分片。走 store 的 readJsonl，不再自己抄一份解析：剥 BOM、坏行口径
+// （合法 JSON 但不是对象也算坏行）只该有一处定义，否则 doctor 会把 store 读得好的文件报成坏行。
+// readJsonl 只读不写，符合"读命令不写盘"。
 function scan(file) {
-  const rows = []
-  const bad = []
-  let raw = ''
-  try {
-    raw = fs.readFileSync(file, 'utf8')
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { rows, bad } // 没写过不是坏
-    throw e
-  }
-  const lines = raw.split('\n')
-  for (let i = 0; i < lines.length; i += 1) {
-    const text = lines[i]
-    if (text.trim() === '') continue
-    let rec = null
-    try {
-      rec = JSON.parse(text)
-    } catch {
-      bad.push({ line: i + 1, why: '不是合法 JSON', text: clip(text) })
-      continue
-    }
-    // 合法 JSON 但不是对象（一行 null 或 3）同样读不出记录：算坏行，别让它变成 undefined.id。
-    if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
-      bad.push({ line: i + 1, why: '不是一条记录', text: clip(text) })
-      continue
-    }
-    rows.push(rec)
-  }
-  return { rows, bad }
+  const got = readJsonl(file, { lines: true })
+  const bad = (got.badLines ?? []).map((one) => ({ ...one, why: whyOf(one.why), text: clip(one.text) }))
+  return { rows: got.items, bad }
+}
+
+// readJsonl 的 why 是 JSON.parse 的原话（英文，还随 node 版本变）。doctor 报给人看，
+// 要的是"这行读不出来"这种稳定说法，不是一句引擎内部报错。
+function whyOf(why) {
+  return why === '不是 JSON 对象' ? '不是一条记录' : '不是合法 JSON'
 }
 
 function checkBadLines(dir, scanned) {
@@ -124,10 +137,73 @@ function checkBadLines(dir, scanned) {
   for (const one of scanned) {
     for (const item of one.bad) all.push({ file: relOf(dir, one.file), ...item })
   }
-  if (all.length === 0) return { ok: true, detail: `共 ${scanned.length} 个文件逐行可解析` }
+  if (all.length === 0) {
+    if (scanned.length === 0) {
+      return { ok: true, detail: '还没有可扫的分片（events/、state/、memory.jsonl、rules.jsonl 都还是空的）' }
+    }
+    return { ok: true, detail: `共 ${scanned.length} 个文件逐行可解析` }
+  }
   const shown = all.slice(0, 5).map((one) => `${one.file}:${one.line}：${one.why}（${one.text}）`)
   const rest = all.length - shown.length
   return { ok: false, detail: `坏行 ${all.length} 处：${shown.join('；')}${rest > 0 ? `；另有 ${rest} 处` : ''}` }
+}
+
+// 发号文件（state/ids/）：claim 用 wx 建空文件抢号，文件名就是号。这里只读名字与大小：
+// 名字不合形状说明有人在里面放了别的东西；文件里有内容更糟——那是被改写过的账本，号不再可信。
+const ID_NAME = /^[emrnp]-\d{8}-\d+$/
+
+function checkIds(dir) {
+  const at = path.join(dir, 'state', 'ids')
+  let names = []
+  try {
+    names = fs.readdirSync(at)
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, detail: '还没发过号（state/ids/ 还没建立）' }
+    throw e
+  }
+  const wrong = []
+  for (const name of names.slice().sort()) {
+    const full = path.join(at, name)
+    if (!ID_NAME.test(name)) {
+      wrong.push(`${name} 不是号（形状是 e-YYYYMMDD-nn）`)
+      continue
+    }
+    const size = fs.statSync(full, { throwIfNoEntry: false })?.size ?? 0
+    if (size !== 0) wrong.push(`${name} 里写了 ${size} 字节（发号文件该是空的）`)
+  }
+  if (wrong.length === 0) return { ok: true, detail: `${names.length} 个已发号` }
+  const shown = wrong.slice(0, 5)
+  const rest = wrong.length - shown.length
+  return { ok: false, detail: `state/ids/ 有 ${wrong.length} 处不对：${shown.join('；')}${rest > 0 ? `；另有 ${rest} 处` : ''}` }
+}
+
+// 残留 .tmp：writeAtomic 在改名失败时留着整份新内容等下一次重试覆盖，那是设计（295 行），
+// 不是垃圾也不是数据损坏。但它不该一直躺在那儿——报出来，人决定重跑一次还是删掉。
+function checkTmp(dir) {
+  const left = []
+  const walk = (abs) => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(abs, { withFileTypes: true })
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return
+      throw e
+    }
+    for (const entry of entries) {
+      const full = path.join(abs, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name.endsWith('.tmp')) left.push(relOf(dir, full))
+    }
+  }
+  walk(dir)
+  if (left.length === 0) return { ok: true, detail: '没有残留的 .tmp' }
+  const shown = left.slice(0, 5)
+  const rest = left.length - shown.length
+  return {
+    ok: false,
+    detail: `${left.length} 个残留 .tmp：${shown.join('；')}${rest > 0 ? `；另有 ${rest} 个` : ''}`
+      + '（原子写没走完，重跑一次写命令就会覆盖它）',
+  }
 }
 
 // 同一个 id 写出两行、且 at 一样时，"谁赢"取决于哪一行后写——那就不是收口，是掷骰子。
@@ -256,11 +332,12 @@ function checkParts(dir) {
 }
 
 function checkSelf(dir) {
-  // 走 memory 门面的读：文件叫什么、预算怎么算，只有那一处说了算（doctor 仍然只读）。
+  // 走 memory 门面的读：文件叫什么、预算怎么算（含"末尾换行不计价"），只有那一处说了算
+  // （doctor 仍然只读，判断也用 readSelf 给的 over，不在这里再算一次 > SELF_MAX）。
   const read = memory.readSelf(dir)
   if (read.updatedAt === null) return { ok: true, detail: '还没写过 self.md' }
   const used = read.cost
-  if (used > SELF_MAX) {
+  if (read.over) {
     return { ok: false, detail: `self.md 是 ${used.toFixed(1)} cost，超过上限 ${SELF_MAX}：删掉过时的段落（doctor 只报不改）` }
   }
   return { ok: true, detail: `${used.toFixed(1)} / ${SELF_MAX} cost` }
