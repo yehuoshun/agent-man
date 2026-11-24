@@ -9,7 +9,7 @@ import test from 'node:test'
 import { doctor, orphan, timeline, trace } from '../src/audit/index.mjs'
 import { DEFAULT_WINDOW_DAYS, RULE_LIMIT, SELF_MAX, cost } from '../src/core/index.mjs'
 import { notes, plans } from '../src/intent/index.mjs'
-import { add as addMemory, markSeen } from '../src/memory/index.mjs'
+import { add as addMemory, markSeen, revise } from '../src/memory/index.mjs'
 import { appendJsonl, ensure, eventsFile, stateFile } from '../src/store/index.mjs'
 
 const MINUTE = 60 * 1000
@@ -359,6 +359,54 @@ test('同一条结论被复述记了 seen 副本：同 at 的两行不算收口�
     assert.equal(rows[0].seen, 0)
     assert.equal(rows[1].seen, 1)
     assert.equal(rows[1].at, rows[0].at)
+  })
+})
+
+test('revise 写下的收口副本不算冲突：同 at 两行只差 to/by，且只有最后一行开口', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    const made = await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1'] }, at: NOW },
+      { home, now: NOW },
+    )
+    const next = await revise(made.record.id, { fact: '她关窗是因为冷，也因为吵' }, { home, now: NOW + HOUR })
+    assert.equal(next.status, 'revised')
+    const one = check(doctor({ home }), 'memory 收口副本')
+    assert.equal(one.ok, true, one.detail)
+    assert.match(one.detail, /revise 收口副本/)
+    // 旧行原样保留、末尾只多一行带 to/by 的收口副本（AGENTS 五：旧行永不改写）。
+    const rows = fs
+      .readFileSync(path.join(home, 'memory.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    const old = rows.filter((row) => row.id === made.record.id)
+    assert.equal(old.length, 2)
+    assert.equal(old[1].at, old[0].at, '收口副本与旧行同 at')
+    assert.equal(old[1].to, next.record.at)
+    assert.equal(old[1].by, next.record.id)
+  })
+})
+
+test('收口副本只给 to 不给 by：仍是冲突，半份收口不算收口', async () => {
+  await inHome(async (home) => {
+    ensure(home)
+    const row = {
+      id: 'm-1',
+      at: NOW,
+      key: '她怕冷',
+      fact: '她关窗是因为冷',
+      imp: 3,
+      from: NOW,
+      to: null,
+      by: null,
+      evidence: { ids: ['e-1'] },
+    }
+    appendJsonl(path.join(home, 'memory.jsonl'), row)
+    appendJsonl(path.join(home, 'memory.jsonl'), { ...row, to: NOW + HOUR })
+    const one = check(doctor({ home }), 'memory 收口副本')
+    assert.equal(one.ok, false)
+    assert.match(one.detail, /m-1/)
   })
 })
 

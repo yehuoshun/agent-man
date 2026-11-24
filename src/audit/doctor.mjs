@@ -147,39 +147,82 @@ function checkClosure(dir, scanned) {
     else if (rec.at > seen.at) top.set(rec.id, { at: rec.at, rows: [rec] })
     else if (rec.at === seen.at) seen.rows.push(rec)
   }
-  // 同 id 同 at 的多行有两种：一种合法，是 seen 的 +1 副本（只动 seen，按文件顺序严格递增，
-  // 读方"同 at 后写赢"取到的就是最后一版）；一种真冲突，内容不一致，谁赢都说不清。
-  const clash = [...top].filter(([, one]) => one.rows.length > 1 && !isSeenBump(one.rows))
+  // 同 id 同 at 的多行有两种：一种合法，是"再写一行"的副本（seen +1 或 revise 收口），
+  // 读方"同 at 后写赢"取到的就是最后一版；一种真冲突，内容不一致，谁赢都说不清。
+  const clash = [...top].filter(([, one]) => one.rows.length > 1 && !isCopyRun(one.rows))
   if (clash.length > 0) {
     const shown = clash.map(([id, one]) => `${id} 有 ${one.rows.length} 行 at=${one.at}`)
     return { ok: false, detail: `收口副本冲突：${shown.join('；')}（读方按 at 最大取，同 at 时后写赢）` }
   }
-  const bumped = [...top].filter(([, one]) => one.rows.length > 1).length
+  const runs = [...top].filter(([, one]) => one.rows.length > 1)
+  const seenRuns = runs.filter(([, one]) => copyKind(one.rows) === 'seen').length
+  const closureRuns = runs.length - seenRuns
   if (top.size === 0) {
     return { ok: true, detail: partial > 0 ? `没有可读的记忆行（${partial} 行缺 id 或 at）` : '还没写过 memory.jsonl' }
   }
   const rest = partial > 0 ? `；${partial} 行缺 id 或 at 未参与检查` : ''
-  const copies = bumped > 0 ? `（其中 ${bumped} 条的 at 最大行是同 at 的 seen 副本）` : ''
+  const notes = []
+  if (seenRuns > 0) notes.push(`${seenRuns} 条 seen 副本`)
+  if (closureRuns > 0) notes.push(`${closureRuns} 条 revise 收口副本`)
+  const copies = notes.length > 0 ? `（其中 ${notes.join('、')}）` : ''
   return { ok: true, detail: `${top.size} 条 id 的 at 最大行唯一${copies}${rest}` }
 }
 
-// seen 副本的形状：除 seen 外逐字段相同，seen 按文件顺序严格递增（后写的必须是更大的那个）。
-function isSeenBump(rows) {
+// 同 id 同 at 的多行只有两种合法形状（design §4：旧行永不改写，要变就再写一行）：
+// 1) seen 副本：同一条结论被复述记了一次，只有 seen 在动，且不倒退；
+// 2) revise 收口副本：改写结论时把旧版本原样再写一行、只补上 to/by（memory 的 closureOf）。
+// 于是：除 seen/to/by 外逐字段相同、键数相同；to/by 只允许在**最后一行**与第一行不同，
+// 且那一行必须 to 与 by 成对给出；seen 不倒退；相邻两行不许逐字重复。
+// 除这三个键以外任何一处不同，都还是真冲突——同 at 同 id 的两份不同内容，谁赢都说不清。
+function isCopyRun(rows) {
   const first = rows[0]
-  let prev = first.seen
-  if (!Number.isFinite(prev)) prev = 0
-  for (let i = 1; i < rows.length; i += 1) {
+  const keys = Object.keys(first)
+  const last = rows[rows.length - 1]
+  // 已经收过口的一行不该再冒出副本：to 非 null 的旧版本又写了一遍，说明有人手改了账本。
+  if (hasTo(first)) return false
+  for (let i = 0; i < rows.length; i += 1) {
     const one = rows[i]
-    for (const key of Object.keys(first)) {
-      if (key === 'seen') continue
+    if (Object.keys(one).length !== keys.length) return false
+    for (const key of keys) {
+      if (COPY_KEYS.has(key)) continue
       if (JSON.stringify(one[key]) !== JSON.stringify(first[key])) return false
     }
-    if (Object.keys(one).length !== Object.keys(first).length) return false
-    const seen = Number.isFinite(one.seen) ? one.seen : 0
-    if (!(seen > prev)) return false
-    prev = seen
+    // to/by 只有最后一行能变：中间某行开过口又收回去，等于一条结论被收口两次。
+    if (i < rows.length - 1 && !sameToBy(one, first)) return false
+    // 逐字重复的两行不叫副本，叫写坏了：同一份字节写两次，读方凭什么选一个。
+    if (i > 0 && JSON.stringify(rows[i - 1]) === JSON.stringify(one)) return false
+    if (i > 0 && seenOf(one) < seenOf(rows[i - 1])) return false
   }
-  return true
+  if (sameToBy(last, first)) return true
+  // 最后一行与第一行在 to/by 上不同，那就只能是收口副本：to 与 by 必须成对，
+  // 只有 to 没有 by（或反过来）不是 revise 写出来的，是被人改坏的。
+  return hasTo(last) && hasBy(last)
+}
+
+const COPY_KEYS = new Set(['seen', 'to', 'by'])
+
+function copyKind(rows) {
+  return sameToBy(rows[rows.length - 1], rows[0]) ? 'seen' : 'closure'
+}
+
+function sameToBy(a, b) {
+  return nullish(a.to) === nullish(b.to) && nullish(a.by) === nullish(b.by)
+}
+
+function nullish(value) {
+  return value === undefined ? null : value
+}
+
+function hasTo(one) {
+  return nullish(one.to) !== null
+}
+
+function hasBy(one) {
+  return nullish(one.by) !== null
+}
+
+function seenOf(one) {
+  return Number.isFinite(one.seen) ? one.seen : 0
 }
 
 // 冷却记录的形状（design §4）：{ 插件名: { fail: 非负整数, until: 有限数字或 null } }。
