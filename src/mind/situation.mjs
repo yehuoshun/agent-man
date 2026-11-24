@@ -109,23 +109,26 @@ export function situation(homeDir, options = {}) {
   const weakLines = fill('最弱的三条', weakRows, WEAKEST_MAX)
 
   // 插件建议（design §8 的聚合模式 + §14.5 的第二个口子）：零件答的话最多上屏一条，
-  // 而且只有 v 与 e 都够高时才给这个机会。情绪不到就不提——但每条都记进 dropped，
+  // 而且只有 v 与 e 都够高时才给这个机会。情绪不到就不提——但要记进 dropped，
   // 免得"屏上没有建议"被读成"零件都没答话"。
+  //
+  // 情绪门槛是**整段**的门，不是每条一条的门：两个零件答话时逐条判会刷出两句一模一样的
+  // "丢"，读起来像 bug。所以不 eager 就整段记一条，把被挡下几条写在话里。
   const partLines = linesOf(call.parts)
   const suggestLines = []
   if (partLines.length > 0) {
     const feel = call.affect ?? affectOf(home, { now: at })
     const eager = feel.v >= AFFECT_ACTIVE_V && feel.e >= AFFECT_ACTIVE_E
-    for (const row of partLines) {
-      if (!eager) {
-        dropped.push({
-          id: null,
-          section: '建议',
-          reason: 'affect',
-          why: `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，不主动提建议`,
-        })
-        continue
-      }
+    if (!eager) {
+      dropped.push({
+        id: null,
+        section: '建议',
+        reason: 'affect',
+        why: `丢：此刻 v=${feel.v} e=${feel.e}，不到 v≥${AFFECT_ACTIVE_V} 且 e≥${AFFECT_ACTIVE_E}，` +
+          `不主动提建议（${partLines.length} 条零件答话都没上屏）`,
+      })
+    }
+    for (const row of eager ? partLines : []) {
       if (suggestLines.length >= SUGGEST_MAX) {
         dropped.push({
           id: null,
