@@ -542,15 +542,18 @@ function memoryShow(ctx) {
   const wanted = words.join(' ').trim()
   if (!wanted) throw new Error('用法：agent-man memory show <id|槽位>')
   const got = memory.show(wanted, { home: homeOf(ctx), now: ctx.now })
+  if (!got.record) {
+    // 查不到就是查不到：两种输出同一个退出码（§6 查不到退 1）。
+    // --json 以前在判空之前就 return 0，脚本据此以为拿到了结论。
+    if (on(flags, 'json')) ctx.out(`${JSON.stringify(got)}\n`)
+    else ctx.err(`! 没有这条结论：「${wanted}」（agent-man memory ls 看现在有哪些）\n`)
+    noisy(ctx, got.skipped)
+    return 1
+  }
   if (on(flags, 'json')) {
     ctx.out(`${JSON.stringify(got)}\n`)
     noisy(ctx, got.skipped)
     return 0
-  }
-  if (!got.record) {
-    ctx.err(`! 没有这条结论：「${wanted}」（agent-man memory ls 看现在有哪些）\n`)
-    noisy(ctx, got.skipped)
-    return 1
   }
   const one = got.record
   ctx.out(`${record({ id: one.id, when: rel(one.at, ctx.now), text: one.fact, key: one.key }, 'memory')}\n`)
@@ -857,10 +860,12 @@ async function contextShow(ctx) {
   const scene = mind.situation(homeOf(ctx), { now: ctx.now, parts: got })
   if (on(flags, 'json')) jsonOut(ctx, scene)
   else ctx.out(`${renderScreen(scene)}\n`)
-  // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被它的预算挤掉——
+  // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被挤掉——
   // 它们不在 scene.dropped 里，因为那是"屏上装不下"，这是"根本没拿到"。
+  // 每条都自带 why（deadline / cooldown / empty / budget），照它说：
+  // 早先一律写成"抓取预算已经用完"，把冷却、超时、没话说全说成了预算的事。
   for (const one of got.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
-  for (const one of got.dropped) ctx.err(`! 零件 ${one.name} 装不下：抓取预算 ${got.budget} 已经用完\n`)
+  for (const one of got.dropped) ctx.err(`! 零件 ${one.why}\n`)
   for (const one of got.failures) ctx.err(`! 零件 ${one.name} 没出声：${one.why}\n`)
   screenNotes(ctx, scene)
   return 0
@@ -965,10 +970,8 @@ async function contextSense(ctx) {
     if (got.lines.length === 0) ctx.out('（没有可用的零件：PATH 上放 agent-man-<名字> 就能接进来）\n')
   }
   for (const one of got.warnings) ctx.err(one.startsWith('! ') ? `${one}\n` : `! ${one}\n`)
-  if (got.dropped.length > 0) {
-    const names = got.dropped.map((one) => one.name).join('、')
-    ctx.err(`! 装不下：${names}（预算 ${got.budget} 已经用完）\n`)
-  }
+  // 理由照零件那条记录自己的说（冷却 / 期限 / 没话说 / 预算四种都不一样）。
+  for (const one of got.dropped) ctx.err(`! 零件 ${one.why}\n`)
   for (const one of got.failures) ctx.err(`! 零件 ${one.name} 没出声：${one.why}\n`)
   return 0
 }

@@ -737,13 +737,13 @@ test('零件带着哨兵记情景是放行的，但必须署 tool:<名字>：不
   const one = box()
   const ok = await cli(one, ['event', 'add', '零件看见外面下雨了', '--src', 'tool:fake'], PART_CALL)
   assert.equal(ok.code, 0, `零件记情景该成功：${ok.err}`)
-  const rows = readJsonl(eventsFile(one.dir))
+  const rows = readJsonl(eventsFile(one.dir, one.now)).items
   assert.equal(rows.length, 1)
   assert.equal(rows[0].src.ref, 'fake')
   const bad = await cli(one, ['event', 'add', '零件假装是用户说的'], PART_CALL)
   assert.equal(bad.code, 2)
   assert.match(bad.err, /记情景要署上零件自己的名字/)
-  assert.equal(readJsonl(eventsFile(one.dir)).length, 1, '被拦下的那条不许落盘')
+  assert.equal(readJsonl(eventsFile(one.dir, one.now)).items.length, 1, '被拦下的那条不许落盘')
 })
 
 // 零件配置要真接上（design §8 / §16）：`parts.*` 的四个数与账本都得递进 sense，
@@ -775,6 +775,32 @@ test('冷却账本当回事：meta.json 里记着连续失败，第 N 次连问�
   assert.equal(rows.dropped[0].reason, 'cooldown')
   assert.equal(rows.dropped[0].why, 'fake 连续失败 3 次，这次不问（冷却到下一次会话）')
   assert.ok(spent < 2000, `冷却中的零件不该再 spawn：实测 ${spent}ms`)
+})
+
+// 没上屏的理由要照那条记录自己的 why 说：冷却、到期限、没话说、预算不够是四件事，
+// 一律写成"抓取预算已经用完"就是拿一句固定话糊住四种毛病（design §6 不静默、§8）。
+test('零件没上屏的理由照它自己的 why 说：冷却不是"预算用完"，而且只说一遍', async () => {
+  const one = box()
+  usePart(one, fakePart())
+  ensure(one.dir)
+  fs.writeFileSync(metaFile(one.dir),
+    `${JSON.stringify({ parts: { fake: { fail: 3, until: one.now + 60000 } } })}\n`)
+  const got = await cli(one, ['context', 'show'])
+  assert.equal(got.code, 0)
+  assert.match(got.err, /^! 零件 fake 连续失败 3 次，这次不问（冷却到下一次会话）$/m)
+  assert.doesNotMatch(got.err, /抓取预算/)
+  const said = got.err.split('\n').filter((line) => line.includes('fake'))
+  assert.equal(said.length, 1, `同一件事说了 ${said.length} 遍：${got.err}`)
+})
+
+// 查不到就是查不到：退出码不许因为换了个输出格式就变成"成功"（§6 查不到退 1）。
+test('memory show 查不到时退 1：--json 与人类分支同一个退出码', async () => {
+  const one = box()
+  const human = await cli(one, ['memory', 'show', 'm-20260101-01'])
+  assert.equal(human.code, 1)
+  const json = await cli(one, ['memory', 'show', 'm-20260101-01', '--json'])
+  assert.equal(json.code, 1, `--json 分支退 ${json.code}，与人类分支不一致`)
+  assert.equal(JSON.parse(json.out).record, null)
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
