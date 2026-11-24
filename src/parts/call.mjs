@@ -78,6 +78,20 @@ function dropPipes(child) {
   } catch {}
 }
 
+// Windows 的 `.cmd` 是包在 cmd.exe 外面的一层：找不到 node、路径写错时死的是 cmd.exe，
+// 它会用系统 OEM 代码页（中文机器上是 GBK）往 stderr 吐一句报错，我们按 UTF-8 读出来是一串
+// U+FFFD——看着像乱码，其实是话没按对编码说。UTF-8 解出替换字符就退回 GBK 再解一次；
+// 两边都解不出来（真二进制）也只是把替换字符留着，不会更糟。
+function decode(buf) {
+  const text = buf.toString('utf8')
+  if (!WIN || !text.includes('\ufffd')) return text
+  try {
+    return new TextDecoder('gbk').decode(buf)
+  } catch {
+    return text
+  }
+}
+
 // 截断按 UTF-8 字符边界收尾：把末尾半个多字节字符整个丢掉。
 // 不这么做，out 尾部会是一个 U+FFFD，8KB 的预算就花在一个读不出来的方块上。
 function trimPartial(buf) {
@@ -112,7 +126,7 @@ function sink(cap) {
     },
     text() {
       const buf = Buffer.concat(chunks)
-      return (over ? trimPartial(buf) : buf).toString('utf8')
+      return decode(over ? trimPartial(buf) : buf)
     },
     get over() {
       return over
@@ -141,6 +155,18 @@ function classify(code) {
   if (code === 75) return 'timeout'
   if (code === 69) return 'missing'
   return 'crash'
+}
+
+// "它自己崩了"和"它根本没起来"是两件事，可 Windows 包装层把它们说成同一句话：`.cmd` 里那句
+// node 找不到时，死的是 cmd.exe，退出码一律 1。这两件事的去向都是摘掉能力，但屏上说的话不一样
+// （一个「崩了」、一个「没装好」），修的人往哪儿看也完全不一样。认两条硬证据：退出码 1、stdout
+// 一个字都没有、stderr 是 cmd.exe 自己的那几句报错。少一条就不敢改判——宁可报"崩了"。
+const NOT_STARTED = /不是内部或外部命令|is not recognized as an internal or external command|系统找不到指定的路径|The system cannot find the path|系统找不到指定的文件|The system cannot find the file|拒绝访问|Access is denied/i
+
+function neverStarted(stderr, stdout, code) {
+  if (!WIN || code !== 1) return false
+  if (stdout.trim() !== '') return false
+  return NOT_STARTED.test(stderr)
 }
 
 // 直通：stdio 全 inherit，退出码原样交回。参数不安全时抛（本函数只回一个数字，没有
@@ -224,7 +250,13 @@ export function capture(part, opts = {}, legacyEnv) {
       child.on('close', (code, signal) => {
         const c = signal ? 128 : (code ?? 128)
         const patch = { status: classify(c), code: c }
-        if (signal) patch.why = `被信号 ${signal} 打断`
+        if (signal) {
+          patch.why = `被信号 ${signal} 打断`
+        } else if (patch.status === 'crash' && neverStarted(err.text(), out.text(), c)) {
+          // 起不来 = 依赖缺失（§8 的 69 那一类），不是它跑起来以后崩了。
+          patch.status = 'missing'
+          patch.why = '起不来：解释器或路径不对'
+        }
         finish(patch)
       })
       timer = setTimeout(() => {
