@@ -36,7 +36,10 @@ export function cost(s) {
 // 不在这里补省略号：省略号也要占预算，而"被截过"这件事该由调用方决定怎么显示。
 export function cut(s, budget) {
   const text = toText(s)
-  const cap = Number.isFinite(budget) ? budget : 0
+  const cap = capOf(budget)
+  // cap === null 就是"没有上限"：原文照给，也不许报 cut——报 true 等于说"我砍了"，
+  // 而一个字都没砍的谎话会让上层白写一条 "! "。
+  if (cap === null) return { text, cut: false }
   if (cost(text) <= cap) return { text, cut: false }
 
   // 一遍扫到"刚好装得下"的最长前缀。这里不用 cost() 复核：used 与 cost() 是同一次累加，
@@ -75,6 +78,18 @@ export function oneLine(s, max) {
 // design §7 写的是 '。！？；\n'：半角的 ! ? ; 大量出现在命令与路径里，当句末会切在半句话上。
 const SENTENCE_END = /[。！？；\n]/g
 const JOINT = /[，、,]/g
+
+// 预算口径只在这里定，别在调用点各转一次：
+// - 非有限数（Infinity / -Infinity）不是"0 预算"，是"没有上限"——当 0 会把整段话静默截成空串。
+// - NaN 与负数按 0：那是"给了个非法预算"，和 config 校验一个口径（非法就是 0），
+//   于是明确地回空串 + cut:true，由调用方用 "! " 说出来，而不是假装装下了。
+// - undefined / 非数字字符串同理进 NaN，落到 0。
+function capOf(budget) {
+  const n = typeof budget === 'number' ? budget : Number(budget)
+  if (Number.isNaN(n)) return 0
+  if (!Number.isFinite(n)) return null
+  return n > 0 ? n : 0
+}
 
 function lastEnd(text, re) {
   let end = 0

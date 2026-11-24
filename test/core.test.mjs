@@ -50,6 +50,23 @@ test('一个标点都没有就硬切，且切完真的没超预算', () => {
   assert.equal(cut(text, 16).cut, false, '刚好装得下也算放得下')
 })
 
+test('非有限预算不是"0 预算"：Infinity 就是不截断，NaN 与负数才是空串', () => {
+  const text = '她关了窗。然后去睡了，很久很久。'
+  // 不设上限的调用方（"全都给我"）传 Infinity 最自然：当 0 处理会把整段话静默截成空串。
+  const all = cut(text, Infinity)
+  assert.equal(all.text, text)
+  assert.equal(all.cut, false, '一个字都没砍就不许报 cut：报 true 等于说了一句假话')
+  assert.equal(cut(text, -Infinity).text, text, '负无穷同样是"没有上限"，不是"没预算"')
+  // NaN 与负数是"非法预算"，按 0 算：明确回空串并说清砍过，让上层用 "! " 报出来。
+  for (const bad of [NaN, -1, -0.5]) {
+    const r = cut(text, bad)
+    assert.equal(r.text, '', `非法预算 ${String(bad)} 应当按 0 处理`)
+    assert.equal(r.cut, true)
+  }
+  // 真给了 0 也是空串 + cut:true，和非法预算是同一条路，别为"HANDLE 0"再开一个分支。
+  assert.deepEqual(cut(text, 0), cut(text, NaN))
+})
+
 test('换行折成空格；超长截断并补省略号，结果不超 max', () => {
   assert.equal(oneLine('她关了窗\n然后去睡了', 20), '她关了窗 然后去睡了')
   assert.equal(oneLine('a\r\nb', 10), 'a b')
