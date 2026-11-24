@@ -32,7 +32,7 @@ export function readSelf(home) {
     cost: used,
     updatedAt: stat === undefined ? null : stat.mtimeMs,
     limit: SELF_MAX,
-    over: used > SELF_MAX,
+    over: overLimit(text),
   }
 }
 
@@ -97,13 +97,21 @@ function normalize(text, what) {
 }
 
 // 预算按写下去的整份文本算（含标题与空行）：注入时读的就是这些字节。
+// 但**末尾换行不参与上限判定**：那是 normalize 补的文件格式（省得下次追加还要猜补不补），
+// 不是人写的字。不剥掉它，一个人恰好写了 600 cost 的自述会被判成 600.3 挡在门外——
+// 差就差在那一个看不见的换行上，而他改哪儿都改不出这 0.28。
+// 报出去的 cost 仍是整份（含尾换行）：那才是真占了预算的字节数。
 function budgetOf(body, what) {
   const used = cost(body)
-  if (used > SELF_MAX) {
+  if (overLimit(body)) {
     throw new Error(
       `${what} 会写到 ${used.toFixed(1)} cost，自我块上限是 ${SELF_MAX}：`
         + '先删掉不该留的那段（整份覆盖，别指望截断）',
     )
   }
   return used
+}
+
+function overLimit(text) {
+  return cost(text.replace(/\n+$/, '')) > SELF_MAX
 }
