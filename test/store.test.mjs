@@ -251,6 +251,24 @@ test('claim 并发 20 个不重号，序号从 1 连续排到 20', async () => {
   await assert.rejects(claim(dir, 'x'), /前缀/)
 })
 
+test('同一天发到第 105 个号不撞号：序号只加宽不截断（id 字典序不等于发号顺序）', async () => {
+  const dir = tempDir()
+  ensure(dir)
+  const at = new Date(2026, 10, 13, 12, 0).getTime()
+  const ids = []
+  for (let i = 0; i < 105; i += 1) ids.push(await claim(dir, 'e', at))
+
+  assert.equal(new Set(ids).size, 105, '105 个号互不相同：重号会静默覆盖一条记忆')
+  assert.equal(ids[99], 'e-20261113-100', '过百只加宽成三位，不许截成两位')
+  assert.equal(ids[104], 'e-20261113-105')
+  // 按序号解析能拿到第 105 条：要顺序就按数字取，别拿 id 比大小。
+  const bySeq = [...ids].sort((a, b) => Number(a.split('-')[2]) - Number(b.split('-')[2]))
+  assert.equal(bySeq.at(-1), 'e-20261113-105')
+  // 字典序**不承诺**等于发号顺序（'…-99' 排在 '…-105' 后面）。全仓没有任何判断靠 id 的
+  // 码位序：平手时用 id 只是为了结果稳定，排序主键一律是 at。要顺序请按序号解析或按 at 排。
+  assert.equal([...ids].sort().at(-1), 'e-20261113-99')
+})
+
 test('listShards 按自然日/自然月粗筛，结果按时间升序', () => {
   const dir = tempDir()
   ensure(dir)

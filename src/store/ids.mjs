@@ -26,6 +26,12 @@ export async function claim(homeDir, prefix, at = now(), opts = {}) {
 
   for (let tries = 0; tries < CLAIM_TRIES; tries += 1) {
     const id = `${head}${pad(seq)}`
+    // 自检：补零只许加宽，不许改数值。哪天有人把 pad 写成"固定两位截断"，第 105 个号就会
+    // 跟第 5 个号同名，而 wx 只会一次次 EEXIST，最后报一句"抢号失败"——
+    // 错误现场和病灶中间隔着 64 次重试，谁也不认得出是自己。
+    if (Number(id.slice(head.length)) !== seq) {
+      throw new Error(`发号自检没过：${id} 读回来不是第 ${seq} 号（序号补零不许截断）`)
+    }
     try {
       const handle = await fs.promises.open(path.join(dir, id), 'wx')
       await handle.close()
@@ -58,6 +64,11 @@ async function maxSeq(dir, head) {
   return max
 }
 
+// 只补到两位起步，之后按需变宽：99 之后是 '100'。宽度不定，所以 id 的字典序**不承诺**
+// 等于发号顺序（'…-99' > '…-105'）。这不是缺陷：全仓没有任何判断靠 id 的码位序，
+// 排序主键一律是 `at`，要顺序就按序号解析（Number(tail)）或按 `at` 排（AGENTS 五）。
+// 唯一不能让步的是**绝不截断**：截成两位，第 105 个号就会跟第 5 个号同名，
+// wx 抢号只会一路 EEXIST，最后报一句"抢号失败"——现场离病灶隔了 64 次重试。
 function pad(n) {
   return n < 10 ? `0${n}` : String(n)
 }
