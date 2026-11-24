@@ -803,6 +803,62 @@ test('memory show 查不到时退 1：--json 与人类分支同一个退出码',
   assert.equal(JSON.parse(json.out).record, null)
 })
 
+// 灵魂的二级命令跟别的资源同一套：裸 soul 就是 ls，`--json` 在每个子命令上都认（§6）。
+// 卡怎么解析归 src/soul，这里只锁"命令面"这一层：名字、开关、退出码。
+const SOUL_CARD = {
+  'name.md': '小满。自称"我"。\n',
+  'identity.md': '我是小满，做运维出身，现在替你盯代码和线上。\n',
+  'soul.md': '句子短。先结论，再一句理由。\n',
+  'dialogue.md': '<START>\n你: 这个报错怎么修\n我: 把日志第 12 行贴全。\n'
+    + '<START>\n你: 你上次说的方案跑不通\n我: 跑不通的是哪一步。\n',
+  'card.json': '{"name":"小满","knobs":{"warm":-1,"drive":0,"sharp":1},"source":"手写示例"}\n',
+}
+
+function writeSoulCard(one, name) {
+  const abs = path.join(one.dir, 'soul', name)
+  fs.mkdirSync(abs, { recursive: true })
+  for (const [file, body] of Object.entries(SOUL_CARD)) fs.writeFileSync(path.join(abs, file), body)
+}
+
+test('裸 soul 就是 soul ls：资源无动作时按 ls 走，不许退用法错', async () => {
+  const one = box()
+  const bare = await cli(one, ['soul'])
+  const ls = await cli(one, ['soul', 'ls'])
+  assert.equal(bare.code, 0, `裸 soul 退了 ${bare.code}：${bare.err}`)
+  assert.equal(bare.out, ls.out, '裸 soul 与 soul ls 必须是同一屏')
+  assert.match(bare.out, /还没有灵魂卡/)
+})
+
+test('soul show 不把 --json 当名字：不写名字与写了名字都认这个开关', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  assert.equal((await cli(one, ['soul', 'use', '小满'])).code, 0)
+  const anonymous = await cli(one, ['soul', 'show', '--json'])
+  assert.equal(anonymous.code, 0, `soul show --json 退了 ${anonymous.code}：${anonymous.err}`)
+  const view = JSON.parse(anonymous.out)
+  assert.ok(view.lines.length > 0, 'JSON 里该带上装进去的段')
+  assert.equal(anonymous.out.trim().split('\n').length, 1, '读命令的 --json 恰好一行')
+  const named = await cli(one, ['soul', 'show', '小满', '--json'])
+  assert.equal(named.code, 0)
+  assert.equal(named.out, anonymous.out)
+  const human = await cli(one, ['soul', 'show'])
+  assert.match(human.out, /^灵魂：小满 {2}旋钮 warm -1 \/ drive 0 \/ sharp \+1/)
+})
+
+test('soul ls --json 与 soul check --json 都是一行 JSON，不是人类文本', async () => {
+  const one = box()
+  writeSoulCard(one, '小满')
+  assert.equal((await cli(one, ['soul', 'use', '小满'])).code, 0)
+  const ls = await cli(one, ['soul', 'ls', '--json'])
+  assert.equal(ls.code, 0)
+  const doc = JSON.parse(ls.out)
+  assert.equal(doc.current.name, '小满')
+  assert.equal(doc.items[0].name, '小满')
+  const check = await cli(one, ['soul', 'check', '--json'])
+  assert.equal(check.code, 0, `soul check --json 退了 ${check.code}：${check.err}`)
+  assert.equal(JSON.parse(check.out).ok, true)
+})
+
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
