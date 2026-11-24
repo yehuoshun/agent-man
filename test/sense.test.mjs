@@ -214,6 +214,25 @@ test('parts.* 这四个配置键一路传到 describe 与 capture，不再有死
   assert.deepEqual([seenCap[0].timeoutMax, seenCap[0].limit], [1000, 512])
 })
 
+test('零件自报的期限也要服从 parts.timeout：配置说等 200ms，就不许陪它等 5s', async () => {
+  const seen = []
+  const spyOf = (declared) => ({
+    describe: async (p) => ({
+      ok: true, name: p.name, desc: '', section: '环境', timeout_ms: declared, side_effects: false,
+    }),
+    capture: async (p, o) => {
+      seen.push(o.timeout)
+      return { status: 'ok', code: 0, out: '答话', err: '', truncated: false }
+    },
+  })
+  await sense({}, { parts: [part('slowpoke')], deps: spyOf(5000), timeout: 200, timeoutMax: 30000 })
+  assert.deepEqual(seen, [200], '自报 5000ms 被配置的 200ms 掐掉，否则这个开关只对没声明的零件有效')
+
+  // 声明得比配置短的照旧按短的走：没人有耐心等，也别替零件加时间。
+  await sense({}, { parts: [part('quick')], deps: spyOf(100), timeout: 5000, timeoutMax: 30000 })
+  assert.deepEqual(seen, [200, 100])
+})
+
 // 账本只认三个函数，所以冷却可以拿一本假账测：不必为了测一句"这次不问"去碰磁盘。
 function fakeLedger(seed = {}) {
   const book = { ...seed }

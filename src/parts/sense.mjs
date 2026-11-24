@@ -75,7 +75,10 @@ async function askOnce(part, env, deps, left, limits) {
   // capture 的 timeout 是**剩余时间**（零件自己声明的只用来封顶）：它到点硬杀，
   // 所以"总等待 ≤ deadline"不靠外面再包一层竞速，也不会留下没人收的进程。
   const rest = left()
-  const declared = seen.timeout_ms ?? limits.timeout
+  // 零件自报的期限也要服从 `parts.timeout`：配置说"每个零件最多等 200ms"，就该连"零件自称要 5s"
+  // 一起掐掉——不然这个开关只对没声明 timeout_ms 的零件有效，而那是最少见的一半。
+  // 声明得比配置短的照旧按短的走（没人有耐心等，也别替它加时间）。
+  const declared = Math.min(seen.timeout_ms ?? limits.timeout, limits.timeout)
   const waitMs = rest === null ? declared : Math.min(declared, Math.max(rest, MIN_CAPTURE_MS))
   const r = await deps.capture(part, {
     args: [],
