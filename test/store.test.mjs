@@ -170,6 +170,48 @@ test('writeAtomic 覆盖写不留 .tmp，读到的永远是整份新内容', asy
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
 })
 
+test('改名失败时 tmp 里留着整份新内容，下一次重试就覆盖干净', async () => {
+  const dir = tempDir()
+  const file = path.join(dir, 'meta.json')
+  await writeAtomic(file, '{"a":1}\n')
+
+  const real = fs.renameSync
+  fs.renameSync = () => {
+    const e = new Error('模拟改名被占用挡住')
+    e.code = 'EISDIR'
+    throw e
+  }
+  try {
+    await assert.rejects(writeAtomic(file, '{"a":2}\n'), /原子写失败：.*内容在 .*\.tmp/)
+  } finally {
+    fs.renameSync = real
+  }
+  // 整份新内容留在 tmp 里：失败时最要紧的是别把这次要写的东西也丢了。
+  assert.equal(fs.readFileSync(`${file}.tmp`, 'utf8'), '{"a":2}\n')
+  // 旧文件一个字节没动（rename 根本没发生），读者看不到半份新内容。
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"a":1}\n')
+  // 重试一次：tmp 被整份覆盖，收尾干净，不留没人收的垃圾。
+  await writeAtomic(file, '{"a":3}\n')
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"a":3}\n')
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
+})
+
+test('写到一半就失败不留 .tmp：半份内容没人读，只是数据目录里的垃圾', async () => {
+  const dir = tempDir()
+  const file = path.join(dir, 'meta.json')
+  const real = fs.writeSync
+  fs.writeSync = () => {
+    throw new Error('模拟磁盘写一半就崩')
+  }
+  try {
+    await assert.rejects(writeAtomic(file, '{"a":1}\n'), /模拟磁盘写一半就崩/)
+  } finally {
+    fs.writeSync = real
+  }
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
+  assert.equal(fs.existsSync(file), false, '没落盘就是没落盘，别留个空文件假装写过')
+})
+
 test('readJson 分得清"还没写过"（null）与"写坏了"（__bad）', () => {
   const dir = tempDir()
   assert.equal(readJson(path.join(dir, 'meta.json')), null)

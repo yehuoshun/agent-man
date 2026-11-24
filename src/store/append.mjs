@@ -140,12 +140,18 @@ const RETRY_ATTEMPTS = 6
 
 export async function writeAtomic(file, text) {
   const tmp = `${file}.tmp`
-  const fd = fs.openSync(tmp, 'w')
   try {
-    fs.writeSync(fd, text)
-    fs.fsyncSync(fd)
-  } finally {
-    fs.closeSync(fd)
+    const fd = fs.openSync(tmp, 'w')
+    try {
+      fs.writeSync(fd, text)
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch (e) {
+    // 写到一半就失败：tmp 里是半份内容，谁也不会去读半份，留着它只是数据目录里的垃圾。清掉再抛。
+    discard(tmp)
+    throw e
   }
 
   let wait = RETRY_DELAY
@@ -156,14 +162,25 @@ export async function writeAtomic(file, text) {
     } catch (e) {
       const code = e && e.code ? e.code : ''
       if (!RETRY_CODES.has(code) || attempt === RETRY_ATTEMPTS) {
-        // 内容留在 tmp 里：失败时最要紧的是别把要写的东西也丢了。
-        throw new Error(`原子写失败：${file}（${code || String(e)}），内容在 ${tmp}`)
+        // 走到这里 tmp 里是整份新内容：不删——删掉等于把这次要写的东西静默丢掉。
+        // 留着的坏处是没人收，所以 doctor 有一项「残留 .tmp」会把它连路径一起报出来；
+        // 下一次对同一个文件 writeAtomic 会用 'w' 覆盖它，重试一次就干净了。
+        throw new Error(`原子写失败：${file}（${code || String(e)}），内容在 ${tmp}，等会重试一次就会覆盖它`)
       }
       await sleep(wait)
       wait = Math.min(wait * 2, RETRY_DELAY_MAX)
     }
   }
   return file
+}
+
+// 清 tmp 自己失败不盖住原始错误：那个错更要紧，留下的 tmp 由 doctor 的残留检查报出来。
+function discard(file) {
+  try {
+    fs.rmSync(file, { force: true })
+  } catch {
+    // 见上。
+  }
 }
 
 // 不存在返回 null（"还没写过"是正常状态），坏 JSON 返回 {__bad:true}（"写坏了"不是）。
