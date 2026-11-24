@@ -85,9 +85,18 @@ export function assertLanded(file, obj, line = JSON.stringify(obj)) {
   throw new Error(`写入没有落盘：${file} 里找不到 ${who}`)
 }
 
+// BOM 是文件头的编码标记，不是这一行的内容。记事本另存过的文件、被 PowerShell 5.1 重定向写过的
+// 文件都带它；带着 U+FEFF 去 JSON.parse 一定失败，于是整份记忆的第一行被当成坏行丢掉——
+// 修的是解析口径，不是让人手动去删 BOM。
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
 // 坏行跳过并计数，不抛：一行坏掉不该让整份记忆消失，但也不能装作没发生——
 // bad 由调用方用 "! " 报出来（AGENTS 五）。
-export function readJsonl(file) {
+// lines: true 额外带出坏行的行号与原因（doctor 要报得出"哪个文件第几行"），
+// 默认不带：返回值仍是 { items, bad } 两个字段。
+export function readJsonl(file, { lines = false } = {}) {
   let raw = ''
   try {
     raw = fs.readFileSync(file, 'utf8')
@@ -97,24 +106,29 @@ export function readJsonl(file) {
     throw e
   }
   const items = []
+  const badLines = []
   let bad = 0
-  for (const text of raw.split('\n')) {
+  const all = raw.split('\n')
+  for (let i = 0; i < all.length; i += 1) {
+    const text = stripBom(all[i])
     if (text.trim() === '') continue
-    let rec
+    let rec = null
+    let why = ''
     try {
       rec = JSON.parse(text)
-    } catch {
-      bad += 1
-      continue
+    } catch (e) {
+      why = e && e.message ? e.message : '不是合法 JSON'
     }
     // 合法 JSON 但不是对象（比如一行 "null"）同样读不出记录，算坏行。
-    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+    if (why === '' && (!rec || typeof rec !== 'object' || Array.isArray(rec))) why = '不是 JSON 对象'
+    if (why !== '') {
       bad += 1
+      if (lines) badLines.push({ line: i + 1, why, text })
       continue
     }
     items.push(rec)
   }
-  return { items, bad }
+  return lines ? { items, bad, badLines } : { items, bad }
 }
 
 // 覆盖写走 tmp → fsync → rename：rename 在同一个目录内是原子的，读者永远看不到半个文件。

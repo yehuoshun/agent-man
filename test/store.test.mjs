@@ -81,6 +81,41 @@ test('坏行跳过并计数，空行不算记录，没有的分片当空读', ()
   assert.deepEqual(readJsonl(eventsFile(dir, new Date(1999, 0, 1).getTime())), { items: [], bad: 0 })
 })
 
+test('带 BOM 的分片照样读得出记录：BOM 是文件头，不是第一行的内容', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const ts = new Date(2026, 10, 13, 21, 40).getTime()
+  const file = eventsFile(dir, ts)
+  // 记事本另存、PowerShell 5.1 重定向都会在文件头留一个 U+FEFF。
+  const rec = { id: 'e-1', at: ts, text: '她关了窗' }
+  fs.writeFileSync(file, `\uFEFF${JSON.stringify(rec)}\n`)
+  appendJsonl(file, { id: 'e-2', at: ts + 1000, text: '二' })
+
+  const back = readJsonl(file)
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'], 'BOM 不该让第一行变成坏行')
+  assert.equal(back.bad, 0)
+  // 行首 BOM 同样要剥：几段文件拼接起来时，第二段开头也会带一个。
+  fs.appendFileSync(file, `\uFEFF${JSON.stringify({ id: 'e-3', at: ts + 2000, text: '三' })}\n`)
+  assert.deepEqual(readJsonl(file).items.map((r) => r.id), ['e-1', 'e-2', 'e-3'])
+})
+
+test('要报"第几行坏"时 readJsonl 连行号和原文一起给，不要就不给', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const file = eventsFile(dir, new Date(2026, 10, 13, 21, 40).getTime())
+  fs.writeFileSync(file, '{"id":"e-1","at":1}\nnot json\n\n{"id":"e-2","at":2}\n')
+
+  const back = readJsonl(file, { lines: true })
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'])
+  assert.equal(back.bad, 1)
+  // 行号按文件里的物理行算（空行也占一行），doctor 报的位置要能直接对上编辑器。
+  assert.deepEqual(back.badLines.map((o) => o.line), [2])
+  assert.equal(back.badLines[0].text, 'not json')
+  assert.ok(back.badLines[0].why.length > 0, '坏行要带原因，只给行号等于让人自己猜')
+  // 不需要行号时不多给字段：按 { items, bad } 比对的调用方不受影响。
+  assert.deepEqual(Object.keys(readJsonl(file)).sort(), ['bad', 'items'])
+})
+
 test('末行没有换行的 jsonl 追加时先补一个换行，旧行不被粘成一行', () => {
   const dir = tempDir()
   ensure(dir)
