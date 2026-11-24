@@ -566,3 +566,28 @@ test('处境块的槽位是处境 550 + 零件 120：两笔分开记，屏上是
   // 老配置（没有 inject.parts）只算处境自己的那一格，不会因为缺键变成 0 整块装不下。
   assert.equal(situationBudget({ inject: { situation: 550 } }), 550)
 })
+
+test('注入的情绪行永远附原因：持久情绪优先，没有就说最近那条刺激（§14.9）', () => {
+  const base = { v: 50, e: 60, t: 40, r: -80, mood: '平淡', transient: [] }
+  const hate = affectLine({ ...base, persistent: { kind: '厌弃', why: '尊重 -80（≤ −70）且信任 40（< 50）' } })
+  assert.match(hate, /· 厌弃：尊重 -80（≤ −70）且信任 40（< 50）/, hate)
+  // 没有持久情绪就落到最近那条刺激：不许只剩一个形容词。
+  const one = affectLine({
+    ...base,
+    persistent: { kind: null, why: '' },
+    transient: [{ kind: 'task.fail', why: '又断了一次', at: 1 }],
+  })
+  assert.match(one, /· task\.fail：又断了一次/, one)
+  assert.ok(cost(one) <= 80, `情绪行 ${cost(one)} cost 超过 80`)
+})
+
+test('原因太长时按 整行+原因+规则 → 整行+原因 → 只数字 退，且真跑 cost 复核', () => {
+  const snap = {
+    v: 50, e: 60, t: 40, r: -80, mood: '平淡', transient: [],
+    persistent: { kind: '厌弃', why: `尊重 -80（≤ −70）且信任 40（< 50）。${'这一条写得很长，'.repeat(20)}` },
+  }
+  const line = affectLine(snap)
+  assert.ok(cost(line) <= 80, `退完之后 ${cost(line)} 还是超 80`)
+  assert.doesNotMatch(line, /这一条写得/, '装不下的原因整段退掉，不截半句')
+  assert.match(line, /^v=50 e=60 t=40 r=-80 · 平淡 · 0 条刺激/, line)
+})
