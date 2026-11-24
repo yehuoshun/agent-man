@@ -61,10 +61,33 @@ export function jaccard(a, b) {
   const left = toSet(a)
   const right = toSet(b)
   if (left.size === 0 && right.size === 0) return 0
-  let hit = 0
-  for (const t of left) if (right.has(t)) hit += 1
+  const hit = hits(left, right)
   const union = left.size + right.size - hit
   return union === 0 ? 0 : hit / union
+}
+
+// 命中不是"集合相等"：一元组线索（'累'）必须被多元组（'很累'）接住，否则单独一个字的
+// 线索永远查不到任何多字文本——jaccard(['累'], ['她最','最近','近很','很累']) 会算成 0，
+// 一句"最近很累"就再也检索不到。反过来也一样：查询是多字、记录里恰好只有一个单字块。
+// 命中数照样进 union（|A|+|B|-hit 就是并集大小），值域仍是 0..1，不因放宽判定而越界。
+function hits(left, right) {
+  let hit = 0
+  for (const t of left) if (matches(t, right)) hit += 1
+  return hit
+}
+
+function matches(token, other) {
+  for (const o of other) {
+    if (o === token) return true
+    // 只有 CJK 单字才做包含判定：单字母 'x' 混进 'box' 不是同一个线索。
+    if (isOneCjk(token) && o.includes(token)) return true
+    if (isOneCjk(o) && token.includes(o)) return true
+  }
+  return false
+}
+
+function isOneCjk(t) {
+  return Array.from(t).length === 1 && CJK_ONE.test(t)
 }
 
 function toSet(x) {
