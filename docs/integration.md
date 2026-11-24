@@ -61,15 +61,22 @@ DSH 每一步注入（dsh/index.mjs）
 | `name` | 非空字符串 | 屏上与 `! ` 里点名用 |
 | `desc` | 字符串 | 一句话说明这件干什么；只做校验与留档，当前没有屏渲染它 |
 | `section` | 字符串 | `context sense` 汇总里挂在这行前面的段名；屏上固定归到「建议」 |
-| `timeout_ms` | 正数 | 本件单次最多等多久（会被 `parts.timeoutMax` 夹住） |
-| `side_effects` | 必须存在 | 说明这件无参时会不会写盘；骨架只查在不在，不解释里面的值 |
+| `timeout_ms` | 正数 | 本件单次最多等多久（被 `parts.timeout` 与 `parts.timeoutMax` 两头夹住） |
+| `side_effects` | 必须是布尔 | 说明这件无参时会不会写盘；写 `"no"` 或 `[]` 这件就不接 |
 
-- **超时与截断**：`parts.timeout`（默认 5000ms）、`parts.timeoutMax`（默认 30000ms）、
-  `parts.stdoutMax`（默认 8192 字节，超了说一句「输出超过 8KB，已截断」）。
-- **连续失败的冷却是一个约定，不是自动的**：`parts.failLimit`（默认 3）配 `src/parts/index.mjs`
-  的 `bump()` / `blocked()` 定义了「连坏 3 次就先别问」的账本形状，账要调用方按会话自己维护；
-  CLI 与当前宿主每次都是重新 `sense`，不留这个账。所以坏零件眼下靠 `parts.timeout` 与注入的
-  `parts.deadline` 兜着，别指望它自己被跳过。
+- **超时与截断四个键都是活的**：`parts.timeout`（默认 5000ms）、`parts.timeoutMax`（默认
+  30000ms）、`parts.stdoutMax`（默认 8192 字节，超了说一句「输出超过 N 字节，已截断」）、
+  `parts.failLimit`（默认 3）。CLI 那一屏与宿主注入两侧都把这四个键传进 `sense`，所以
+  `config set parts.timeout 200` 之后，连零件自报的 `timeout_ms: 5000` 也一起被掐在 200ms
+  （自报得比配置短的照旧按短的走——声明是承诺，配置是天花板）。
+- **连续失败的冷却是自动的**：账本落在数据目录水位文件的 `parts` 段（`src/parts/ledger.mjs`
+  的 `bump()` / `blocked()`），由 `sense()` 自己读写：一件连续失败到 `parts.failLimit` 次之后，
+  下一次连 `--describe` 都不起进程，直接进 `dropped[{ name, reason: 'cooldown' }]`；中间答上来
+  一次就把账清回 `{ fail: 0, until: null }`。账按数据目录记，不按进程记——反复开 CLI 也认得它。
+- **冷却怎么解除（两条腿，缺一条就会「永久摘掉」）**：`until` 写的是**最后那次失败 + 30 分钟**
+  （`PART_COOLDOWN`），到点自动放回来，屏上说「冷却 N 分钟，到点自动再试一次」；宿主那边另有
+  一条——一次进程就是一次会话，进程里第一次注入之前把整份账清零（design §8 的「冷却到下一次
+  会话」）。只有 CLI 的场合靠时间窗，因为 CLI 没有「会话开始」这个时刻可以靠。
 - **答话是一行**：多行会被折成一行；成本口径是半角 0.28、全角 1.0、每行加 8（`src/core/const.mjs`）。
   插件侧自己把一行压在 30 cost 以内——这不是骨架强制，但建议段一屏只放一条，太长的会被丢。
 - **哨兵 `AGENT_MAN_PART_CALL=1`**：本体调零件时一定会盖这个环境变量。零件无参时若反过来问
@@ -79,6 +86,7 @@ DSH 每一步注入（dsh/index.mjs）
   `AGENT_MAN_BIN` → PATH → `AGENT_MAN_REPO`）。它们不是配置键，本体只认下名字、不读取，所以
   设了也不会报「不对应任何配置键」。
 - **不许零件在零件里**：零件想吃别的零件的数据，就在自己的无参输出里带上，别指望嵌套去问。
+
 
 ## 3. 插件侧约定（`agent-man-yuQue` 这一款怎么做的）
 
@@ -95,6 +103,19 @@ DSH 每一步注入（dsh/index.mjs）
   不是插件坏了，不该在本体那边变成一条 `! ` 噪声。写操作的目标必须每次由人明说：`state.json`
   里记的「上次写了哪个库」只有 `status` 与无参沿用，`sync` 不信它。
 
+## 3.1 网关这一款（`agent-man-gateway`）
+
+它不是"给宿主看的东西"，是**审别人说的话**的那一类零件，但对外形状与 yuQue 一模一样：
+
+- `--describe` 报 `{ name: 'gateway', desc: '判一条内容能不能进、能不能出', section: '网关',
+  timeout_ms: 5000, side_effects: false }`。`side_effects` 是 `false`，因为它无参时只数自己的
+  规则表（入站条数、合规类目、出站项），一个字节都不写。
+- 无参退 0 只答一行：`网关在：入站 6 条 · 合规 25 类 · 出站 9 项`。这一行是给「建议」段看的，
+  不是给人看的账——要判一条内容，得走直通：`agent-man gateway inbound --text "…" --json`。
+- 退出码是本仓自己的三分类，不是 §8 的五分类：`0` 放行、`1` 拒、`64` 用法错。放行/拒绝本来就是
+  "业务结果"，用 1 表示"拒"比用 69 更贴近它的语义；参数错统一 64，与 §8 一致。
+- **Windows 上必须有 `.cmd` 垫片**：`parts.scan` 只认 `.exe/.cmd/.bat`，只有一个 `.mjs` 的零件
+  在这台机器上是**看不见**的。仓库里 `bin/agent-man-gateway.cmd` 就是这个垫片。
 ## 4. 实测数字（一次真机联调）
 
 | 场景 | 墙钟 | 备注 |
@@ -174,6 +195,6 @@ agent-man-yuQue sync              # 真写；随后再跑一次应该报「没�
 - **建议段有门控**：不到 v≥65 且 e≥76 就不显示建议。屏上没零件答话，不代表零件没跑，可能只是
   被门控丢了——`context sense --json` 能看到答上来的原文。
 - **先看 `dropped` 再怀疑门控**：`context sense --json` 里 `dropped[{ name, reason }]` 是硬证据，
-  `reason: 'deadline'` 是零件太慢（`src/parts/sense.mjs:97`），`reason: 'budget'` 是装不下
-  （`src/parts/sense.mjs:113`）。前者要那个零件提速——别调大期限，期限是总账，一调每个人每一步
+  `reason: 'deadline'` 是零件太慢（`src/parts/sense.mjs:132`），`reason: 'budget'` 是装不下
+  （`src/parts/sense.mjs:154`）。前者要那个零件提速——别调大期限，期限是总账，一调每个人每一步
   都跟着等；后者才是调 `inject.parts` / `inject.situation` 的事。
