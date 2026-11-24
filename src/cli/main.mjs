@@ -50,10 +50,13 @@ export async function main(argv, ctx = {}) {
   }
 
   // 不带参就是处境屏（design §6）：不另造一条"什么都没给"的分支。
-  const found = args.length === 0 ? resolve(['context', 'show']) : resolve(args)
+  // 只给开关也算"没给命令"——`agent-man --json` 就是 `context show --json`；
+  // 开关本身合不合法由那条命令自己判，不在这里预先否掉（打错照样退 2，理由更具体）。
+  const bare = args.length === 0 || args[0].startsWith('--')
+  const found = bare ? resolve(['context', 'show', ...args]) : resolve(args)
   if (!found) {
-    if (args[0].startsWith('--')) {
-      err(`! 不认识的开关：${args[0]}（打 agent-man --help 看有哪些命令）\n`)
+    if (args.length === 0 || args[0].startsWith('--')) {
+      err('! 认不出这条命令（打 agent-man --help 看有哪些命令）\n')
       return 2
     }
     return await plugin(args[0], args.slice(1), { env, out, err, now })

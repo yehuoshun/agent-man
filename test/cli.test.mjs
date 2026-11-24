@@ -859,6 +859,24 @@ test('soul ls --json 与 soul check --json 都是一行 JSON，不是人类文�
   assert.equal(JSON.parse(check.out).ok, true)
 })
 
+// 裸 agent-man 是处境屏（§6 唯一一条默认命令）：只给开关也算"没给命令"，
+// 开关照常往那条命令上递，于是 `agent-man --json` 就是 `context show --json`。
+test('agent-man --json 等价于 context show --json：退 0 且恰好一行 JSON', async () => {
+  const one = box()
+  const bare = await cli(one, ['--json'])
+  const full = await cli(one, ['context', 'show', '--json'])
+  assert.equal(bare.code, 0, `agent-man --json 退了 ${bare.code}：${bare.err}`)
+  assert.equal(bare.out, full.out, '两条路必须是同一屏')
+  assert.equal(bare.out.trim().split('\n').length, 1)
+})
+
+test('只给开关时打错的开关照样退 2：理由交给命令自己说，不装作没看见', async () => {
+  const one = box()
+  const got = await cli(one, ['--jsno'])
+  assert.equal(got.code, 2)
+  assert.match(got.err, /^! 不认识的开关：--jsno/)
+})
+
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
