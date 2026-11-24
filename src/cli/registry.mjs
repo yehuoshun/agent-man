@@ -1035,6 +1035,13 @@ function moodVisible(ctx, flags) {
   return cfgOf(ctx).affect.visible !== false
 }
 
+// 刺激的四轴增量（design §14.7）：weight 是 `{v,e,t,r}` 的对象，直接拼进模板就是
+// `[object Object]`——四个数各带符号写出来，人一眼能看出这次刺激往哪边推了多少。
+function weightLine(weight) {
+  const one = weight ?? {}
+  return ['v', 'e', 't', 'r'].map((axis) => `${axis}${sign(one[axis])}`).join(' ')
+}
+
 function affectLine(snapshot, visible) {
   const numbers = `v=${Math.round(snapshot.v)} e=${Math.round(snapshot.e)} ` +
     `t=${Math.round(snapshot.t)} r=${Math.round(snapshot.r)}`
@@ -1069,7 +1076,14 @@ async function affectSet(ctx) {
     at: ctx.now,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
-  else ctx.out(`已记下 ${got.item.id}  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  else {
+    // item 是**刺激/覆盖本身**，没有 id（情绪只追加日志，不按条发号）：原来写 `got.item.id`
+    // 就打出"已记下 undefined"。说清改了哪个轴、改到多少、覆盖到什么时候为止，才是这一屏的话。
+    const one = got.item ?? {}
+    const until = Number.isFinite(one.until) ? `，到 ${rel(one.until, ctx.now)} 为止` : ''
+    ctx.out(`已记下手动覆盖 ${one.axis}=${Math.round(Number(one.value) || 0)}${until}  ` +
+      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  }
   landed(ctx, got)
   return 0
 }
@@ -1121,7 +1135,12 @@ async function affectStim(ctx) {
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
-  else ctx.out(`已记下 ${got.item.id}  ${kind}（权重 ${got.weight}）\n`)
+  else {
+    // 一句人话：刺激的 kind、它对四轴的增量、以及记完之后的快照（`got.weight` 是对象，
+    // 拼进模板就是 [object Object]；`got.item` 也没有 id）。
+    ctx.out(`已记下刺激 ${got.item.kind}（${weightLine(got.weight)}）  ` +
+      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+  }
   if (got.ignored > 0) {
     ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）\n`)
   }

@@ -648,6 +648,24 @@ test('CLI 写入口的日界读配置：凌晨两点记的事落在前一天', a
   assert.match(got.out, /e-20261113-01/, '号里的日期没按配置的日界算')
 })
 
+// 屏上不许出现 undefined 与 [object Object]：这两个词一出现就是模板取错了字段，
+// 人看到的不是"记下了什么"，而是实现细节漏出来的样子（design §6 的一句人话）。
+test('affect stim 的屏显写清 kind 与四轴增量，不出现 undefined 与 [object Object]', async () => {
+  const one = box()
+  const got = await cli(one, ['affect', 'stim', 'user.praise', '--why', '他说做得好'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^已记下刺激 user\.praise（v\+8 e\+2 t\+3 r\+1） {2}v=\d+/)
+  assert.doesNotMatch(got.out, /undefined|\[object Object\]/)
+})
+
+test('affect set 的屏显写清改了哪个轴、改到多少，不出现 undefined', async () => {
+  const one = box()
+  const got = await cli(one, ['affect', 'set', '愉悦', '90', '--why', '她说这话时笑了'])
+  assert.equal(got.code, 0)
+  assert.match(got.out, /^已记下手动覆盖 v=90 {2}v=90 /)
+  assert.doesNotMatch(got.out, /undefined|\[object Object\]/)
+})
+
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
