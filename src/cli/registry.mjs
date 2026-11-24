@@ -881,7 +881,10 @@ async function contextShow(ctx) {
   // 预算用处境那一份——建议行最终也要跟日程、便条抢同一个额度，先按小份抓回来
   // 就不会出现"零件答得很响，屏上却一条都装不下"的浪费。
   const got = await senseParts(ctx, cfg, cfg.inject.situation)
-  const scene = mind.situation(homeOf(ctx), { now: ctx.now, parts: got })
+  // 灵魂卡的三个旋钮也递下去（§14.9）：建议段出不出、什么时候出，由卡的 drive 定，
+  // 不是由命令行这层猜。warm / sharp 只改措辞，situation 不看它们。
+  const home = homeOf(ctx)
+  const scene = mind.situation(home, { now: ctx.now, parts: got, knobs: soulCards.knobsOf(home) })
   if (on(flags, 'json')) jsonOut(ctx, scene)
   else ctx.out(`${renderScreen(scene)}\n`)
   // 零件自己的坏消息由这一层说清：哪个没答上来、哪个被挤掉——
@@ -1109,11 +1112,23 @@ function weightLine(weight) {
   return ['v', 'e', 't', 'r'].map((axis) => `${axis}${sign(one[axis])}`).join(' ')
 }
 
+// 情绪行（§14.6 / §14.8 / §14.9）：数字 + 标签 + 条数，行尾带一句原因。
+// 隐藏只有一个口径（decisions.md）：看不见就是整行不出现——只藏标签、留下裸数字，
+// 等于让人对着一串没有解释的数猜；判定值不受影响，只是不上屏。
+// 原因来自 affect.reasonOf()：持久情绪（厌恶/厌弃/轻蔑/失望）优先，其次最近那条刺激。
 function affectLine(snapshot, visible) {
+  if (!visible) return ''
   const numbers = `v=${Math.round(snapshot.v)} e=${Math.round(snapshot.e)} ` +
     `t=${Math.round(snapshot.t)} r=${Math.round(snapshot.r)}`
   const count = `${snapshot.transient.length} 条刺激`
-  return visible ? `${numbers} · ${snapshot.mood} · ${count}` : `${numbers} · ${count}`
+  const reason = affect.reasonOf(snapshot.persistent, snapshot.transient)
+  const tail = reason === '' ? '' : ` · ${reason}`
+  return `${numbers} · ${snapshot.mood} · ${count}${tail}`
+}
+
+// 情绪行跟着别的句子一起印：有就隔两空格接上，没有就只留前半句（不留空尾巴）。
+function withMood(head, line) {
+  return line === '' ? `${head}\n` : `${head}  ${line}\n`
 }
 
 function affectShow(ctx) {
@@ -1121,7 +1136,10 @@ function affectShow(ctx) {
   noWords(words, 'agent-man affect show [--json] [--no-mood]')
   const snapshot = affect.snapshot(homeOf(ctx), { now: ctx.now })
   if (on(flags, 'json')) jsonOut(ctx, snapshot)
-  else ctx.out(`${affectLine(snapshot, moodVisible(ctx, flags))}\n`)
+  else {
+    const line = affectLine(snapshot, moodVisible(ctx, flags))
+    if (line !== '') ctx.out(`${line}\n`)
+  }
   noisy(ctx, snapshot.skipped, '情绪日志')
   return 0
 }
@@ -1148,8 +1166,8 @@ async function affectSet(ctx) {
     // 就打出"已记下 undefined"。说清改了哪个轴、改到多少、覆盖到什么时候为止，才是这一屏的话。
     const one = got.item ?? {}
     const until = Number.isFinite(one.until) ? `，到 ${rel(one.until, ctx.now)} 为止` : ''
-    ctx.out(`已记下手动覆盖 ${one.axis}=${Math.round(Number(one.value) || 0)}${until}  ` +
-      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+    ctx.out(withMood(`已记下手动覆盖 ${one.axis}=${Math.round(Number(one.value) || 0)}${until}`,
+      affectLine(got.snapshot, moodVisible(ctx, flags))))
   }
   landed(ctx, got)
   return 0
@@ -1161,7 +1179,7 @@ async function affectClear(ctx) {
   const got = await affect.clear(homeOf(ctx), { at: ctx.now })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
-    ctx.out(`已撤掉手动覆盖  ${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+    ctx.out(withMood('已撤掉手动覆盖', affectLine(got.snapshot, moodVisible(ctx, flags))))
   }
   landed(ctx, got)
   return 0
@@ -1174,7 +1192,8 @@ function affectWhy(ctx) {
   const snapshot = affect.snapshot(homeOf(ctx), { now: ctx.now })
   if (on(flags, 'json')) jsonOut(ctx, snapshot)
   else {
-    ctx.out(`${affectLine(snapshot, moodVisible(ctx, flags))}\n`)
+    const line = affectLine(snapshot, moodVisible(ctx, flags))
+    if (line !== '') ctx.out(`${line}\n`)
     for (const one of snapshot.why) ctx.out(`  ${one}\n`)
     if (snapshot.by === 'manual' && Number.isFinite(snapshot.until)) {
       ctx.out(`  手动覆盖到 ${rel(snapshot.until, ctx.now)}（agent-man affect clear 撤掉）\n`)
@@ -1187,7 +1206,7 @@ function affectWhy(ctx) {
 async function affectStim(ctx) {
   const { words, flags } = split(ctx.rest, {
     names: ['why', 'imp', 'at'],
-    bools: ['json'],
+    bools: ['json', 'neg'],
   })
   const [kind, ...rest] = words
   if (!kind) throw new Error(`用法：agent-man affect stim <kind> --why "…"（kind 只认 ${affect.KINDS.join(' / ')}）`)
@@ -1199,17 +1218,20 @@ async function affectStim(ctx) {
   const got = await affect.stim(homeOf(ctx), {
     kind,
     why: arg(flags, 'why'),
+    neg: on(flags, 'neg'),
     at: instant(ctx, arg(flags, 'at'), 'at') ?? ctx.now,
   })
   if (on(flags, 'json')) jsonOut(ctx, got)
   else {
     // 一句人话：刺激的 kind、它对四轴的增量、以及记完之后的快照（`got.weight` 是对象，
     // 拼进模板就是 [object Object]；`got.item` 也没有 id）。
-    ctx.out(`已记下刺激 ${got.item.kind}（${weightLine(got.weight)}）  ` +
-      `${affectLine(got.snapshot, moodVisible(ctx, flags))}\n`)
+    ctx.out(withMood(`已记下刺激 ${got.item.kind}（${weightLine(got.weight)}）`,
+      affectLine(got.snapshot, moodVisible(ctx, flags))))
   }
   if (got.ignored > 0) {
-    ctx.err(`! ${got.ignored} 条同类刺激超额未计（每小时最多 ${AFFECT_STIM_PER_HOUR} 次）\n`)
+    // 数字取 counts（计入权重的条数），不拿布尔值当计数：ignored 只说"这条超额了"。
+    ctx.err(`! 同类刺激这一小时已计入 ${got.counts} 条（上限 ${AFFECT_STIM_PER_HOUR}），`
+      + '这条超额未计，日志里仍留痕\n')
   }
   landed(ctx, got)
   return 0
@@ -1269,8 +1291,14 @@ function soulShow(ctx) {
   }
   const k = view.knobs
   ctx.out(`灵魂：${wanted}  旋钮 warm ${sign(k.warm)} / drive ${sign(k.drive)} / sharp ${sign(k.sharp)}\n`)
+  // 哪几个旋钮真的接上了行为（§14.9 / decisions.md）：不说清，改卡的人会以为三个都在生效。
+  ctx.out('  已接：drive（建议段出不出）｜未接：warm、sharp（只影响措辞，这一版不动行为）\n')
   ctx.out(`注入 ${tenth(view.used)}/${tenth(view.cost)}：\n`)
-  for (const line of view.lines) ctx.out(`  ${line}\n`)
+  // 推断的段加 ~、人补的段加 *（§13.1）：末行会报"~ N 处推断"，上面就得看得见是哪几段。
+  view.lines.forEach((line, i) => {
+    const mark = view.marks?.[i] ?? ''
+    ctx.out(`  ${mark === '' ? line : `${mark} ${line}`}\n`)
+  })
   if (view.dropped.length > 0) {
     ctx.out(`装不下 ${view.dropped.length} 段（槽位与总预算 ${view.cost}）：\n`)
     for (const one of view.dropped) ctx.out(`  ${one.file} ${one.section}\n`)
