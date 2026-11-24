@@ -443,3 +443,12 @@ test('checkHome 只读：缺目录与缺 schema.json 都说清原因，且不写
 test.after(() => {
   for (const dir of HOMES) fs.rmSync(dir, { recursive: true, force: true })
 })
+
+test('带 BOM 的 JSON 照样读得出：Windows 编辑器与 PS5.1 重定向写出来的文件都带它', () => {
+  // 这不是"手滑写坏了"：记事本另存、PowerShell 5.1 的 `>` 都会写 BOM。
+  // 当成坏文件的话，doctor 会说"meta.json 写坏了"，而人打开看是完全正常的 JSON。
+  const dir = tempDir()
+  const file = path.join(dir, 'meta.json')
+  fs.writeFileSync(file, `\uFEFF${JSON.stringify({ parts: {} })}\n`, 'utf8')
+  assert.deepEqual(readJson(file), { parts: {} })
+})

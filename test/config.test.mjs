@@ -404,3 +404,11 @@ test('config show --json 恰好一行：跟其余读命令同一条规矩', asyn
   assert.equal(out[0].trim().split('\n').length, 1)
   assert.deepEqual(Object.keys(JSON.parse(out[0])), Object.keys(config.SCHEMA))
 })
+
+test('带 BOM 的 config.json 照样采纳：BOM 是编码标记，不是内容坏了', (t) => {
+  // 判据是"配置真的生效了"，不是"没抛异常"：读回来必须是文件里那个值。
+  const dir = home(t)
+  fs.writeFileSync(filePath(dir), `\uFEFF${JSON.stringify({ version: 1, inject: { total: 900 } })}\n`, 'utf8')
+  const cfg = config.load({ env: {}, homeDir: dir })
+  assert.equal(cfg.inject.total, 900)
+})

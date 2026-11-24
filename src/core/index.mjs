@@ -2,7 +2,7 @@
 // 不碰文件、不碰进程，所以能放心被任何一个模块依赖。
 export { now, dayKey, monthKey, clock, rel, parseWhen } from './time.mjs'
 export { cost, cut, oneLine } from './cost.mjs'
-export { tokens, jaccard } from './text.mjs'
+export { tokens, jaccard, stripBom } from './text.mjs'
 
 // 配置也走门面出（AGENTS 四：跨目录只准 import index.mjs）：
 // `import { config } from '../core/index.mjs'` 然后 config.load / config.run。

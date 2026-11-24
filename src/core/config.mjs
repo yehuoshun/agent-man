@@ -13,6 +13,7 @@ import {
   PART_DEADLINE, PART_FAIL_LIMIT, PART_STDOUT_MAX, PART_TIMEOUT, PART_TIMEOUT_MAX,
   PARTS_INJECT_COST, QUIET, SOUL_INJECT_COST, SOUL_USER_COST,
 } from './const.mjs'
+import { stripBom } from './text.mjs'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -413,7 +414,9 @@ function readRaw(homeDir) {
   const file = filePath(homeDir)
   let text = ''
   try {
-    text = fs.readFileSync(file, 'utf8')
+    // 带 BOM 的 config.json（记事本另存、PowerShell 重定向写出来的都带）不许当成"文件在、内容坏了"：
+    // BOM 是编码标记不是内容，剥掉再解析。判定口径与 store 的读文件共用 core/text.stripBom。
+    text = stripBom(fs.readFileSync(file, 'utf8'))
   } catch (e) {
     if (e && e.code === 'ENOENT') return { exists: false, raw: null, bad: false, why: '' }
     throw e
