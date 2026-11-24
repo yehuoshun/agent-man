@@ -20,7 +20,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // config / soul / doctor 自带渲染，原样递 ctx；新接的命令统一过 guard()：门面抛出来的
 // 用法错与数据错变成一行 "! " + 退出码 2，绝不吐栈，也绝不吞掉。
 export const TABLE = new Map([
-  ['doctor', doctor],
+  ['doctor', guard(doctor)],
   ['config', (ctx) => config.run(ctx)],
 
   // 灵魂的二级命令也进表：不走表的话，`--json` 会被当成名字，裸 `soul` 又没有归属（§6 无动作 = ls）。
@@ -138,21 +138,29 @@ export async function plugin(name, args, ctx) {
 // doctor 分两半：七项只读自检住 src/audit/doctor.mjs（它绝不写盘），渲染与退出码在这里。
 // 不合格是"这份数据还不能用"，不是"命令打错了"——所以退 1，不退 2（design §6）。
 export function doctor(ctx) {
+  // 读命令都认 --json（§6）：以前这里根本不解析 argv，`doctor --json` 既不生效也不报错，
+  // 是唯一一条"给了开关却当没给"的命令。
+  const { words, flags } = split(ctx.rest, { bools: ['json'] })
+  noWords(words, 'agent-man doctor [--json]')
   const dir = homeOf(ctx)
   const result = audit.doctor({ home: dir, ctx })
+  const bad = result.checks.filter((one) => !one.ok).length
 
-  ctx.out('agent-man doctor\n')
-  ctx.out(`  数据目录   ${dir}\n`)
-  for (const one of result.checks) {
-    ctx.out(`  ${one.ok ? 'ok' : '!!'} ${one.name}  ${one.detail}\n`)
+  if (on(flags, 'json')) {
+    jsonOut(ctx, { ok: result.ok, home: dir, bad, checks: result.checks })
+  } else {
+    ctx.out('agent-man doctor\n')
+    ctx.out(`  数据目录   ${dir}\n`)
+    for (const one of result.checks) {
+      ctx.out(`  ${one.ok ? 'ok' : '!!'} ${one.name}  ${one.detail}\n`)
+    }
   }
 
   if (!result.ok) {
-    const bad = result.checks.filter((one) => !one.ok).length
     ctx.err(`! ${bad} 项不合格：按上面的提示改，或把 AGENT_MAN_HOME 指到别处\n`)
     return 1
   }
-  ctx.out('  一切就绪\n')
+  if (!on(flags, 'json')) ctx.out('  一切就绪\n')
   return 0
 }
 

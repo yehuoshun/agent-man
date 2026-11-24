@@ -166,6 +166,48 @@ test('--help 列出的每一项都能被命令表解析到（帮里不许有打�
   assert.ok(seen.size >= 12, `帮助只解析出 ${seen.size} 条命令`)
 })
 
+test('--help 不漏项：8 个别名、裸资源=ls、读命令的开关、还没接的开关都写着', async () => {
+  const one = box()
+  const got = await cli(one, ['--help'])
+  assert.equal(got.code, 0)
+
+  // 别名短一点，但用户看帮助得知道有这一条。
+  for (const name of ['log', 'remember', 'leave', 'digest', 'cue', 'find', 'show', 'look']) {
+    assert.match(got.out, new RegExp(`${name}=`), `帮助里漏了别名 ${name}`)
+  }
+  // 裸资源 = ls：这条规矩不写，用户只能靠猜。
+  assert.match(got.out, /资源不带动作就是 ls/)
+  // 每个读命令真认的开关，帮助里都得有。
+  for (const flag of ['--all', '--live', '--key', '--no-mood', '--dry-run', '--at']) {
+    assert.ok(got.out.includes(flag), `帮助里漏了 ${flag}`)
+  }
+  // affect set 是两个位置参数，写成单参数会把人教错。
+  assert.match(got.out, /affect set <轴> <数值>/)
+  // §16 里明确退 2 的开关，帮助也得交代一声，不能让人试了才知道。
+  for (const dead of ['--due', '--imp', '--from 日期..日期', '--id']) {
+    assert.ok(got.out.includes(dead), `§16 里明确退 2 的 ${dead} 没写进"还没接"`)
+  }
+})
+
+test('帮助里的别名不是摆设：8 个都真能跑，一个也不许只剩一行说明', async () => {
+  const one = box()
+  const cases = [
+    ['log', ['她说明天早出门'], 0],
+    ['leave', ['记得喝水', '--trigger', '下次见面'], 0],
+    ['digest', ['--dry-run'], 0],
+    ['find', ['她', '--all'], 0],
+    ['look', ['--json'], 0],
+    ['cue', ['--peek'], null],
+    ['show', ['m-20260101-01', '--json'], 1],
+    ['remember', ['她习惯晚睡', '--key', 'habit'], null],
+  ]
+  for (const [name, argv, want] of cases) {
+    const got = await cli(one, [name, ...argv])
+    assert.doesNotMatch(got.err, /没有这个命令|不认识的用法/, `别名 ${name} 打不通：${got.err}`)
+    if (want !== null) assert.equal(got.code, want, `别名 ${name} 的退出码不对：${got.err}`)
+  }
+})
+
 test('event ls：窗口内的按时间倒序一行一条，窗口外的不出现', async () => {
   const one = box()
   seed(one, [
@@ -474,6 +516,22 @@ test('doctor 的渲染与退出码没被这次接线动过', async () => {
   const got = await cli(one, ['doctor'])
   assert.match(got.out, /^agent-man doctor\n {2}数据目录 {3}/)
   assert.ok(got.code === 0 || got.code === 1)
+})
+
+test('doctor --json 是一行 JSON：不再有"给了开关却当没给"的命令', async () => {
+  const one = box()
+  const got = await cli(one, ['doctor', '--json'])
+  assert.ok(got.code === 0 || got.code === 1)
+  const rows = got.out.trimEnd().split('\n')
+  assert.equal(rows.length, 1, `doctor --json 打了 ${rows.length} 行`)
+  const doc = JSON.parse(rows[0])
+  assert.equal(doc.home, one.dir)
+  assert.ok(Array.isArray(doc.checks))
+  assert.equal(typeof doc.ok, 'boolean')
+  // 读数也得守规矩：不认识的开关照样退 2，不许装作没看见。
+  const bad = await cli(one, ['doctor', '--jsno'])
+  assert.equal(bad.code, 2)
+  assert.match(bad.err, /^! 不认识的开关：--jsno/)
 })
 
 test('event add 真写进当天的分片，并把欠账记上（写过就要读得回来）', async () => {

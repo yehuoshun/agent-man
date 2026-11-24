@@ -3,31 +3,40 @@
 import { plugin, resolve } from './registry.mjs'
 
 // 帮助只列**已经接上**的命令：写了却打不通的用法，比不写更误导人。
-// 用例 `--help 列出的每一项都能被 registry 解析到` 锁着这一点。
+// 用例 `--help 列出的每一项都能被 registry 解析到` 锁着这一点；另一条用例锁"不漏项"：
+// 8 个别名、裸资源 = ls、每个读命令认的开关、§16 里明确退 2 的那几个开关，都得在这儿有一行。
 const USAGE = [
   'agent-man —— 会话之外的那一层：记忆、处境、该不该开口',
   '',
   '  agent-man                        处境屏（≡ context show，只读）',
-  '  agent-man event  add "…" [--imp 0-3] [--cue 她,加班] [--src user|tool:名字|self]',
+  '  agent-man event  add "<发生了什么>" [--imp 0-3] [--cue 她,加班] [--src user|tool:名字|self] [--at …]',
   '  agent-man event  ls | find [--since …] [--until …] [--all] [--limit N]',
-  '  agent-man memory add "<事实>" --key <槽位> --from <事件id,…> [--imp 0-3]',
-  '  agent-man memory ls | find | show <id|槽位> | revise <id> "<新事实>"',
-  '  agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls',
-  '  agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d]  ·  note ls | take|drop <id>',
+  '  agent-man memory add "<事实>" --key <槽位> --from <事件id,…> [--imp 0-3] [--at …]',
+  '  agent-man memory ls | find [--key 槽位] [--since …] [--until …] [--all] [--live]',
+  '  agent-man memory show <id|槽位> | revise <id> "<新事实>" [--imp 0-3]      （查不到退 1）',
+  '  agent-man rule   add "<规矩>" --why "<为什么>" [--supersedes r-…]  ·  rule ls [--all]',
+  '  agent-man note   add "<话>" --trigger "<什么时候>" [--ttl 7d] [--at …]  ·  note ls | take|drop <id>',
   '  agent-man plan   add "<事>" --at "<什么时候>"  ·  plan done|drop <id>  ·  plan ls',
-  '  agent-man self   show | set "<整份文本>" | append "<一段话>"',
-  '  agent-man affect show | set <标签|数值> [--for 2h] [--why "…"] | clear | why | stim <kind>',
-  '  agent-man context show | digest [--budget 1200] [--out 文件] | sense',
+  '  agent-man self   show [--all] | set "<整份文本>" | append "<一段话>"',
+  '  agent-man affect show [--no-mood] · why [--no-mood] · clear',
+  '  agent-man affect set <轴> <数值> [--until …] [--at …] [--why "…"]',
+  '  agent-man affect stim <kind> [--why "…"] [--at …]                       情绪只记刺激，不记台词',
+  '  agent-man context show | digest [--budget 1200] [--out 文件] [--dry-run] | sense [--budget N]',
   '  agent-man context cue [--min-gap 6h] [--peek] [--why "…"]   此刻要不要开口（不说退 1）',
   '  agent-man audit  trace [--limit N] | timeline [--limit N] [--all] | orphan',
-  '  agent-man soul   ls | use <名字> | show | check | import <卡文件>',
+  '  agent-man soul   ls | use <名字> | show [名字] | check [名字] | import <卡文件>',
   '  agent-man config  path | show | get <a.b> | set <a.b> <值> | reset [<a.b>]',
   '  agent-man doctor',
-  '  agent-man <其它名字> …            PATH 上的 agent-man-<名字>（插件直通）',
+  '  agent-man <其它名字> …            PATH 上的 agent-man-<名字>（零件直通）',
   '',
-  '读命令都支持 --json；stdout 只放结果，stderr 只放 "! " 开头的警告。',
-  '还没接的开关：context digest --due、affect stim --imp——给了会退 2，不装作生效。',
-  '退出码：0 有话/成功 · 1 不说或数据不合格 · 2 用法或数据错。',
+  '资源不带动作就是 ls：agent-man event ≡ event ls（memory / note / plan / rule / soul 同理）。',
+  '别名：log=event add · remember=memory add · leave=note add · digest=context digest',
+  '      cue=context cue · find=event find · show=memory show · look=context show',
+  '读命令都支持 --json（恰好一行）；stdout 只放结果，stderr 只放 "! " 开头的警告。',
+  '零件只能写情景层：event add --src tool:<名字>；结论 / 规矩 / 自我块归本体，零件反调退 2。',
+  '还没接：context digest --due · affect stim --imp · memory add|revise --from 日期..日期 · self set --id',
+  '        ——给了会退 2，不装作生效。',
+  '退出码：0 有话/成功 · 1 不说 / 查不到 / 数据不合格 · 2 用法或数据错。',
 ]
 
 // 时间只在这里定一次（design §5）：之后的每一步都只认这个数字，
