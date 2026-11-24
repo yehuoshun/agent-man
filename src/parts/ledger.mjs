@@ -2,32 +2,38 @@
 // `parts` 键里（形状见 design §4，doctor 按那个形状体检）。
 // 这里只管"账怎么记、怎么读"，sense 只认 get / mark / reset 三个函数——所以冷却逻辑
 // 可以拿假账本测，不必每跑一次测试就往真 home 里写文件。
-import { PART_FAIL_LIMIT } from '../core/index.mjs'
+import { PART_COOLDOWN, PART_FAIL_LIMIT } from '../core/index.mjs'
 import { ensure, metaFile, readJson, writeAtomic } from '../store/index.mjs'
 
-// 连续失败计数。攒到上限把 until 设成 Infinity：那是"下一次会话"的哨兵，
-// 由调用方在会话开始时把计数清零（reset → {fail:0, until:null}），这里不认识时钟，也不自己解除。
-// 注意 JSON 里没有 Infinity（写进水位文件会变成 null），所以别指望它原样持久化——
-// blocked 认得出"null + 计数到上限"就是还没解除的哨兵。
-export function bump(entry, limit = PART_FAIL_LIMIT) {
+// 连续失败计数。攒到上限就冷却：`until` 写成"最后那次失败 + PART_COOLDOWN"，记 `at` 是为了
+// 让这份账过一遍 JSON 还认得出来（JSON 没有 Infinity，写下去就变成 null）。
+// 传了 `now` 就是时间冷却；没传（老调用方、或不想认时钟）退回 Infinity 哨兵，
+// 那种哨兵只由"会话开始清零"解除——见 §8"冷却到下一次会话"。
+export function bump(entry, limit = PART_FAIL_LIMIT, now = null) {
   const prev = entry ?? {}
   const cap = Number.isFinite(limit) && limit >= 1 ? limit : PART_FAIL_LIMIT
   const fail = (Number.isFinite(prev.fail) ? prev.fail : 0) + 1
-  return { ...prev, fail, until: fail >= cap ? Infinity : (prev.until ?? null) }
+  const at = Number.isFinite(now) ? now : (Number.isFinite(prev.at) ? prev.at : null)
+  let until = prev.until ?? null
+  if (fail >= cap) until = Number.isFinite(now) ? now + PART_COOLDOWN : Infinity
+  return { ...prev, fail, until, at }
 }
 
-// 现在还能不能去掉这个能力：冷却到某个时刻（数字）或冷却到下一次会话（Infinity）。
+// 现在还能不能去掉这个能力。三种冷却：
+// ① `until` 是数字——还没到点就摘着，到点自己解除（CLI 一侧唯一的自愈路径）。
+// ② `until` 是 Infinity——哨兵，只有会话开始清零能解除。
+// ③ `until` 是 null 但计数到上限——那是 Infinity 过了一遍 JSON；靠 `at + PART_COOLDOWN`
+// 自愈，没有 `at` 就仍然按哨兵算（旧的落盘记录，宁可多摘一轮也别把坏零件放回来）。
 export function blocked(entry, now, limit = PART_FAIL_LIMIT) {
   const cap = Number.isFinite(limit) && limit >= 1 ? limit : PART_FAIL_LIMIT
   const until = entry?.until
+  if (Number.isFinite(until)) return until > now
   if (until === Infinity) return true
-  if (!Number.isFinite(until)) {
-    // 数字之外的 until 有两种来路：真的是 null（没在冷却，调用方刚清零），或者哨兵
-    // Infinity 写进 JSON 又读回来变成了 null。后者要是当成"没在冷却"，连续三次失败攒下的
-    // 冷却就被一次落盘悄悄抹掉了。只认计数：到上限就是还在冷却，清零过的自然回到 0。
-    return (Number.isFinite(entry?.fail) ? entry.fail : 0) >= cap
-  }
-  return until > now
+  const fail = Number.isFinite(entry?.fail) ? entry.fail : 0
+  if (fail < cap) return false
+  const at = entry?.at
+  if (!Number.isFinite(at)) return true
+  return now - at < PART_COOLDOWN
 }
 
 // 读整份账。坏水位文件当"还没有账"：读不动的时候装作没冷却比装作全冷却安全
@@ -76,6 +82,22 @@ export function openLedger(homeDir) {
       if (!prev) return null
       if (Number.isFinite(prev.fail) && prev.fail === 0 && prev.until === null) return null
       await put(homeDir, name, { fail: 0, until: null })
+      return null
+    },
+    // 会话开始清一次账（§8"冷却到下一次会话"）：宿主一次进程就是一次会话，开机时把每个零件
+    // 都放回"还没失败过"，坏零件在新会话里重新有一次机会。没有记录就一个字节都不写。
+    async clearAll() {
+      const parts = partsOf(readDoc(homeDir))
+      const names = Object.keys(parts)
+      if (names.length === 0) return null
+      const clean = names.every((name) => {
+        const one = parts[name]
+        return Number.isFinite(one?.fail) && one.fail === 0 && one.until === null
+      })
+      if (clean) return null
+      ensure(homeDir)
+      const doc = readDoc(homeDir)
+      await writeAtomic(metaFile(homeDir), `${JSON.stringify({ ...doc, parts: {} }, null, 2)}\n`)
       return null
     },
   }

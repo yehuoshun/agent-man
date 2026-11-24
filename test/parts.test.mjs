@@ -4,7 +4,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { scan, describe, capture, passthrough, bump, blocked } from '../src/parts/index.mjs'
+import { PART_COOLDOWN } from '../src/core/index.mjs'
+import {
+  scan, describe, capture, passthrough, bump, blocked, openLedger, records,
+} from '../src/parts/index.mjs'
 
 const WIN = process.platform === 'win32'
 const HOMES = []
@@ -278,16 +281,42 @@ test('passthrough 把零件的退出码原样交回', () => {
 test('bump 第三次失败把 until 设成 Infinity，blocked 据此判定', () => {
   const start = { fail: 0, until: null }
   const one = bump(start)
-  assert.deepEqual(one, { fail: 1, until: null })
+  assert.deepEqual(one, { fail: 1, until: null, at: null })
   assert.equal(blocked(one, 1000), false)
   const two = bump(one)
-  assert.deepEqual(two, { fail: 2, until: null })
+  assert.deepEqual(two, { fail: 2, until: null, at: null })
   assert.equal(blocked(two, 1000), false)
   const three = bump(two)
-  assert.deepEqual(three, { fail: 3, until: Infinity })
+  assert.deepEqual(three, { fail: 3, until: Infinity, at: null })
   assert.equal(blocked(three, 1000), true)
-  assert.deepEqual(bump(three), { fail: 4, until: Infinity }) // 冷却之后还失败，也还是冷却着
+  // 冷却之后还失败，也还是冷却着
+  assert.deepEqual(bump(three), { fail: 4, until: Infinity, at: null })
   assert.deepEqual(start, { fail: 0, until: null }) // 入参不被改写
+})
+
+test('给了时钟就是时间窗冷却：到点自己解除，不必等下一次会话', () => {
+  // 没有这个窗，一个修好了的零件会被永久摘掉——CLI 那一侧没有"会话开始"可以靠。
+  let entry = { fail: 0, until: null }
+  const at = 1_000_000
+  entry = bump(entry, 3, at)
+  entry = bump(entry, 3, at)
+  entry = bump(entry, 3, at)
+  assert.deepEqual(entry, { fail: 3, until: at + PART_COOLDOWN, at })
+  assert.equal(blocked(entry, at + 1), true) // 刚摘掉
+  assert.equal(blocked(entry, at + PART_COOLDOWN - 1), true) // 还差 1ms
+  assert.equal(blocked(entry, at + PART_COOLDOWN), false) // 到点放回来
+  // 再失败一次重新计时（不是"失败了就永远冷却"）
+  assert.deepEqual(bump(entry, 3, at + PART_COOLDOWN).until, at + PART_COOLDOWN + PART_COOLDOWN)
+})
+
+test('时间窗冷却过一遍 JSON 也认得出：until 落成数字，不靠 Infinity 撑着', () => {
+  const at = 1_000_000
+  let entry = { fail: 0, until: null }
+  for (let i = 0; i < 3; i += 1) entry = bump(entry, 3, at)
+  const persisted = JSON.parse(JSON.stringify(entry))
+  assert.deepEqual(persisted, { fail: 3, until: at + PART_COOLDOWN, at })
+  assert.equal(blocked(persisted, at + 1), true)
+  assert.equal(blocked(persisted, at + PART_COOLDOWN), false)
 })
 
 test('blocked 认时间冷却，也认"下一次会话"哨兵', () => {
@@ -301,15 +330,30 @@ test('blocked 认时间冷却，也认"下一次会话"哨兵', () => {
 test('冷却到下一次会话的哨兵过一遍 JSON 也不许解除(Infinity 落盘后是 null)', () => {
   const three = bump(bump(bump({ fail: 0, until: null })))
   const persisted = JSON.parse(JSON.stringify(three))
-  assert.deepEqual(persisted, { fail: 3, until: null }) // JSON 里没有 Infinity
+  assert.deepEqual(persisted, { fail: 3, until: null, at: null }) // JSON 里没有 Infinity
+  // 没有 at 的老记录：宁可多摘一轮，也不许把坏零件放回来
   assert.equal(blocked(persisted, 1000), true)
 })
 
 test('会话开始清零之后冷却真的解除，两次失败不算冷却', () => {
   assert.equal(blocked({ fail: 0, until: null }, 1000), false)
   const two = JSON.parse(JSON.stringify(bump(bump({ fail: 0, until: null }))))
-  assert.deepEqual(two, { fail: 2, until: null })
+  assert.deepEqual(two, { fail: 2, until: null, at: null })
   assert.equal(blocked(two, 1000), false)
+})
+
+test('会话开始清账(clearAll)：所有零件回到没失败过，健康时不写盘', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-man-'))
+  HOMES.push(dir)
+  const ledger = openLedger(dir)
+  // 健康的账：一个字节都不该写
+  await ledger.clearAll()
+  assert.deepEqual(records(dir), {})
+  await ledger.mark('bad', { fail: 3, until: Infinity, at: null })
+  // 落盘一圈 Infinity 就没了（JSON 没有它），这正是 blocked 还要认 at 的原因
+  assert.deepEqual(records(dir), { bad: { fail: 3, until: null, at: null } })
+  await ledger.clearAll()
+  assert.deepEqual(records(dir), {})
 })
 
 // 用例跑完把临时数据目录删掉：一次全量会开出上百个，留在系统临时目录里就是垃圾（AGENTS 六）。

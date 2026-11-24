@@ -58,6 +58,17 @@ function pickMs(value, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
+// 冷却要到什么时候。有了截止时刻就报时刻（人看得见"还有多久"），只有哨兵就说"下一次会话"——
+// 别把 Infinity 伪装成一个时间点，那是撒谎。
+function coolUntil(entry, now) {
+  const until = entry?.until
+  if (Number.isFinite(until)) {
+    const mins = Math.max(1, Math.round((until - now) / 60000))
+    return `冷却 ${mins} 分钟，到点自动再试一次`
+  }
+  return '冷却到下一次会话'
+}
+
 // 问一个零件：先 --describe 认契约，再 capture 拿答话。
 // 这里只记"发生了什么"，钱怎么花、谁上屏留给 assemble——串行与并行因此拿同一份账，不会分叉。
 async function askOnce(part, env, deps, left, limits) {
@@ -198,14 +209,17 @@ export async function sense(env, opts = {}) {
     name: part.name,
     reason: 'cooldown',
     why: `${part.name} 连续失败 ${Number.isFinite(entry?.fail) ? entry.fail : failLimit} 次，`
-      + '这次不问（冷却到下一次会话）',
+      + `这次不问（${coolUntil(entry, now)}）`,
   }))
 
   if (ledger) {
     for (const one of asked) {
       // 成功一次就清零：连续失败说的是"连着"，中间答上来一次就该从头数。
       if (one.out === 'ok') await ledger.reset(one.part.name)
-      if (one.out === 'failed') await ledger.mark(one.part.name, bump(ledger.get(one.part.name), failLimit))
+      if (one.out === 'failed') {
+        // 带上时钟：冷却要能写成一个截止时刻，不能只剩一个认不出来的哨兵
+        await ledger.mark(one.part.name, bump(ledger.get(one.part.name), failLimit, now))
+      }
     }
   }
 

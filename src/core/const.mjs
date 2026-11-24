@@ -73,7 +73,11 @@ export const PART_TIMEOUT_MAX = 30000 // ms
 export const PART_DEADLINE = 1200 // ms
 export const PART_STDOUT_MAX = 8192 // 字节
 export const PART_FAIL_LIMIT = 3 // 次
-
+// 连续失败到上限之后摘多久。design §8 写的是"冷却到下一次会话"：宿主一次进程就是一次会话，
+// 开机时会把账清零（dsh/index.mjs）。但 CLI 那一侧没有"会话"可认——每敲一次命令都是一个新进程，
+// 真按进程清零，冷却就等于不存在。所以这里是时间窗：30 分钟之内不再问它，过了就再给一次机会。
+// 没有这个窗，一个修好了的零件会被永久摘掉，而屏上只有一句「这次不问」，谁都想不到去翻水位文件。
+export const PART_COOLDOWN = 30 * 60 * 1000 // ms
 // —— 审计读多少（design §6：audit trace / timeline 的缺省条数）——
 export const AUDIT_LIMIT = 20 // 条：两个读命令共用的缺省上限
 export const TRACE_KEEP_MONTHS = 12 // 月：保留上限，读取不裁——审计要看全，清理是将来 prun 的事

@@ -59,3 +59,17 @@ function degraded(budget, deadline, why) {
 function messageOf(e) {
   return e && e.message ? e.message : String(e)
 }
+
+// 会话开始：把零件的冷却账清零（design §8"冷却到下一次会话"）。一次宿主进程就是一次会话，
+// 进程起来第一次注入之前调一次就够——坏零件在新会话里重新有一次机会。
+// CLI 那条路没有"会话"可认（每敲一次命令都是新进程），所以那边靠 PART_COOLDOWN 时间窗自愈。
+// 没有账就一个字节都不写：健康的零件不该因为开个会话就在盘上留痕。
+export async function beginSession(homeDir) {
+  if (!homeDir) return null
+  try {
+    return await openLedger(homeDir).clearAll()
+  } catch (e) {
+    // 清账失败不该让注入失败：这一趟照旧按旧账走（顶多少给一个零件一次机会）。
+    return null
+  }
+}
