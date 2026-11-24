@@ -67,6 +67,21 @@ test('setSelf 只收字符串：给别的就拒绝，不替人 JSON 化', async 
   await assert.rejects(() => setSelf(home, null, { now: NOW }), /需要字符串文本/)
 })
 
+test('恰好写满 SELF_MAX 要能写进去：末尾那个换行是文件格式，不算人写的字', async () => {
+  const home = newHome()
+  // '字' 是 1 cost，写满正好 SELF_MAX。normalize 会补一个 \n（0.28 cost），
+  // 若把补出来的换行也算进上限，恰好 600 的自述会被判成 600.3 挡在门外，而人改哪儿都改不出这 0.28。
+  const exact = '字'.repeat(SELF_MAX)
+  const written = await setSelf(home, exact, { now: NOW })
+  assert.equal(fs.readFileSync(selfPath(home), 'utf8'), `${exact}\n`)
+  // 报出来的 cost 仍是整份（含尾换行）：那才是真占预算的字节数。
+  assert.equal(written.cost, cost(`${exact}\n`))
+  const read = readSelf(home)
+  assert.equal(read.over, false, '写进去了就不许立刻判超限')
+  // 多一个真字就越界：上限本身没让步。
+  await assert.rejects(() => setSelf(home, `${exact}字`, { now: NOW }), new RegExp(`上限是 ${SELF_MAX}`))
+})
+
 test('self.md 一律写成 LF：CRLF 进来也不留 \\r', async () => {
   const home = newHome()
   await setSelf(home, '第一行\r\n第二行', { now: NOW })

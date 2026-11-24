@@ -81,6 +81,86 @@ test('坏行跳过并计数，空行不算记录，没有的分片当空读', ()
   assert.deepEqual(readJsonl(eventsFile(dir, new Date(1999, 0, 1).getTime())), { items: [], bad: 0 })
 })
 
+test('带 BOM 的分片照样读得出记录：BOM 是文件头，不是第一行的内容', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const ts = new Date(2026, 10, 13, 21, 40).getTime()
+  const file = eventsFile(dir, ts)
+  // 记事本另存、PowerShell 5.1 重定向都会在文件头留一个 U+FEFF。
+  const rec = { id: 'e-1', at: ts, text: '她关了窗' }
+  fs.writeFileSync(file, `\uFEFF${JSON.stringify(rec)}\n`)
+  appendJsonl(file, { id: 'e-2', at: ts + 1000, text: '二' })
+
+  const back = readJsonl(file)
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'], 'BOM 不该让第一行变成坏行')
+  assert.equal(back.bad, 0)
+  // 行首 BOM 同样要剥：几段文件拼接起来时，第二段开头也会带一个。
+  fs.appendFileSync(file, `\uFEFF${JSON.stringify({ id: 'e-3', at: ts + 2000, text: '三' })}\n`)
+  assert.deepEqual(readJsonl(file).items.map((r) => r.id), ['e-1', 'e-2', 'e-3'])
+})
+
+test('要报"第几行坏"时 readJsonl 连行号和原文一起给，不要就不给', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const file = eventsFile(dir, new Date(2026, 10, 13, 21, 40).getTime())
+  fs.writeFileSync(file, '{"id":"e-1","at":1}\nnot json\n\n{"id":"e-2","at":2}\n')
+
+  const back = readJsonl(file, { lines: true })
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'])
+  assert.equal(back.bad, 1)
+  // 行号按文件里的物理行算（空行也占一行），doctor 报的位置要能直接对上编辑器。
+  assert.deepEqual(back.badLines.map((o) => o.line), [2])
+  assert.equal(back.badLines[0].text, 'not json')
+  assert.ok(back.badLines[0].why.length > 0, '坏行要带原因，只给行号等于让人自己猜')
+  // 不需要行号时不多给字段：按 { items, bad } 比对的调用方不受影响。
+  assert.deepEqual(Object.keys(readJsonl(file)).sort(), ['bad', 'items'])
+})
+
+test('末行没有换行的 jsonl 追加时先补一个换行，旧行不被粘成一行', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const ts = new Date(2026, 10, 13, 21, 40).getTime()
+  const file = eventsFile(dir, ts)
+  const old = { id: 'e-1', at: ts, text: '旧' }
+  // 手写的分片，或上次写到一半崩掉的那种：最后一条记录后面没有换行。
+  fs.writeFileSync(file, JSON.stringify(old))
+
+  appendJsonl(file, { id: 'e-2', at: ts + 1000, text: '新' })
+
+  const raw = fs.readFileSync(file, 'utf8')
+  assert.ok(raw.startsWith(`${JSON.stringify(old)}\n`), '旧行要先补齐换行，不能和新行粘在一起')
+  const back = readJsonl(file)
+  assert.equal(back.bad, 0, '补过换行之后两条都得是合法记录')
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-2'])
+})
+
+test('追加写失败要回滚：写了一半的尾巴切回追加前的大小', () => {
+  const dir = tempDir()
+  ensure(dir)
+  const file = eventsFile(dir, new Date(2026, 10, 13, 21, 40).getTime())
+  // 末行故意不带换行：补的换行和正文得一起被切掉，回滚才算真回滚。
+  const before = '{"id":"e-1","at":1,"text":"旧"}'
+  fs.writeFileSync(file, before)
+
+  const real = fs.writeSync
+  fs.writeSync = (fd, text) => {
+    real.call(fs, fd, String(text).slice(0, 6))
+    throw new Error('模拟磁盘写一半就崩')
+  }
+  try {
+    assert.throws(() => appendJsonl(file, { id: 'e-2', at: 2, text: '新' }), /模拟磁盘写一半就崩/)
+  } finally {
+    fs.writeSync = real
+  }
+
+  assert.equal(fs.readFileSync(file, 'utf8'), before, '半行必须切掉：留着它下次追加就又要粘连')
+  // 回滚之后这个分片仍然可用，读得回旧行、也接得上新行。
+  appendJsonl(file, { id: 'e-3', at: 3, text: '后来的' })
+  const back = readJsonl(file)
+  assert.deepEqual(back.items.map((r) => r.id), ['e-1', 'e-3'])
+  assert.equal(back.bad, 0)
+})
+
 test('writeAtomic 覆盖写不留 .tmp，读到的永远是整份新内容', async () => {
   const dir = tempDir()
   const file = path.join(dir, 'meta.json')
@@ -88,6 +168,48 @@ test('writeAtomic 覆盖写不留 .tmp，读到的永远是整份新内容', asy
   await writeAtomic(file, '{"a":2}\n')
   assert.equal(fs.readFileSync(file, 'utf8'), '{"a":2}\n')
   assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
+})
+
+test('改名失败时 tmp 里留着整份新内容，下一次重试就覆盖干净', async () => {
+  const dir = tempDir()
+  const file = path.join(dir, 'meta.json')
+  await writeAtomic(file, '{"a":1}\n')
+
+  const real = fs.renameSync
+  fs.renameSync = () => {
+    const e = new Error('模拟改名被占用挡住')
+    e.code = 'EISDIR'
+    throw e
+  }
+  try {
+    await assert.rejects(writeAtomic(file, '{"a":2}\n'), /原子写失败：.*内容在 .*\.tmp/)
+  } finally {
+    fs.renameSync = real
+  }
+  // 整份新内容留在 tmp 里：失败时最要紧的是别把这次要写的东西也丢了。
+  assert.equal(fs.readFileSync(`${file}.tmp`, 'utf8'), '{"a":2}\n')
+  // 旧文件一个字节没动（rename 根本没发生），读者看不到半份新内容。
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"a":1}\n')
+  // 重试一次：tmp 被整份覆盖，收尾干净，不留没人收的垃圾。
+  await writeAtomic(file, '{"a":3}\n')
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"a":3}\n')
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
+})
+
+test('写到一半就失败不留 .tmp：半份内容没人读，只是数据目录里的垃圾', async () => {
+  const dir = tempDir()
+  const file = path.join(dir, 'meta.json')
+  const real = fs.writeSync
+  fs.writeSync = () => {
+    throw new Error('模拟磁盘写一半就崩')
+  }
+  try {
+    await assert.rejects(writeAtomic(file, '{"a":1}\n'), /模拟磁盘写一半就崩/)
+  } finally {
+    fs.writeSync = real
+  }
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.endsWith('.tmp')), [])
+  assert.equal(fs.existsSync(file), false, '没落盘就是没落盘，别留个空文件假装写过')
 })
 
 test('readJson 分得清"还没写过"（null）与"写坏了"（__bad）', () => {
@@ -129,6 +251,24 @@ test('claim 并发 20 个不重号，序号从 1 连续排到 20', async () => {
   await assert.rejects(claim(dir, 'x'), /前缀/)
 })
 
+test('同一天发到第 105 个号不撞号：序号只加宽不截断（id 字典序不等于发号顺序）', async () => {
+  const dir = tempDir()
+  ensure(dir)
+  const at = new Date(2026, 10, 13, 12, 0).getTime()
+  const ids = []
+  for (let i = 0; i < 105; i += 1) ids.push(await claim(dir, 'e', at))
+
+  assert.equal(new Set(ids).size, 105, '105 个号互不相同：重号会静默覆盖一条记忆')
+  assert.equal(ids[99], 'e-20261113-100', '过百只加宽成三位，不许截成两位')
+  assert.equal(ids[104], 'e-20261113-105')
+  // 按序号解析能拿到第 105 条：要顺序就按数字取，别拿 id 比大小。
+  const bySeq = [...ids].sort((a, b) => Number(a.split('-')[2]) - Number(b.split('-')[2]))
+  assert.equal(bySeq.at(-1), 'e-20261113-105')
+  // 字典序**不承诺**等于发号顺序（'…-99' 排在 '…-105' 后面）。全仓没有任何判断靠 id 的
+  // 码位序：平手时用 id 只是为了结果稳定，排序主键一律是 at。要顺序请按序号解析或按 at 排。
+  assert.equal([...ids].sort().at(-1), 'e-20261113-99')
+})
+
 test('listShards 按自然日/自然月粗筛，结果按时间升序', () => {
   const dir = tempDir()
   ensure(dir)
@@ -162,6 +302,31 @@ test('listShards 按自然日/自然月粗筛，结果按时间升序', () => {
   ])
   assert.deepEqual(listShards(dir, 'judge'), [])
   assert.throws(() => listShards(dir, 'zzz'), /未知的分片类型/)
+})
+
+test('日界平移后凌晨的分片照样查得到：分片边界跟 dayKey 走，不跟自然日走', () => {
+  const dir = tempDir()
+  ensure(dir)
+  // 凌晨 1 点、日界 4 点：这条事件住在"前一天"那一片里。
+  const at = new Date(2026, 10, 13, 1, 0).getTime()
+  const file = eventsFile(dir, at, { dayStart: 4 })
+  assert.equal(path.basename(file), '2026-11-12.jsonl')
+  appendJsonl(file, { id: 'e-1', at })
+
+  const from = new Date(2026, 10, 13, 0, 30).getTime()
+  const to = new Date(2026, 10, 13, 2, 0).getTime()
+  // 不传 dayStart 就是自然日口径：这一片 11-13 00:00 就结束了，问 00:30 之后什么都拿不到——
+  // 凌晨的事件从此静默消失，报都不报一句。
+  assert.deepEqual(names(listShards(dir, 'events', { from, to })), [])
+  assert.deepEqual(names(listShards(dir, 'events', { from, to, dayStart: 4 })), ['2026-11-12.jsonl'])
+  // 配置里存的是 HH:MM，两种写法得是同一个日界。
+  assert.deepEqual(names(listShards(dir, 'events', { from, to, dayStart: '04:00' })), ['2026-11-12.jsonl'])
+  // 半开区间照旧：日界 04:00 本身已经算新的一天，那一片到此为止。
+  const four = new Date(2026, 10, 13, 4, 0).getTime()
+  assert.deepEqual(names(listShards(dir, 'events', { from: four, to: four + 3600000, dayStart: 4 })), [])
+  // 问得再早也仍然拿得到：这一片从 11-12 04:00 起。
+  const early = new Date(2026, 10, 12, 5, 0).getTime()
+  assert.deepEqual(names(listShards(dir, 'events', { from: early, dayStart: 4 })), ['2026-11-12.jsonl'])
 })
 
 test('eventsFile 的日界只能由 dayStart 决定，stateFile 按月', () => {

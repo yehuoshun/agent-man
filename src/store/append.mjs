@@ -8,16 +8,61 @@ export function appendJsonl(file, obj) {
   if (typeof line !== 'string') {
     throw new Error(`记录序列化失败：JSON.stringify 返回了 ${typeof line}（多半是传了函数或 undefined）`)
   }
+  // 追加前先看一眼末字节：末行没换行的文件（手写的、或上次写到一半崩了）直接追加，
+  // 新行会粘在旧行尾巴上——一次 append 同时毁掉旧记录和新记录，两条都读不出来。先补个 \n。
+  // 并发时两个写者可能各补一个：多出来的空行 readJsonl 当空行跳过，不伤任何一条记录。
+  const tail = tailOf(file)
+  let bad = null
   const fd = fs.openSync(file, 'a')
   try {
-    fs.writeSync(fd, `${line}\n`)
+    fs.writeSync(fd, `${tail.nl === false ? '\n' : ''}${line}\n`)
     fs.fsyncSync(fd)
+  } catch (e) {
+    bad = e
   } finally {
     fs.closeSync(fd)
+  }
+  if (bad) {
+    rollback(file, tail)
+    throw bad
   }
   // 只 fsync 不够：盘上说写了、文件里没有的事故真发生过，所以读回来核一遍。
   assertLanded(file, obj, line)
   return obj
+}
+
+// 追加前的那一眼：文件在不在、多长、末字节是不是换行。只读一个字节，不把整份读进内存。
+// 读到的一半（existed 且 nl === false）说明上一个写者留下了没有收尾的半行。
+function tailOf(file) {
+  let fd = -1
+  try {
+    fd = fs.openSync(file, 'r')
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { existed: false, size: 0, nl: true }
+    throw e
+  }
+  try {
+    const size = fs.fstatSync(fd).size
+    if (size <= 0) return { existed: true, size, nl: true }
+    const one = Buffer.alloc(1)
+    const got = fs.readSync(fd, one, 0, 1, size - 1)
+    return { existed: true, size, nl: got === 1 && one[0] === 0x0a }
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+// 写失败时把文件切回追加前的大小：留着半行，下次追加就又要靠 tailOf 兜一次，
+// 而且一行坏在两个写者之间——等于把一次写失败扩散成两条坏行。
+// 按路径切而不对句柄 ftruncate：Windows 上对以 'a'/'a+' 打开的句柄 ftruncate 直接 EPERM（实测）。
+// 回滚自己失败不盖住原始错误：那个错更要紧，盘上剩的半行由 doctor 的坏行检查如实报出来。
+function rollback(file, tail) {
+  try {
+    if (!tail.existed) fs.rmSync(file, { force: true })
+    else fs.truncateSync(file, tail.size)
+  } catch {
+    // 见上：原始错误优先。
+  }
 }
 
 // 按 id 找自己那一行，而不是只看最后一行：并发追加时最后一行可能是别人的，
@@ -40,9 +85,18 @@ export function assertLanded(file, obj, line = JSON.stringify(obj)) {
   throw new Error(`写入没有落盘：${file} 里找不到 ${who}`)
 }
 
+// BOM 是文件头的编码标记，不是这一行的内容。记事本另存过的文件、被 PowerShell 5.1 重定向写过的
+// 文件都带它；带着 U+FEFF 去 JSON.parse 一定失败，于是整份记忆的第一行被当成坏行丢掉——
+// 修的是解析口径，不是让人手动去删 BOM。
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
 // 坏行跳过并计数，不抛：一行坏掉不该让整份记忆消失，但也不能装作没发生——
 // bad 由调用方用 "! " 报出来（AGENTS 五）。
-export function readJsonl(file) {
+// lines: true 额外带出坏行的行号与原因（doctor 要报得出"哪个文件第几行"），
+// 默认不带：返回值仍是 { items, bad } 两个字段。
+export function readJsonl(file, { lines = false } = {}) {
   let raw = ''
   try {
     raw = fs.readFileSync(file, 'utf8')
@@ -52,24 +106,29 @@ export function readJsonl(file) {
     throw e
   }
   const items = []
+  const badLines = []
   let bad = 0
-  for (const text of raw.split('\n')) {
+  const all = raw.split('\n')
+  for (let i = 0; i < all.length; i += 1) {
+    const text = stripBom(all[i])
     if (text.trim() === '') continue
-    let rec
+    let rec = null
+    let why = ''
     try {
       rec = JSON.parse(text)
-    } catch {
-      bad += 1
-      continue
+    } catch (e) {
+      why = e && e.message ? e.message : '不是合法 JSON'
     }
     // 合法 JSON 但不是对象（比如一行 "null"）同样读不出记录，算坏行。
-    if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+    if (why === '' && (!rec || typeof rec !== 'object' || Array.isArray(rec))) why = '不是 JSON 对象'
+    if (why !== '') {
       bad += 1
+      if (lines) badLines.push({ line: i + 1, why, text })
       continue
     }
     items.push(rec)
   }
-  return { items, bad }
+  return lines ? { items, bad, badLines } : { items, bad }
 }
 
 // 覆盖写走 tmp → fsync → rename：rename 在同一个目录内是原子的，读者永远看不到半个文件。
@@ -81,12 +140,18 @@ const RETRY_ATTEMPTS = 6
 
 export async function writeAtomic(file, text) {
   const tmp = `${file}.tmp`
-  const fd = fs.openSync(tmp, 'w')
   try {
-    fs.writeSync(fd, text)
-    fs.fsyncSync(fd)
-  } finally {
-    fs.closeSync(fd)
+    const fd = fs.openSync(tmp, 'w')
+    try {
+      fs.writeSync(fd, text)
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch (e) {
+    // 写到一半就失败：tmp 里是半份内容，谁也不会去读半份，留着它只是数据目录里的垃圾。清掉再抛。
+    discard(tmp)
+    throw e
   }
 
   let wait = RETRY_DELAY
@@ -97,14 +162,25 @@ export async function writeAtomic(file, text) {
     } catch (e) {
       const code = e && e.code ? e.code : ''
       if (!RETRY_CODES.has(code) || attempt === RETRY_ATTEMPTS) {
-        // 内容留在 tmp 里：失败时最要紧的是别把要写的东西也丢了。
-        throw new Error(`原子写失败：${file}（${code || String(e)}），内容在 ${tmp}`)
+        // 走到这里 tmp 里是整份新内容：不删——删掉等于把这次要写的东西静默丢掉。
+        // 留着的坏处是没人收，所以 doctor 有一项「残留 .tmp」会把它连路径一起报出来；
+        // 下一次对同一个文件 writeAtomic 会用 'w' 覆盖它，重试一次就干净了。
+        throw new Error(`原子写失败：${file}（${code || String(e)}），内容在 ${tmp}，等会重试一次就会覆盖它`)
       }
       await sleep(wait)
       wait = Math.min(wait * 2, RETRY_DELAY_MAX)
     }
   }
   return file
+}
+
+// 清 tmp 自己失败不盖住原始错误：那个错更要紧，留下的 tmp 由 doctor 的残留检查报出来。
+function discard(file) {
+  try {
+    fs.rmSync(file, { force: true })
+  } catch {
+    // 见上。
+  }
 }
 
 // 不存在返回 null（"还没写过"是正常状态），坏 JSON 返回 {__bad:true}（"写坏了"不是）。

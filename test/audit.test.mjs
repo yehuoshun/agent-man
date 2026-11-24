@@ -9,8 +9,8 @@ import test from 'node:test'
 import { doctor, orphan, timeline, trace } from '../src/audit/index.mjs'
 import { DEFAULT_WINDOW_DAYS, RULE_LIMIT, SELF_MAX, cost } from '../src/core/index.mjs'
 import { notes, plans } from '../src/intent/index.mjs'
-import { add as addMemory, markSeen } from '../src/memory/index.mjs'
-import { appendJsonl, ensure, eventsFile, stateFile } from '../src/store/index.mjs'
+import { add as addMemory, markSeen, revise } from '../src/memory/index.mjs'
+import { appendJsonl, claim, ensure, eventsFile, stateFile } from '../src/store/index.mjs'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -299,6 +299,73 @@ test('空数据目录上 doctor 不抛：说缺 schema，别的项照实报', as
   })
 })
 
+test('空数据目录不假装有文件可扫：说"还没写过"，不报"共 2 个文件可解析"', async () => {
+  await inHome(async (home) => {
+    const one = check(doctor({ home }), '分片坏行')
+    assert.equal(one.ok, true)
+    assert.equal(/共 \d+ 个文件/.test(one.detail), false, `空目录上不许报文件数：${one.detail}`)
+    assert.match(one.detail, /还没有可扫的分片/)
+  })
+})
+
+test('config.json 坏成不是 JSON：配置这项报红，并说清是哪个文件', async () => {
+  await inHome(async (home) => {
+    ensure(home)
+    fs.writeFileSync(path.join(home, 'config.json'), '{oops')
+    const one = check(doctor({ home }), '配置')
+    assert.equal(one.ok, false)
+    assert.match(one.detail, /config\.json/)
+  })
+})
+
+test('config.json 有一个键不对：配置这项报红，并把键名带进正文', async () => {
+  await inHome(async (home) => {
+    ensure(home)
+    const bad = { version: 1, clock: { dayStart: '99:99' } }
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(bad))
+    const one = check(doctor({ home }), '配置')
+    assert.equal(one.ok, false)
+    // 键名要出现在正文里：只说"配置有 1 处不对"等于让人自己去猜。
+    assert.match(one.detail, /clock\.dayStart/)
+    // 改好之后这一项就得绿回来，否则它只是个恒红的摆设。
+    const good = { version: 1, clock: { dayStart: '04:00' } }
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(good))
+    assert.equal(check(doctor({ home }), '配置').ok, true)
+  })
+})
+
+test('发号文件也算账本的一部分：state/ids/ 里混进别的东西就报红', async () => {
+  await inHome(async (home) => {
+    await claim(home, 'e', NOW)
+    assert.equal(check(doctor({ home }), '发号文件').ok, true)
+    fs.writeFileSync(path.join(home, 'state', 'ids', 'junk.txt'), '')
+    const one = check(doctor({ home }), '发号文件')
+    assert.equal(one.ok, false)
+    assert.match(one.detail, /junk\.txt/)
+  })
+})
+
+test('残留 .tmp 单独报一项：原子写没走完的现场不许当成没事', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    assert.equal(check(doctor({ home }), '残留 .tmp').ok, true)
+    fs.writeFileSync(path.join(home, 'memory.jsonl.tmp'), '{"id":"m-1"}\n')
+    const one = check(doctor({ home }), '残留 .tmp')
+    assert.equal(one.ok, false)
+    assert.match(one.detail, /memory\.jsonl\.tmp/)
+  })
+})
+
+test('带 BOM 的分片 doctor 也读得动：剥 BOM 的口径只有 store 那一处', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    const file = eventsFile(home, NOW)
+    fs.writeFileSync(file, `\uFEFF${fs.readFileSync(file, 'utf8')}`)
+    const one = check(doctor({ home }), '分片坏行')
+    assert.equal(one.ok, true, `BOM 是文件头不是坏行：${one.detail}`)
+  })
+})
+
 test('坏行不吞：doctor 列出坏行所在文件与行号', async () => {
   await inHome(async (home) => {
     seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
@@ -359,6 +426,54 @@ test('同一条结论被复述记了 seen 副本：同 at 的两行不算收口�
     assert.equal(rows[0].seen, 0)
     assert.equal(rows[1].seen, 1)
     assert.equal(rows[1].at, rows[0].at)
+  })
+})
+
+test('revise 写下的收口副本不算冲突：同 at 两行只差 to/by，且只有最后一行开口', async () => {
+  await inHome(async (home) => {
+    seedEvent(home, { id: 'e-1', at: NOW, text: '她关了窗' })
+    const made = await addMemory(
+      { key: '她怕冷', fact: '她关窗是因为冷', evidence: { ids: ['e-1'] }, at: NOW },
+      { home, now: NOW },
+    )
+    const next = await revise(made.record.id, { fact: '她关窗是因为冷，也因为吵' }, { home, now: NOW + HOUR })
+    assert.equal(next.status, 'revised')
+    const one = check(doctor({ home }), 'memory 收口副本')
+    assert.equal(one.ok, true, one.detail)
+    assert.match(one.detail, /revise 收口副本/)
+    // 旧行原样保留、末尾只多一行带 to/by 的收口副本（AGENTS 五：旧行永不改写）。
+    const rows = fs
+      .readFileSync(path.join(home, 'memory.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    const old = rows.filter((row) => row.id === made.record.id)
+    assert.equal(old.length, 2)
+    assert.equal(old[1].at, old[0].at, '收口副本与旧行同 at')
+    assert.equal(old[1].to, next.record.at)
+    assert.equal(old[1].by, next.record.id)
+  })
+})
+
+test('收口副本只给 to 不给 by：仍是冲突，半份收口不算收口', async () => {
+  await inHome(async (home) => {
+    ensure(home)
+    const row = {
+      id: 'm-1',
+      at: NOW,
+      key: '她怕冷',
+      fact: '她关窗是因为冷',
+      imp: 3,
+      from: NOW,
+      to: null,
+      by: null,
+      evidence: { ids: ['e-1'] },
+    }
+    appendJsonl(path.join(home, 'memory.jsonl'), row)
+    appendJsonl(path.join(home, 'memory.jsonl'), { ...row, to: NOW + HOUR })
+    const one = check(doctor({ home }), 'memory 收口副本')
+    assert.equal(one.ok, false)
+    assert.match(one.detail, /m-1/)
   })
 })
 
@@ -470,14 +585,17 @@ test('doctor 是读命令：跑完数据目录的文件清单与字节全同', a
   })
 })
 
-test('doctor 的七项自检一项不少，每项都带正文', async () => {
+test('doctor 的十项自检一项不少，每项都带正文', async () => {
   await inHome(async (home) => {
     const got = doctor({ home })
     assert.deepEqual(got.checks.map((one) => one.name), [
       '数据目录',
       'schema 版本',
+      '配置',
       '分片坏行',
       'memory 收口副本',
+      '发号文件',
+      '残留 .tmp',
       'meta.json 冷却记录',
       'self.md 预算',
       'rules 活条数',
@@ -487,7 +605,7 @@ test('doctor 的七项自检一项不少，每项都带正文', async () => {
       assert.equal(typeof one.detail, 'string')
       assert.ok(one.detail.trim() !== '', `${one.name} 没有正文：读的人看不出发生了什么`)
     }
-    // ok 是七项的与，不是另算一次——两处各算一遍迟早分叉。
+    // ok 是十项的与，不是另算一次——两处各算一遍迟早分叉。
     assert.equal(got.ok, got.checks.every((one) => one.ok))
   })
 })

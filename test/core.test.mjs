@@ -50,6 +50,59 @@ test('一个标点都没有就硬切，且切完真的没超预算', () => {
   assert.equal(cut(text, 16).cut, false, '刚好装得下也算放得下')
 })
 
+test('非有限预算不是"0 预算"：Infinity 就是不截断，NaN 与负数才是空串', () => {
+  const text = '她关了窗。然后去睡了，很久很久。'
+  // 不设上限的调用方（"全都给我"）传 Infinity 最自然：当 0 处理会把整段话静默截成空串。
+  const all = cut(text, Infinity)
+  assert.equal(all.text, text)
+  assert.equal(all.cut, false, '一个字都没砍就不许报 cut：报 true 等于说了一句假话')
+  assert.equal(cut(text, -Infinity).text, text, '负无穷同样是"没有上限"，不是"没预算"')
+  // NaN 与负数是"非法预算"，按 0 算：明确回空串并说清砍过，让上层用 "! " 报出来。
+  for (const bad of [NaN, -1, -0.5]) {
+    const r = cut(text, bad)
+    assert.equal(r.text, '', `非法预算 ${String(bad)} 应当按 0 处理`)
+    assert.equal(r.cut, true)
+  }
+  // 真给了 0 也是空串 + cut:true，和非法预算是同一条路，别为"HANDLE 0"再开一个分支。
+  assert.deepEqual(cut(text, 0), cut(text, NaN))
+})
+
+test('emoji 按字素簇算一个字：一家三口不是 3.56 个字，爱心带变体符也不是 1.28', () => {
+  // '👨‍👩‍👧' 是 5 个码点（3 个 emoji + 2 个 ZWJ）、1 个字；
+  // '❤️' 是 2 个码点（心 + 变体选择符）、1 个字。按码点收费，预算表整段失真。
+  assert.equal(Array.from('👨‍👩‍👧').length, 5)
+  assert.equal(cost('👨‍👩‍👧'), 1)
+  assert.equal(Array.from('❤️').length, 2)
+  assert.equal(cost('❤️'), 1)
+  // 纯 ASCII 与中文不吃这一套：一个簇就是一个字，数字照旧。
+  assert.ok(near(cost('abc'), 0.84))
+  assert.equal(cost('中文'), 2)
+  assert.equal(cost('中文🙂'), 3)
+})
+
+test('截断只在字素簇边界落刀：load 不下就整簇不切，绝不切出半个 emoji', () => {
+  const two = '👨‍👩‍👧👨‍👩‍👧'
+  assert.equal(cost(two), 2)
+  const r = cut(two, 1.5)
+  assert.equal(r.cut, true)
+  assert.equal(r.text, '👨‍👩‍👧', '装得下 1 个就切 1 个；切在 ZWJ 中间会留下半个家庭')
+  assert.ok(cost(r.text) <= 1.5)
+  // 一个都装不下就切空，而不是切出半个簇。
+  assert.equal(cut(two, 0.5).text, '')
+  assert.equal(cut('❤️❤️', 1.5).text, '❤️')
+})
+
+test('U+2028 / U+2029 也算换行：断行看不见，混进一行就会把行宽算错', () => {
+  // 这两种是 JSON 与 JS 里的合法硬换行，肉眼看不见，只认 \r\n 会让它们原样留在"一行"里。
+  assert.equal(oneLine('a\u2028b', 10), 'a b')
+  assert.equal(oneLine('a\u2029b', 10), 'a b')
+  assert.equal(oneLine('a\u2028\u2029b', 10), 'a b')
+  assert.equal(/[\u2028\u2029]/.test(oneLine('a\u2028b\u2029c', 20)), false, '折完不许留下硬换行')
+  // 家族 emoji 按字素簇算一个字：别把它数成 5 个再截半。
+  const three = '👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧'
+  assert.equal(oneLine(three, 2), '👨‍👩‍👧…')
+})
+
 test('换行折成空格；超长截断并补省略号，结果不超 max', () => {
   assert.equal(oneLine('她关了窗\n然后去睡了', 20), '她关了窗 然后去睡了')
   assert.equal(oneLine('a\r\nb', 10), 'a b')
@@ -139,6 +192,22 @@ test('同义改写查不到是设计选择，不是等待修复的 bug', () => {
   assert.equal(jaccard('她把窗户关了', '窗子关上了'), 0)
   // 用字相同就一定查得到，这才是这套检索真正承诺的东西。
   assert.equal(jaccard('夜里十一点后不提工作', '夜里十一点后不提工作'), 1)
+})
+
+test('单字的线索要被多字文本接住：一个字也算查得到，但相似度不许虚高', () => {
+  // 单字块只产出一元组，多字块只产二元组，两边永远对不上——一句"累"的线索就查不到
+  // "她最近很累"，人会以为记忆里没有这件事。
+  assert.deepEqual(tokens('累'), ['累'])
+  assert.deepEqual(tokens('她最近很累'), ['她最', '最近', '近很', '很累'])
+  assert.ok(jaccard(tokens('累'), tokens('她最近很累')) > 0, '一个字也是线索，不许判成 0')
+  // 但只算一处命中：1 / (1 + 4 - 1) = 0.25，不是"沾上一个字就等于同一件事"。
+  assert.ok(near(jaccard(tokens('累'), tokens('她最近很累')), 0.25))
+  // 两个方向都认：查询是长句、记录里只有单字块时同样命中。
+  assert.ok(near(jaccard('她最近很累', '累'), 0.25))
+  // 二元组之间的对账没变：'加班' 与 '今天又加班' 仍是 1/(1+4-1)。
+  assert.ok(near(jaccard(tokens('加班'), tokens('今天又加班')), 0.25))
+  // 单字母不参与包含判定：'x' 混在 'box' 里不是同一个线索。
+  assert.equal(jaccard(['x'], ['box']), 0)
 })
 
 test('两边都空时相似度为 0：给 1 会让空记录排到最前', () => {

@@ -2,8 +2,7 @@
 // 混排时按字符数记会高估英文、低估中文，"注入那一屏 1000 cost"就成了假数（design §5）。
 import { COST_ASCII, COST_WIDE } from './const.mjs'
 
-// 宽度 1 的字符区间。用一张表一次判完，比逐段 if 好读；不做字素分段——
-// 预算不需要那么精确，组合符号多算半个也无伤大雅。
+// 宽度 1 的字符区间。用一张表一次判完，比逐段 if 好读。
 const WIDE_RANGES = [
   '\u1100-\u115F', // 谚文字母
   '\u2E80-\u303E', // CJK 部首与符号（含句号、书名号这类全角标点）
@@ -22,12 +21,16 @@ const WIDE_RANGES = [
 ]
 const WIDE = new RegExp(`[${WIDE_RANGES.join('')}]`, 'u')
 
-// 按码点累加：'🙂'.length 是 2，逐 UTF-16 单元算会把它记成两个半角，
-// 一个 emoji 的成本就凭空翻倍。for...of 按码点走，正好。
+// 计价单位是"字素簇"，不是码点：'👨‍👩‍👧' 是 5 个码点、1 个字，'❤️' 是 2 个码点、1 个字。
+// 按码点收，一家三口要收 3.56 个字，预算表整段失真；cut 还会切在 ZWJ 中间，
+// 屏幕上留下半个家庭。Intl.Segmenter 是 node 自带的 ICU（Node ≥16），仍是零依赖。
+const SEGMENTER = new Intl.Segmenter('zh', { granularity: 'grapheme' })
+
+// 按簇累加：'🙂'.length 是 2，逐 UTF-16 单元算会把它记成两个半角。
 export function cost(s) {
   const text = toText(s)
   let used = 0
-  for (const ch of text) used += weightOf(ch)
+  for (const one of SEGMENTER.segment(text)) used += weightOf(one.segment)
   return used
 }
 
@@ -36,19 +39,23 @@ export function cost(s) {
 // 不在这里补省略号：省略号也要占预算，而"被截过"这件事该由调用方决定怎么显示。
 export function cut(s, budget) {
   const text = toText(s)
-  const cap = Number.isFinite(budget) ? budget : 0
+  const cap = capOf(budget)
+  // cap === null 就是"没有上限"：原文照给，也不许报 cut——报 true 等于说"我砍了"，
+  // 而一个字都没砍的谎话会让上层白写一条 "! "。
+  if (cap === null) return { text, cut: false }
   if (cost(text) <= cap) return { text, cut: false }
 
   // 一遍扫到"刚好装得下"的最长前缀。这里不用 cost() 复核：used 与 cost() 是同一次累加，
   // 结果逐位相同，而前缀切法能保证任意更短的前缀只会更小。
+  // 走字素簇而不是码点：刀必须落在簇边界上，否则切得出半个 emoji。
   let used = 0
   let end = 0
   let idx = 0
-  for (const ch of text) {
-    const w = weightOf(ch)
+  for (const one of SEGMENTER.segment(text)) {
+    const w = weightOf(one.segment)
     if (used + w > cap) break
     used += w
-    idx += ch.length
+    idx += one.segment.length
     end = idx
   }
 
@@ -61,20 +68,35 @@ export function cut(s, budget) {
 }
 
 // 换行折成空格：一屏里的每条记录都得能塞进一行，否则 budget 的"行数 × 行宽"白算。
-// max 是码点个数（不是 cost）——这里管的是显示宽度，不是预算。
+// 换行不止 \r\n：U+2028 / U+2029（LINE/PARAGRAPH SEPARATOR）是 JSON 与 JS 里合法、终端里
+// 真断行的硬换行，肉眼还看不见——只认 \r\n 就等于让它们带着断行混进"一行"，行宽算不准。
+// max 是字的个数（不是 cost）——这里管的是显示宽度，所以按字素簇数，不按码点数。
 export function oneLine(s, max) {
-  const text = toText(s).replace(/\s*[\r\n]+\s*/g, ' ')
+  const text = toText(s).replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ')
   if (!Number.isFinite(max) || max <= 0) return text
-  const chars = Array.from(text)
+  const units = []
+  for (const one of SEGMENTER.segment(text)) units.push(one.segment)
   const cap = Math.trunc(max)
-  if (chars.length <= cap) return text
+  if (units.length <= cap) return text
   if (cap < 1) return ''
-  return `${chars.slice(0, cap - 1).join('')}…`
+  return `${units.slice(0, cap - 1).join('')}…`
 }
 
 // design §7 写的是 '。！？；\n'：半角的 ! ? ; 大量出现在命令与路径里，当句末会切在半句话上。
 const SENTENCE_END = /[。！？；\n]/g
 const JOINT = /[，、,]/g
+
+// 预算口径只在这里定，别在调用点各转一次：
+// - 非有限数（Infinity / -Infinity）不是"0 预算"，是"没有上限"——当 0 会把整段话静默截成空串。
+// - NaN 与负数按 0：那是"给了个非法预算"，和 config 校验一个口径（非法就是 0），
+//   于是明确地回空串 + cut:true，由调用方用 "! " 说出来，而不是假装装下了。
+// - undefined / 非数字字符串同理进 NaN，落到 0。
+function capOf(budget) {
+  const n = typeof budget === 'number' ? budget : Number(budget)
+  if (Number.isNaN(n)) return 0
+  if (!Number.isFinite(n)) return null
+  return n > 0 ? n : 0
+}
 
 function lastEnd(text, re) {
   let end = 0
@@ -82,8 +104,11 @@ function lastEnd(text, re) {
   return end
 }
 
-function weightOf(ch) {
-  return WIDE.test(ch) ? COST_WIDE : COST_ASCII
+// 一个簇算一个字：簇里任一码点属 WIDE 就按 1 记——ZWJ、变体选择符、肤色修饰符
+// 都是"同一个字的零件"，不该各自收费。
+function weightOf(cluster) {
+  for (const ch of cluster) if (WIDE.test(ch)) return COST_WIDE
+  return COST_ASCII
 }
 
 function toText(s) {
