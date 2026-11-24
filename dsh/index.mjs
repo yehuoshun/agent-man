@@ -19,7 +19,7 @@ import { extractNeedles, lastUserText, makeSearch } from './search.mjs'
 export function apply(ctx, options = {}) {
   if (!ctx || typeof ctx.on !== 'function') return
   const opts = options && typeof options === 'object' ? options : {}
-  // dsh/ 不在结构用例的 process.env 扫描范围内（那条用例只扫 src/），但仍然是"碰环境"的那一半。
+  // 环境从这个门进来：结构用例把 dsh/ 与 bin/ 一起扫了，"谁能读环境"是全仓的事实。
   const env = opts.env ?? process.env
   const warn = typeof opts.warn === 'function' ? opts.warn : (line) => console.error(line)
 
@@ -118,7 +118,7 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
     timeoutMax: cfg.parts.timeoutMax,
     stdoutMax: cfg.parts.stdoutMax,
     failLimit: cfg.parts.failLimit,
-    // 冷却账住 meta.json（§4），所以要把 home 给下去；给不了就只在这次进程里记，不落盘。
+    // 冷却账住在数据目录的 meta 里（§4），所以要把 home 给下去；给不了就只在这次进程里记，不落盘。
     home: homeOf(deps.env),
     now: at,
   })
