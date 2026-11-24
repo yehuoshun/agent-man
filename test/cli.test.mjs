@@ -860,7 +860,8 @@ test('冷却账本当回事：meta.json 里记着连续失败，第 N 次连问�
   const rows = JSON.parse(got.out)
   assert.deepEqual(rows.lines, [])
   assert.equal(rows.dropped[0].reason, 'cooldown')
-  assert.equal(rows.dropped[0].why, 'fake 连续失败 3 次，这次不问（冷却到下一次会话）')
+  // 有截止时刻就报还有多久：别把冷却说成「下一次会话」那种看起来没有尽头的东西
+  assert.match(rows.dropped[0].why, /^fake 连续失败 3 次，这次不问（冷却 1 分钟，到点自动再试一次）$/)
   assert.ok(spent < 2000, `冷却中的零件不该再 spawn：实测 ${spent}ms`)
 })
 
@@ -874,7 +875,7 @@ test('零件没上屏的理由照它自己的 why 说：冷却不是"预算用�
     `${JSON.stringify({ parts: { fake: { fail: 3, until: one.now + 60000 } } })}\n`)
   const got = await cli(one, ['context', 'show'])
   assert.equal(got.code, 0)
-  assert.match(got.err, /^! 零件 fake 连续失败 3 次，这次不问（冷却到下一次会话）$/m)
+  assert.match(got.err, /^! 零件 fake 连续失败 3 次，这次不问（冷却 1 分钟，到点自动再试一次）$/m)
   assert.doesNotMatch(got.err, /抓取预算/)
   const said = got.err.split('\n').filter((line) => line.includes('fake'))
   assert.equal(said.length, 1, `同一件事说了 ${said.length} 遍：${got.err}`)

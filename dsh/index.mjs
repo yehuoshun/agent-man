@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { snapshot as affectSnapshot } from '../src/affect/index.mjs'
 import { config, now as nowTs } from '../src/core/index.mjs'
 import {
-  affectLine, askParts, callTool, compose, recall, situationBudget, TOOLS,
+  affectLine, askParts, beginSession, callTool, compose, recall, situationBudget, TOOLS,
 } from '../src/host/index.mjs'
 import { situation } from '../src/mind/index.mjs'
 import { renderScreen } from '../src/view/index.mjs'
@@ -54,6 +54,9 @@ export function apply(ctx, options = {}) {
 
 // pre-step：先让宿主算完它的决定（next），再判断要不要在开头插一条。
 // 任何异常都不许漏出去——注入失败最多是"这次没注入"，绝不能让会话开不起来。
+// 这一趟宿主进程有没有清过冷却账（见 buildInjection 里那段）。
+let sessionBegun = false
+
 async function preStep(deps, agent, payload, next) {
   const decision = await next()
   try {
@@ -109,6 +112,13 @@ async function buildInjection(deps, { header, userText, at, context = [] }) {
   // 两件事值得单独说：一是先发出去、后收（和下面的旧会话回顾并行跑），首步注入最多多等
   // parts.deadline 而不是"零件数 × PART_TIMEOUT"；二是到点没答上来的由 sense 记进 dropped 并
   // 出 `! `，装不下的也出 `! `——零件坏掉只降级成"这次没有建议"，绝不阻塞、也绝不静默。
+  // 一次宿主进程 = 一次会话（§8"冷却到下一次会话"）：进程里第一次注入之前把零件冷却账清零，
+  // 坏零件在新会话里重新有一次机会。只清一次，后面每一轮沿用这一会话里攒下的账。
+  if (!sessionBegun) {
+    sessionBegun = true
+    if (cfg.parts.inject !== false) await beginSession(homeOf(deps.env))
+  }
+
   const asking = cfg.parts.inject === false ? null : askParts(deps.env, {
     budget: cfg.inject.parts,
     deadline: cfg.parts.deadline,
